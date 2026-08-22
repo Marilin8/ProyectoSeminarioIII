@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Crear estudio - Clínica de Imágenes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        h1 {
+            color: #0f172a;
+            font-size: 1.4rem;
+        }
+        a.volver {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            max-width: 640px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        label {
+            display: block;
+            font-size: 0.85rem;
+            color: #334155;
+            margin-bottom: 0.25rem;
+            margin-top: 1rem;
+        }
+        input {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            box-sizing: border-box;
+        }
+        .errorlist {
+            color: #dc2626;
+            font-size: 0.8rem;
+            list-style: none;
+            padding: 0;
+            margin: 0.25rem 0 0;
+        }
+        button {
+            margin-top: 1.5rem;
+            width: 100%;
+            padding: 0.6rem;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #1d4ed8;
+        }
+    </style>
+</head>
+<body>
+{% include 'includes/notificaciones.html' %}
+    <div class="topbar">
+        <h1>Crear estudio</h1>
+        <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
+    </div>
+    <div class="card">
+        <form method="post">
+            {% csrf_token %}
+            {{ form.non_field_errors }}
+
+            <label for="{{ form.nombre.id_for_label }}">Nombre</label>
+            {{ form.nombre }}
+            {{ form.nombre.errors }}
+
+            <label for="{{ form.precio.id_for_label }}">Precio</label>
+            {{ form.precio }}
+            {{ form.precio.errors }}
+
+            <button type="submit">Crear estudio</button>
+        </form>
+    </div>
+</body>
+</html>

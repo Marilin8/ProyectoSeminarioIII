@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Reporte {{ convenio_nombre }} {{ reporte.fecha }} - Clínica de Imágenes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        h1 {
+            color: #0f172a;
+            font-size: 1.3rem;
+        }
+        a.volver {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .mensajes {
+            list-style: none;
+            padding: 0;
+        }
+        .mensajes li {
+            background: #dcfce7;
+            color: #166534;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+            font-size: 0.85rem;
+        }
+        .aviso-pendientes {
+            background: #fef3c7;
+            color: #92400e;
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            margin-bottom: 1.25rem;
+            font-size: 0.85rem;
+        }
+        .aviso-pendientes strong {
+            display: block;
+            margin-bottom: 0.35rem;
+        }
+        .aviso-pendientes ul {
+            margin: 0;
+            padding-left: 1.1rem;
+        }
+        .estado {
+            display: inline-block;
+            font-size: 0.75rem;
+            font-weight: bold;
+            padding: 0.15rem 0.5rem;
+            border-radius: 999px;
+            margin-left: 0.5rem;
+        }
+        .estado.borrador {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .estado.enviado {
+            background: #dcfce7;
+            color: #166534;
+        }
+        .acciones-reporte {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 1.25rem;
+        }
+        .acciones-reporte button,
+        .acciones-reporte a {
+            display: inline-block;
+            border: none;
+            border-radius: 6px;
+            padding: 0.55rem 1rem;
+            font-size: 0.85rem;
+            font-weight: bold;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .btn-guardar {
+            background: #2563eb;
+            color: white;
+        }
+        .btn-guardar:hover {
+            background: #1d4ed8;
+        }
+        .btn-enviar {
+            background: #16a34a;
+            color: white;
+        }
+        .btn-enviar:hover {
+            background: #15803d;
+        }
+        .btn-descarga {
+            background: #e2e8f0;
+            color: #334155;
+        }
+        .btn-descarga:hover {
+            background: #cbd5e1;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        th, td {
+            border: 1px solid #e2e8f0;
+            padding: 0.6rem;
+            text-align: left;
+            font-size: 0.85rem;
+        }
+        th {
+            background: #0f172a;
+            color: white;
+        }
+        tr.ausente td {
+            color: #94a3b8;
+            text-decoration: line-through;
+        }
+        td.precio, th.precio {
+            text-align: right;
+        }
+        input.medico-referente {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 0.35rem 0.5rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            font-family: inherit;
+            font-size: 0.85rem;
+        }
+        tfoot td {
+            font-weight: bold;
+            background: #f8fafc;
+        }
+        .vacio {
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+{% include 'includes/notificaciones.html' %}
+    <div class="topbar">
+        <h1>
+            Reporte diario — {{ convenio_nombre }} — {{ reporte.fecha }}
+            <span class="estado {{ reporte.estado }}">{{ reporte.get_estado_display }}</span>
+        </h1>
+        <a class="volver" href="{% url lista_url_name %}">&larr; Volver a reportes</a>
+    </div>
+
+    {% if messages %}
+        <ul class="mensajes">
+            {% for message in messages %}
+                <li>{{ message }}</li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    {% if editable and pacientes_pendientes %}
+        <div class="aviso-pendientes">
+            <strong>Este reporte no se puede enviar todavía: hay pacientes con datos pendientes de llenar.</strong>
+            <ul>
+                {% for paciente in pacientes_pendientes %}
+                    <li>{{ paciente.nombre }} — falta: {{ paciente.campos|join:', ' }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+
+    {% if solo_lectura and reporte.estado == 'enviado' %}
+        <div class="acciones-reporte">
+            <a class="btn-descarga" href="{% url 'descargar_reporte_pdf' reporte.convenio reporte.fecha|date:'Y-m-d' %}">Descargar PDF</a>
+            <a class="btn-descarga" href="{% url 'descargar_reporte_xlsx' reporte.convenio reporte.fecha|date:'Y-m-d' %}">Descargar Excel</a>
+        </div>
+    {% endif %}
+
+    {% if filas %}
+        <form method="post">
+            {% csrf_token %}
+            <table>
+                <thead>
+                    <tr>
+                        {% for columna in columnas %}
+                            <th{% if columna == 'Precio' %} class="precio"{% endif %}>{{ columna }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for fila in filas %}
+                        <tr{% if fila.ausente %} class="ausente"{% endif %}>
+                            <td>{{ fila.no }}</td>
+                            <td>{{ fila.hora }}</td>
+                            <td>{{ fila.paciente }}</td>
+                            <td>{{ fila.edad|default:'—' }}</td>
+                            <td>{{ fila.estudio }}</td>
+                            <td>{{ fila.tecnico|default:'—' }}</td>
+                            <td>
+                                {% if editable %}
+                                    <input
+                                        class="medico-referente" type="text"
+                                        name="medico_referente_{{ fila.cita_id }}"
+                                        value="{{ fila.medico_referente }}"
+                                    >
+                                {% else %}
+                                    {{ fila.medico_referente|default:'—' }}
+                                {% endif %}
+                            </td>
+                            <td>{{ fila.emerg }}</td>
+                            <td>{{ fila.radiologo|default:'—' }}</td>
+                            <td class="precio">Q{{ fila.precio|floatformat:2 }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="8"></td>
+                        <td>TOTAL DEL DÍA</td>
+                        <td class="precio">Q{{ total|floatformat:2 }}</td>
+                    </tr>
+                </tfoot>
+            </table>
+
+            {% if editable %}
+                <div class="acciones-reporte" style="margin-top: 1.25rem;">
+                    <button type="submit" class="btn-guardar">Guardar cambios</button>
+                </div>
+            {% endif %}
+        </form>
+
+        {% if editable and not pacientes_pendientes %}
+            <form method="post" action="{% url 'enviar_reporte_diario' reporte.convenio reporte.fecha|date:'Y-m-d' %}">
+                {% csrf_token %}
+                <div class="acciones-reporte">
+                    <button type="submit" class="btn-enviar">Enviar reporte al administrador</button>
+                </div>
+            </form>
+        {% endif %}
+    {% else %}
+        <p class="vacio">Este reporte todavía no tiene citas registradas.</p>
+    {% endif %}
+</body>
+</html>

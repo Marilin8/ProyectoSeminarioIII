@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Agendar cita - Clínica de Imágenes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        h1 {
+            color: #0f172a;
+            font-size: 1.4rem;
+        }
+        a.volver {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            max-width: 640px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        h2 {
+            font-size: 1rem;
+            color: #334155;
+            margin: 1.5rem 0 0.25rem;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 0.25rem;
+        }
+        h2:first-child {
+            margin-top: 0;
+        }
+        label {
+            display: block;
+            font-size: 0.85rem;
+            color: #334155;
+            margin-bottom: 0.25rem;
+            margin-top: 1rem;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+        .errorlist {
+            color: #dc2626;
+            font-size: 0.8rem;
+            list-style: none;
+            padding: 0;
+            margin: 0.25rem 0 0;
+        }
+        .ayuda {
+            font-size: 0.75rem;
+            color: #64748b;
+            margin-top: 0.25rem;
+        }
+        button {
+            margin-top: 1.5rem;
+            width: 100%;
+            padding: 0.6rem;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #1d4ed8;
+        }
+        .horario {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 6px;
+            padding: 0.6rem 0.75rem;
+            font-size: 0.85rem;
+            color: #1e3a8a;
+        }
+        .horario a {
+            color: #2563eb;
+            margin-left: 0.5rem;
+        }
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+        }
+        .modal-overlay.abierto {
+            display: flex;
+        }
+        .modal-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem 2rem;
+            max-width: 480px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+        }
+        .modal-card h2 {
+            margin-top: 0;
+            font-size: 1.1rem;
+            color: #0f172a;
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+        .modal-resumen dt {
+            font-size: 0.75rem;
+            color: #64748b;
+            margin-top: 0.6rem;
+        }
+        .modal-resumen dd {
+            font-size: 0.9rem;
+            color: #0f172a;
+            margin: 0.1rem 0 0;
+        }
+        .modal-botones {
+            display: flex;
+            gap: 0.75rem;
+            margin-top: 1.5rem;
+        }
+        .modal-botones button {
+            margin-top: 0;
+            flex: 1;
+        }
+        .btn-editar {
+            background: #e2e8f0 !important;
+            color: #334155 !important;
+        }
+        .btn-editar:hover {
+            background: #cbd5e1 !important;
+        }
+        .aviso-paciente {
+            display: none;
+            margin-top: 0.75rem;
+            padding: 0.6rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+        }
+        .aviso-paciente.encontrado {
+            background: #dcfce7;
+            color: #166534;
+            border: 1px solid #bbf7d0;
+        }
+        .aviso-paciente a {
+            color: inherit;
+            font-weight: bold;
+            margin-left: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+{% include 'includes/notificaciones.html' %}
+    <div class="topbar">
+        <h1>Agendar cita — {{ convenio_nombre }}</h1>
+        <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
+    </div>
+    <div class="card">
+        <form method="post" id="form-agendar-cita">
+            {% csrf_token %}
+            {{ form.non_field_errors }}
+
+            <h2>Paciente</h2>
+
+            <label for="{{ form.dpi.id_for_label }}">DPI</label>
+            {{ form.dpi }}
+            {{ form.dpi.errors }}
+            <div class="aviso-paciente encontrado" id="aviso-paciente-existente">
+                Paciente ya registrado — se completaron sus datos automáticamente.
+                <a href="#" id="btn-buscar-otro">No es este paciente</a>
+            </div>
+
+            <label for="{{ form.nombre.id_for_label }}">Nombre</label>
+            {{ form.nombre }}
+            {{ form.nombre.errors }}
+
+            <label for="{{ form.apellido.id_for_label }}">Apellido</label>
+            {{ form.apellido }}
+            {{ form.apellido.errors }}
+
+            <label for="{{ form.sexo.id_for_label }}">Sexo (opcional)</label>
+            {{ form.sexo }}
+            {{ form.sexo.errors }}
+
+            <label for="{{ form.telefono.id_for_label }}">Teléfono (opcional)</label>
+            {{ form.telefono }}
+            {{ form.telefono.errors }}
+
+            <label for="{{ form.fecha_nacimiento.id_for_label }}">Fecha de nacimiento (opcional)</label>
+            {{ form.fecha_nacimiento }}
+            {{ form.fecha_nacimiento.errors }}
+            <p class="ayuda">
+                Si falta algún dato, se puede completar después: al final del día se
+                les avisa a las recepcionistas qué pacientes quedaron con datos pendientes.
+            </p>
+
+            <label for="{{ form.carnet_igss.id_for_label }}">
+                Carné de afiliación IGSS{% if requiere_carnet_igss %} (obligatorio){% else %} (opcional){% endif %}
+            </label>
+            {{ form.carnet_igss }}
+            {{ form.carnet_igss.errors }}
+
+            <h2>Cita</h2>
+
+            <div class="horario">
+                Horario elegido: <strong>{{ fecha_valor }} — {{ hora_valor }}</strong>
+                <a href="{{ calendario_url }}">Cambiar horario</a>
+            </div>
+            {{ form.fecha }}
+            {{ form.hora }}
+
+            <label for="{{ form.tipo_estudio.id_for_label }}">Tipo de estudio</label>
+            {{ form.tipo_estudio }}
+            {{ form.tipo_estudio.errors }}
+
+            <label for="{{ form.radiologo.id_for_label }}">Radiólogo asignado</label>
+            {{ form.radiologo }}
+            {{ form.radiologo.errors }}
+
+            <label for="{{ form.notas.id_for_label }}">Notas</label>
+            {{ form.notas }}
+            {{ form.notas.errors }}
+
+            <button type="submit">Agendar cita</button>
+        </form>
+    </div>
+
+    <div class="modal-overlay" id="modal-confirmar">
+        <div class="modal-card">
+            <h2>Verificá los datos antes de enviar la solicitud</h2>
+            <dl class="modal-resumen" id="modal-resumen"></dl>
+            <div class="modal-botones">
+                <button type="button" class="btn-editar" id="btn-editar">Editar</button>
+                <button type="button" id="btn-confirmar">Confirmar y enviar</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Autocompleta los datos del paciente si el DPI ya está registrado,
+        // para no volver a escribir nombre/apellido/sexo/teléfono/fecha de
+        // nacimiento cada vez.
+        (function () {
+            var dpiInput = document.getElementById('id_dpi');
+            var aviso = document.getElementById('aviso-paciente-existente');
+            var camposAutocompletables = [
+                'nombre', 'apellido', 'sexo', 'telefono', 'fecha_nacimiento', 'carnet_igss',
+            ];
+            var temporizadorBusqueda = null;
+            var ultimoDpiBuscado = '';
+
+            function buscarPaciente() {
+                var dpi = dpiInput.value.trim();
+                if (dpi.length !== 13 || dpi === ultimoDpiBuscado) {
+                    return;
+                }
+                ultimoDpiBuscado = dpi;
+                fetch('{% url "buscar_paciente_por_dpi" %}?dpi=' + encodeURIComponent(dpi))
+                    .then(function (respuesta) { return respuesta.json(); })
+                    .then(function (datos) {
+                        if (!datos.encontrado) {
+                            aviso.style.display = 'none';
+                            return;
+                        }
+                        camposAutocompletables.forEach(function (nombreCampo) {
+                            var elemento = document.getElementById('id_' + nombreCampo);
+                            if (elemento) {
+                                elemento.value = datos[nombreCampo];
+                            }
+                        });
+                        aviso.style.display = 'block';
+                    });
+            }
+
+            // Busca mientras se escribe (con una pequeña pausa) y también al
+            // salir del campo, para no depender de un solo evento.
+            dpiInput.addEventListener('input', function () {
+                clearTimeout(temporizadorBusqueda);
+                if (dpiInput.value.trim().length !== 13) {
+                    aviso.style.display = 'none';
+                    ultimoDpiBuscado = '';
+                    return;
+                }
+                temporizadorBusqueda = setTimeout(buscarPaciente, 300);
+            });
+            dpiInput.addEventListener('blur', buscarPaciente);
+
+            document.getElementById('btn-buscar-otro').addEventListener('click', function (evento) {
+                evento.preventDefault();
+                camposAutocompletables.forEach(function (nombreCampo) {
+                    var elemento = document.getElementById('id_' + nombreCampo);
+                    if (elemento) {
+                        elemento.value = '';
+                    }
+                });
+                aviso.style.display = 'none';
+                ultimoDpiBuscado = '';
+                dpiInput.focus();
+            });
+        })();
+
+        // Filtra el combo de radiólogo según el tipo de estudio elegido:
+        // solo deja elegir entre los radiólogos que realmente lo realizan
+        // (ej. Celeste solo hace Ultrasonido y Rayos X).
+        (function () {
+            var tipoEstudioSelect = document.getElementById('id_tipo_estudio');
+            var radiologoSelect = document.getElementById('id_radiologo');
+
+            function actualizarRadiologos(preservarSeleccion) {
+                var tipoEstudioId = tipoEstudioSelect.value;
+                var seleccionActual = preservarSeleccion ? radiologoSelect.value : '';
+
+                if (!tipoEstudioId) {
+                    radiologoSelect.innerHTML = '<option value="">---------</option>';
+                    return;
+                }
+
+                fetch(
+                    '{% url "radiologos_por_estudio" %}?tipo_estudio=' + encodeURIComponent(tipoEstudioId)
+                )
+                    .then(function (respuesta) { return respuesta.json(); })
+                    .then(function (datos) {
+                        radiologoSelect.innerHTML = '';
+                        if (datos.radiologos.length === 0) {
+                            var vacia = document.createElement('option');
+                            vacia.value = '';
+                            vacia.textContent = 'Ningún radiólogo realiza este estudio';
+                            radiologoSelect.appendChild(vacia);
+                            return;
+                        }
+                        var placeholder = document.createElement('option');
+                        placeholder.value = '';
+                        placeholder.textContent = '---------';
+                        radiologoSelect.appendChild(placeholder);
+                        datos.radiologos.forEach(function (radiologo) {
+                            var opcion = document.createElement('option');
+                            opcion.value = radiologo.id;
+                            opcion.textContent = radiologo.texto;
+                            if (String(radiologo.id) === seleccionActual) {
+                                opcion.selected = true;
+                            }
+                            radiologoSelect.appendChild(opcion);
+                        });
+                    });
+            }
+
+            tipoEstudioSelect.addEventListener('change', function () {
+                actualizarRadiologos(false);
+            });
+
+            // Si el formulario vuelve a mostrarse con errores, conserva el
+            // tipo de estudio y el radiólogo que ya se habían elegido.
+            if (tipoEstudioSelect.value) {
+                actualizarRadiologos(true);
+            }
+        })();
+
+        (function () {
+            var form = document.getElementById('form-agendar-cita');
+            var modal = document.getElementById('modal-confirmar');
+            var resumen = document.getElementById('modal-resumen');
+
+            var campos = [
+                ['id_dpi', 'DPI'],
+                ['id_nombre', 'Nombre'],
+                ['id_apellido', 'Apellido'],
+                ['id_sexo', 'Sexo'],
+                ['id_telefono', 'Teléfono'],
+                ['id_fecha_nacimiento', 'Fecha de nacimiento'],
+                ['id_carnet_igss', 'Carné de afiliación IGSS'],
+                ['id_fecha', 'Fecha de la cita'],
+                ['id_hora', 'Hora de la cita'],
+                ['id_tipo_estudio', 'Tipo de estudio'],
+                ['id_radiologo', 'Radiólogo asignado'],
+                ['id_notas', 'Notas'],
+            ];
+
+            form.addEventListener('submit', function (evento) {
+                evento.preventDefault();
+                resumen.innerHTML = '';
+                campos.forEach(function (campo) {
+                    var elemento = document.getElementById(campo[0]);
+                    if (!elemento) {
+                        return;
+                    }
+                    var valor = elemento.tagName === 'SELECT'
+                        ? elemento.options[elemento.selectedIndex].text
+                        : elemento.value;
+                    var dt = document.createElement('dt');
+                    dt.textContent = campo[1];
+                    var dd = document.createElement('dd');
+                    dd.textContent = valor || '—';
+                    resumen.appendChild(dt);
+                    resumen.appendChild(dd);
+                });
+                modal.classList.add('abierto');
+            });
+
+            document.getElementById('btn-editar').addEventListener('click', function () {
+                modal.classList.remove('abierto');
+            });
+            document.getElementById('btn-confirmar').addEventListener('click', function () {
+                form.submit();
+            });
+        })();
+    </script>
+</body>
+</html>

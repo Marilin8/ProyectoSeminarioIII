@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ paciente.nombre }} {{ paciente.apellido }} - Estudios realizados</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-right: 4rem;
+        }
+        h1 {
+            color: #0f172a;
+            font-size: 1.3rem;
+        }
+        a.volver {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .resumen {
+            background: white;
+            border-radius: 10px;
+            padding: 1rem 1.25rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            font-size: 0.85rem;
+            color: #334155;
+        }
+        .resumen strong {
+            color: #0f172a;
+            font-size: 1rem;
+        }
+        .estudio {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: white;
+            border-radius: 10px;
+            padding: 1rem 1.25rem;
+            margin-bottom: 0.75rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        .estudio.hoy {
+            border-left: 4px solid #16a34a;
+        }
+        .estudio .tipo {
+            color: #0f172a;
+            font-weight: bold;
+        }
+        .estudio .fecha {
+            color: #64748b;
+            font-size: 0.85rem;
+        }
+        .etiqueta-hoy {
+            background: #dcfce7;
+            color: #166534;
+            font-size: 0.7rem;
+            font-weight: bold;
+            padding: 0.15rem 0.5rem;
+            border-radius: 999px;
+            margin-left: 0.5rem;
+        }
+        .btn-ver {
+            display: inline-block;
+            background: #2563eb;
+            color: white;
+            text-decoration: none;
+            font-size: 0.85rem;
+            padding: 0.5rem 0.9rem;
+            border-radius: 6px;
+        }
+        .btn-ver:hover {
+            background: #1d4ed8;
+        }
+        .vacio {
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+        .filtros {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            gap: 1rem;
+            background: white;
+            border-radius: 10px;
+            padding: 1rem 1.25rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        .filtro-grupo {
+            display: flex;
+            flex-direction: column;
+            gap: 0.3rem;
+        }
+        .filtro-grupo label {
+            font-size: 0.75rem;
+            color: #64748b;
+        }
+        .filtro-grupo select,
+        .filtro-grupo input {
+            padding: 0.45rem 0.6rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 0.85rem;
+        }
+        .btn-limpiar-filtros {
+            background: #e2e8f0;
+            color: #334155;
+            border: none;
+            border-radius: 6px;
+            padding: 0.5rem 0.9rem;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+        .btn-limpiar-filtros:hover {
+            background: #cbd5e1;
+        }
+    </style>
+</head>
+<body>
+{% include 'includes/notificaciones.html' %}
+    <div class="topbar">
+        <h1>Estudios realizados</h1>
+        <a class="volver" href="{% url 'historial_pacientes' %}">&larr; Volver al listado de pacientes</a>
+    </div>
+
+    <div class="resumen">
+        <strong>{{ paciente.nombre }} {{ paciente.apellido }}</strong> (DPI: {{ paciente.dpi }})<br>
+        {% if edad is not None %}{{ edad }} años{% else %}Edad no registrada{% endif %}, {{ paciente.get_sexo_display }}
+        {% if paciente.telefono %} — Tel: {{ paciente.telefono }}{% endif %}
+    </div>
+
+    {% if citas %}
+        <div class="filtros">
+            <div class="filtro-grupo">
+                <label for="filtro-convenio">Convenio</label>
+                <select id="filtro-convenio">
+                    <option value="">Todos</option>
+                    <option value="coex">COEX</option>
+                    <option value="privado">Privado</option>
+                    <option value="emergencia_igss">Emergencia IGSS</option>
+                </select>
+            </div>
+            <div class="filtro-grupo">
+                <label for="filtro-fecha">Fecha</label>
+                <input type="date" id="filtro-fecha">
+            </div>
+            <div class="filtro-grupo">
+                <label for="filtro-estudio">Estudio</label>
+                <select id="filtro-estudio">
+                    <option value="">Todos</option>
+                    {% for tipo in tipos_estudio %}
+                        <option value="{{ tipo }}">{{ tipo }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="button" class="btn-limpiar-filtros" id="btn-limpiar-filtros">Limpiar filtros</button>
+        </div>
+
+        <div id="lista-estudios">
+            {% for cita in citas %}
+                <div class="estudio{% if cita.fecha == hoy %} hoy{% endif %}"
+                     data-convenio="{{ cita.convenio }}"
+                     data-fecha="{{ cita.fecha|date:'Y-m-d' }}"
+                     data-estudio="{{ cita.tipo_estudio.nombre }}">
+                    <div>
+                        <span class="tipo">{{ cita.tipo_estudio.nombre }}</span>
+                        {% if cita.fecha == hoy %}<span class="etiqueta-hoy">HOY</span>{% endif %}
+                        <div class="fecha">{{ cita.fecha }} {{ cita.hora|time:'H:i' }} — {{ cita.get_convenio_display }}</div>
+                    </div>
+                    <a class="btn-ver" href="{% url 'ver_estudio_historial' cita_id=cita.id %}">Ver estudio</a>
+                </div>
+            {% endfor %}
+            <p class="vacio" id="sin-resultados" hidden>Ningún estudio coincide con los filtros elegidos.</p>
+        </div>
+    {% else %}
+        <p class="vacio">Este paciente todavía no tiene estudios realizados.</p>
+    {% endif %}
+
+    <script>
+        (function () {
+            var filtroConvenio = document.getElementById('filtro-convenio');
+            var filtroFecha = document.getElementById('filtro-fecha');
+            var filtroEstudio = document.getElementById('filtro-estudio');
+            if (!filtroConvenio) {
+                return; // No hay estudios: no hay nada que filtrar.
+            }
+            var tarjetas = document.querySelectorAll('#lista-estudios .estudio');
+            var sinResultados = document.getElementById('sin-resultados');
+
+            function aplicarFiltros() {
+                var convenio = filtroConvenio.value;
+                var fecha = filtroFecha.value;
+                var estudio = filtroEstudio.value;
+                var visibles = 0;
+
+                tarjetas.forEach(function (tarjeta) {
+                    var coincide =
+                        (!convenio || tarjeta.dataset.convenio === convenio)
+                        && (!fecha || tarjeta.dataset.fecha === fecha)
+                        && (!estudio || tarjeta.dataset.estudio === estudio);
+                    tarjeta.hidden = !coincide;
+                    if (coincide) visibles++;
+                });
+
+                sinResultados.hidden = visibles !== 0;
+            }
+
+            filtroConvenio.addEventListener('change', aplicarFiltros);
+            filtroFecha.addEventListener('change', aplicarFiltros);
+            filtroEstudio.addEventListener('change', aplicarFiltros);
+            document.getElementById('btn-limpiar-filtros').addEventListener('click', function () {
+                filtroConvenio.value = '';
+                filtroFecha.value = '';
+                filtroEstudio.value = '';
+                aplicarFiltros();
+            });
+        })();
+    </script>
+</body>
+</html>

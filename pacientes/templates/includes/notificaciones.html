@@ -1,0 +1,273 @@
+<!-- Campanita de notificaciones: se incluye en toda pantalla con sesión
+     iniciada. Consulta {% url 'notificaciones_pendientes' %} cada 20s y
+     hace sonar un aviso cuando llega algo nuevo (cita asignada, orden
+     pendiente, estudio listo para informar o estudio completado). -->
+<div id="notif-campanita" class="notif-wrap">
+    <button type="button" id="notif-boton" class="notif-boton" aria-label="Notificaciones" title="Notificaciones">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+            <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2zm6-6v-5a6 6 0 0 0-4.5-5.8V4a1.5 1.5 0 0 0-3 0v1.2A6 6 0 0 0 6 11v5l-1.7 1.7A1 1 0 0 0 5 19h14a1 1 0 0 0 .7-1.7L18 16z"/>
+        </svg>
+        <span id="notif-contador" class="notif-contador" hidden>0</span>
+    </button>
+    <div id="notif-panel" class="notif-panel" hidden>
+        <div class="notif-panel-cabecera">
+            <strong>Notificaciones</strong>
+            <button type="button" id="notif-marcar-todas">Marcar todas como leídas</button>
+        </div>
+        <ul id="notif-lista" class="notif-lista">
+            <li class="notif-vacio">Sin notificaciones nuevas.</li>
+        </ul>
+    </div>
+    <form id="notif-csrf-form" hidden>{% csrf_token %}</form>
+</div>
+
+<style>
+    .notif-wrap {
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+        z-index: 9999;
+        font-family: Arial, sans-serif;
+    }
+    .notif-boton {
+        position: relative;
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        border: none;
+        background: #1e293b;
+        color: #fff;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, .25);
+    }
+    .notif-boton:hover {
+        background: #334155;
+    }
+    .notif-boton.notif-agitar {
+        animation: notif-agitar .5s ease;
+    }
+    @keyframes notif-agitar {
+        0%, 100% { transform: rotate(0); }
+        20%, 60% { transform: rotate(-15deg); }
+        40%, 80% { transform: rotate(15deg); }
+    }
+    .notif-contador {
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        background: #dc2626;
+        color: #fff;
+        border-radius: 999px;
+        font-size: .7rem;
+        font-weight: bold;
+        line-height: 1;
+        padding: .25rem .4rem;
+        min-width: 1rem;
+        text-align: center;
+    }
+    .notif-panel {
+        position: absolute;
+        top: 52px;
+        right: 0;
+        width: 320px;
+        max-height: 420px;
+        overflow-y: auto;
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, .2);
+        border: 1px solid #e2e8f0;
+    }
+    .notif-panel-cabecera {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: .6rem .8rem;
+        border-bottom: 1px solid #e2e8f0;
+        font-size: .85rem;
+        color: #0f172a;
+    }
+    .notif-panel-cabecera button {
+        background: none;
+        border: none;
+        color: #2563eb;
+        font-size: .75rem;
+        cursor: pointer;
+        padding: 0;
+    }
+    .notif-lista {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+    .notif-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        background: none;
+        border: none;
+        border-bottom: 1px solid #f1f5f9;
+        padding: .6rem .8rem;
+        cursor: pointer;
+        font-size: .8rem;
+        color: #0f172a;
+    }
+    .notif-item:hover {
+        background: #f8fafc;
+    }
+    .notif-item .notif-hora {
+        display: block;
+        color: #64748b;
+        font-size: .7rem;
+        margin-top: .2rem;
+    }
+    .notif-vacio {
+        padding: 1rem .8rem;
+        color: #64748b;
+        font-size: .8rem;
+        text-align: center;
+    }
+</style>
+
+<script>
+(function () {
+    var URL_PENDIENTES = '{% url "notificaciones_pendientes" %}';
+    var URL_MARCAR_UNA_PLANTILLA = '{% url "marcar_notificacion_leida" notificacion_id=0 %}';
+    var URL_MARCAR_TODAS = '{% url "marcar_notificaciones_leidas" %}';
+    var INTERVALO_MS = 20000;
+    // Este tipo no se marca como leído con el simple clic: se queda en la
+    // lista hasta que el dato pendiente del paciente realmente se completa
+    // (ver pacientes.views.completar_datos_paciente).
+    var TIPOS_QUE_NO_SE_MARCAN_AL_HACER_CLIC = ['datos_paciente_pendientes'];
+
+    var boton = document.getElementById('notif-boton');
+    var contador = document.getElementById('notif-contador');
+    var panel = document.getElementById('notif-panel');
+    var lista = document.getElementById('notif-lista');
+    var botonMarcarTodas = document.getElementById('notif-marcar-todas');
+
+    var idsYaSonados = new Set();
+    var audioCtx = null;
+
+    function obtenerCsrfToken() {
+        var campo = document.querySelector('#notif-csrf-form input[name=csrfmiddlewaretoken]');
+        return campo ? campo.value : '';
+    }
+
+    // Los navegadores no dejan reproducir audio sin una interacción previa
+    // del usuario, así que el AudioContext se crea en el primer clic/tecla.
+    function desbloquearAudio() {
+        if (audioCtx) return;
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+            audioCtx = null;
+        }
+    }
+    document.addEventListener('click', desbloquearAudio, { once: true });
+    document.addEventListener('keydown', desbloquearAudio, { once: true });
+
+    function reproducirSonido() {
+        if (!audioCtx) return;
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        var ahora = audioCtx.currentTime;
+        [880, 1318.5].forEach(function (frecuencia, i) {
+            var osc = audioCtx.createOscillator();
+            var ganancia = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = frecuencia;
+            ganancia.gain.setValueAtTime(0.0001, ahora + i * 0.15);
+            ganancia.gain.exponentialRampToValueAtTime(0.3, ahora + i * 0.15 + 0.02);
+            ganancia.gain.exponentialRampToValueAtTime(0.0001, ahora + i * 0.15 + 0.3);
+            osc.connect(ganancia).connect(audioCtx.destination);
+            osc.start(ahora + i * 0.15);
+            osc.stop(ahora + i * 0.15 + 0.35);
+        });
+    }
+
+    function marcarLeida(id) {
+        var url = URL_MARCAR_UNA_PLANTILLA.replace('/0/', '/' + id + '/');
+        fetch(url, { method: 'POST', headers: { 'X-CSRFToken': obtenerCsrfToken() } });
+    }
+
+    function pintarNotificaciones(notificaciones) {
+        lista.innerHTML = '';
+        if (!notificaciones.length) {
+            var vacio = document.createElement('li');
+            vacio.className = 'notif-vacio';
+            vacio.textContent = 'Sin notificaciones nuevas.';
+            lista.appendChild(vacio);
+            return;
+        }
+        notificaciones.forEach(function (n) {
+            var li = document.createElement('li');
+            var item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'notif-item';
+
+            var mensaje = document.createElement('span');
+            mensaje.textContent = n.mensaje;
+            var hora = document.createElement('span');
+            hora.className = 'notif-hora';
+            hora.textContent = n.creada_en;
+
+            item.appendChild(mensaje);
+            item.appendChild(hora);
+            item.addEventListener('click', function () {
+                if (TIPOS_QUE_NO_SE_MARCAN_AL_HACER_CLIC.indexOf(n.tipo) === -1) {
+                    marcarLeida(n.id);
+                }
+                if (n.url) window.location.href = n.url;
+            });
+            li.appendChild(item);
+            lista.appendChild(li);
+        });
+    }
+
+    function consultar() {
+        fetch(URL_PENDIENTES, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (respuesta) { return respuesta.json(); })
+            .then(function (data) {
+                var noLeidas = data.no_leidas || 0;
+                if (noLeidas > 0) {
+                    contador.hidden = false;
+                    contador.textContent = noLeidas > 99 ? '99+' : String(noLeidas);
+                } else {
+                    contador.hidden = true;
+                }
+
+                var notificaciones = data.notificaciones || [];
+                var nuevas = notificaciones.filter(function (n) { return !idsYaSonados.has(n.id); });
+                if (nuevas.length) {
+                    nuevas.forEach(function (n) { idsYaSonados.add(n.id); });
+                    reproducirSonido();
+                    boton.classList.remove('notif-agitar');
+                    void boton.offsetWidth; // fuerza a reiniciar la animación
+                    boton.classList.add('notif-agitar');
+                }
+
+                pintarNotificaciones(notificaciones);
+            })
+            .catch(function () { /* si falla el sondeo, se reintenta en el próximo ciclo */ });
+    }
+
+    boton.addEventListener('click', function (evento) {
+        evento.stopPropagation();
+        panel.hidden = !panel.hidden;
+    });
+    document.addEventListener('click', function (evento) {
+        if (!panel.hidden && !panel.contains(evento.target) && evento.target !== boton) {
+            panel.hidden = true;
+        }
+    });
+    botonMarcarTodas.addEventListener('click', function () {
+        fetch(URL_MARCAR_TODAS, { method: 'POST', headers: { 'X-CSRFToken': obtenerCsrfToken() } })
+            .then(consultar);
+    });
+
+    consultar();
+    setInterval(consultar, INTERVALO_MS);
+})();
+</script>
