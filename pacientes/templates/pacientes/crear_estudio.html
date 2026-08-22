@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Crear estudio - Clínica de Imágenes</title>
+    <title>{% if editando %}Editar estudio{% else %}Crear estudio{% endif %} - Clínica de Imágenes</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -53,6 +53,11 @@
             padding: 0;
             margin: 0.25rem 0 0;
         }
+        .ayuda {
+            font-size: 0.75rem;
+            color: #64748b;
+            margin-top: 0.25rem;
+        }
         button {
             margin-top: 1.5rem;
             width: 100%;
@@ -72,8 +77,8 @@
 <body>
 {% include 'includes/notificaciones.html' %}
     <div class="topbar">
-        <h1>Crear estudio</h1>
-        <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
+        <h1>{% if editando %}Editar estudio — {{ editando.nombre }}{% else %}Crear estudio{% endif %}</h1>
+        <a class="volver" href="{% url 'lista_estudios' %}">&larr; Volver a estudios</a>
     </div>
     <div class="card">
         <form method="post">
@@ -88,7 +93,15 @@
             {{ form.precio }}
             {{ form.precio.errors }}
 
-            <button type="submit">Crear estudio</button>
+            <label for="{{ form.duracion_minutos.id_for_label }}">Duración estimada (minutos)</label>
+            {{ form.duracion_minutos }}
+            {{ form.duracion_minutos.errors }}
+            <p class="ayuda">
+                Cuánto tiempo ocupa este estudio en el calendario de citas — se usa para
+                bloquear ese rango y que la recepcionista no agende a otra persona encima.
+            </p>
+
+            <button type="submit">{% if editando %}Guardar cambios{% else %}Crear estudio{% endif %}</button>
         </form>
     </div>
 </body>

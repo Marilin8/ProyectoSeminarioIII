@@ -134,6 +134,14 @@ class Cita(models.Model):
     hora_sugerida = models.TimeField(null=True, blank=True)
     hora_llegada = models.DateTimeField(null=True, blank=True)
     notas = models.TextField(blank=True)
+    es_emergencia_forzada = models.BooleanField(
+        default=False,
+        verbose_name='agendada como emergencia',
+        help_text=(
+            'La recepcionista confirmó que agendó esta cita a propósito en un '
+            'horario ya ocupado, por tratarse de una emergencia.'
+        ),
+    )
     creada_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='citas_creadas'
     )

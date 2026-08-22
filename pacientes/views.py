@@ -46,6 +46,11 @@ from .models import (
 )
 
 
+# Cuántas citas de emergencia (agendadas encima de otra ya existente) se
+# permiten como máximo por día, para no saturar a la radióloga.
+MAXIMO_EMERGENCIAS_POR_DIA = 5
+
+
 def es_recepcionista(user):
     return user.is_authenticated and user.rol == Usuario.ROL_RECEPCIONISTA
 
@@ -72,15 +77,21 @@ def puede_descargar_reportes_diarios(user):
 
 def _notificar_cita_asignada(cita):
     """El radiólogo elegido al agendar la cita recibe una nueva solicitud
-    para revisar/confirmar."""
+    para revisar/confirmar. Si la recepcionista la marcó como emergencia
+    (agendada encima de otra cita ya existente), el mensaje lo deja claro
+    para que la radióloga sepa que se le está pidiendo hacer un espacio."""
+    prefijo = '🚨 EMERGENCIA — ' if cita.es_emergencia_forzada else ''
+    mensaje = (
+        f'{prefijo}Nueva cita asignada: {cita.tipo_estudio} para {cita.paciente.nombre} '
+        f'{cita.paciente.apellido} el {cita.fecha_sugerida or cita.fecha} a las '
+        f'{cita.hora_sugerida or cita.hora}.'
+    )
+    if cita.es_emergencia_forzada:
+        mensaje += ' Este horario ya tenía otra cita asignada: se agendó igual por ser una emergencia.'
     Notificacion.notificar(
         destinatario=cita.radiologo,
         tipo=Notificacion.TIPO_CITA_ASIGNADA,
-        mensaje=(
-            f'Nueva cita asignada: {cita.tipo_estudio} para {cita.paciente.nombre} '
-            f'{cita.paciente.apellido} el {cita.fecha_sugerida or cita.fecha} a las '
-            f'{cita.hora_sugerida or cita.hora}.'
-        ),
+        mensaje=mensaje,
         cita=cita,
         url=reverse('solicitudes_pendientes'),
     )
@@ -449,7 +460,38 @@ def crear_estudio(request):
             return redirect('dashboard')
     else:
         form = CrearTipoEstudioForm()
-    return render(request, 'pacientes/crear_estudio.html', {'form': form})
+    return render(request, 'pacientes/crear_estudio.html', {'form': form, 'editando': None})
+
+
+@login_required
+@user_passes_test(es_administrador)
+def lista_estudios(request):
+    estudios = TipoEstudio.objects.all().order_by('nombre')
+    return render(request, 'pacientes/lista_estudios.html', {'estudios': estudios})
+
+
+@login_required
+@user_passes_test(es_administrador)
+def editar_estudio(request, estudio_id):
+    tipo_estudio = get_object_or_404(TipoEstudio, id=estudio_id)
+    if request.method == 'POST':
+        form = CrearTipoEstudioForm(request.POST, instance=tipo_estudio)
+        if form.is_valid():
+            tipo_estudio = form.save()
+            Bitacora.registrar(
+                request=request,
+                usuario=request.user,
+                accion=Bitacora.ACCION_EDITAR_ESTUDIO,
+                descripcion=(
+                    f'Editó el estudio "{tipo_estudio.nombre}" '
+                    f'(precio: {tipo_estudio.precio}, duración: {tipo_estudio.duracion_minutos} min).'
+                ),
+            )
+            messages.success(request, f'Estudio "{tipo_estudio.nombre}" actualizado correctamente.')
+            return redirect('lista_estudios')
+    else:
+        form = CrearTipoEstudioForm(instance=tipo_estudio)
+    return render(request, 'pacientes/crear_estudio.html', {'form': form, 'editando': tipo_estudio})
 
 
 @login_required
@@ -519,8 +561,24 @@ def seleccionar_horario(request, convenio):
         'reagendar_cita': reagendar_cita,
         'reagendar_url_name': f'confirmar_reagenda_{convenio}' if reagendar_cita else None,
         'procesar_url_name': f'procesar_citas_{convenio}',
+        'maximo_emergencias_por_dia': MAXIMO_EMERGENCIAS_POR_DIA,
     }
     return render(request, 'pacientes/calendario.html', contexto)
+
+
+def _hay_conflicto_horario(fecha_dt, hora_time, duracion_minutos):
+    """¿El horario dado se cruza con alguna cita ya existente ese día?
+    (no cuenta las citas rechazadas)."""
+    if not fecha_dt or not hora_time:
+        return False
+    ocupados = [
+        rango_ocupado_por(c.fecha, c.hora, c.tipo_estudio.duracion_minutos)
+        for c in Cita.objects.filter(fecha=fecha_dt)
+        .exclude(estado=Cita.ESTADO_RECHAZADA)
+        .select_related('tipo_estudio')
+    ]
+    rango_nuevo = rango_ocupado_por(fecha_dt, hora_time, duracion_minutos)
+    return any(se_cruzan(rango_nuevo, ocupado) for ocupado in ocupados)
 
 
 @login_required
@@ -542,6 +600,18 @@ def agendar_cita(request, convenio):
     form.fields['fecha'].widget = forms.HiddenInput()
     form.fields['hora'].widget = forms.HiddenInput()
 
+    # Aviso de si el horario elegido ya tiene otra cita encima: se calcula
+    # desde ya (sin esperar a elegir el tipo de estudio) usando PASO_MINUTOS
+    # como referencia, para que la advertencia de emergencia aparezca apenas
+    # se carga la pantalla. Al enviar el formulario se vuelve a calcular con
+    # la duración real del estudio elegido, que es la que manda.
+    fecha_dt = fecha if isinstance(fecha, datetime.date) else parse_date(fecha)
+    try:
+        hora_time = hora if isinstance(hora, datetime.time) else datetime.datetime.strptime(hora, '%H:%M').time()
+    except (TypeError, ValueError):
+        hora_time = None
+    hay_conflicto = _hay_conflicto_horario(fecha_dt, hora_time, PASO_MINUTOS)
+
     if request.method == 'POST' and form.is_valid():
         cd = form.cleaned_data
         if en_el_pasado(cd['fecha'], cd['hora']):
@@ -551,50 +621,75 @@ def agendar_cita(request, convenio):
             messages.error(request, 'Solo se pueden agendar citas hasta 3 semanas después de hoy.')
             return redirect(calendario_url)
 
-        ocupados = [
-            rango_ocupado_por(c.fecha, c.hora, c.tipo_estudio.duracion_minutos)
-            for c in Cita.objects.filter(fecha=cd['fecha'])
-            .exclude(estado=Cita.ESTADO_RECHAZADA)
-            .select_related('tipo_estudio')
-        ]
-        rango_nuevo = rango_ocupado_por(cd['fecha'], cd['hora'], cd['tipo_estudio'].duracion_minutos)
-        if any(se_cruzan(rango_nuevo, ocupado) for ocupado in ocupados):
-            messages.error(request, 'Ese horario ya no está disponible: se cruza con otra cita.')
-            return redirect(calendario_url)
+        hay_conflicto = _hay_conflicto_horario(cd['fecha'], cd['hora'], cd['tipo_estudio'].duracion_minutos)
 
-        paciente = obtener_o_actualizar_paciente(cd)
-        cita = Cita.objects.create(
-            paciente=paciente,
-            tipo_estudio=cd['tipo_estudio'],
-            radiologo=cd['radiologo'],
-            convenio=convenio,
-            estado=Cita.ESTADO_PENDIENTE,
-            fecha=cd['fecha'],
-            hora=cd['hora'],
-            medico_referente=cd['medico_referente'],
-            fecha_sugerida=cd['fecha'],
-            hora_sugerida=cd['hora'],
-            notas=cd['notas'],
-            creada_por=request.user,
-        )
-        _notificar_cita_asignada(cita)
-        Bitacora.registrar(
-            request=request,
-            usuario=request.user,
-            accion=Bitacora.ACCION_SOLICITAR_CITA,
-            descripcion=(
-                f'Registró al paciente {paciente.nombre} {paciente.apellido} (DPI {paciente.dpi}) '
-                f'y solicitó cita de {cd["tipo_estudio"]} para {cd["fecha"]} {cd["hora"]} ({convenio}), '
-                f'asignada a {cd["radiologo"]}.'
-            ),
-        )
-        messages.success(
-            request,
-            f'Solicitud enviada a {cd["radiologo"]} para {paciente.nombre} {paciente.apellido} '
-            f'(sugerido: {cd["fecha"]} a las {cd["hora"]}). '
-            'Quedará agendada cuando la radióloga la confirme.',
-        )
-        return redirect('dashboard')
+        if hay_conflicto and not cd['es_emergencia']:
+            form.add_error(
+                None,
+                'Este horario ya está ocupado por otra cita. Si es una emergencia que debe '
+                'agendarse sí o sí en este horario, marcá la casilla de confirmación de '
+                'emergencia (más abajo) y volvé a enviar.',
+            )
+        else:
+            if hay_conflicto:
+                emergencias_hoy = Cita.objects.filter(
+                    fecha=cd['fecha'], es_emergencia_forzada=True,
+                ).exclude(estado=Cita.ESTADO_RECHAZADA).count()
+                if emergencias_hoy >= MAXIMO_EMERGENCIAS_POR_DIA:
+                    messages.error(
+                        request,
+                        f'Ya se agendaron {MAXIMO_EMERGENCIAS_POR_DIA} citas de emergencia para el '
+                        f'{cd["fecha"]}, el máximo permitido por día. Elegí otra fecha.',
+                    )
+                    return redirect(calendario_url)
+
+            paciente = obtener_o_actualizar_paciente(cd)
+            cita = Cita.objects.create(
+                paciente=paciente,
+                tipo_estudio=cd['tipo_estudio'],
+                radiologo=cd['radiologo'],
+                convenio=convenio,
+                estado=Cita.ESTADO_PENDIENTE,
+                fecha=cd['fecha'],
+                hora=cd['hora'],
+                medico_referente=cd['medico_referente'],
+                fecha_sugerida=cd['fecha'],
+                hora_sugerida=cd['hora'],
+                notas=cd['notas'],
+                creada_por=request.user,
+                es_emergencia_forzada=hay_conflicto,
+            )
+            _notificar_cita_asignada(cita)
+            Bitacora.registrar(
+                request=request,
+                usuario=request.user,
+                accion=Bitacora.ACCION_SOLICITAR_CITA,
+                descripcion=(
+                    ('[EMERGENCIA] ' if hay_conflicto else '')
+                    + f'Registró al paciente {paciente.nombre} {paciente.apellido} (DPI {paciente.dpi}) '
+                    f'y solicitó cita de {cd["tipo_estudio"]} para {cd["fecha"]} {cd["hora"]} ({convenio}), '
+                    f'asignada a {cd["radiologo"]}.'
+                    + (
+                        ' Se agendó encima de otra cita ya existente por tratarse de una emergencia.'
+                        if hay_conflicto else ''
+                    )
+                ),
+            )
+            if hay_conflicto:
+                messages.success(
+                    request,
+                    f'Cita de EMERGENCIA agendada para {paciente.nombre} {paciente.apellido} el '
+                    f'{cd["fecha"]} a las {cd["hora"]}, encima de otra cita que ya ocupaba ese horario. '
+                    f'Se avisó a {cd["radiologo"]} que es una emergencia.',
+                )
+            else:
+                messages.success(
+                    request,
+                    f'Solicitud enviada a {cd["radiologo"]} para {paciente.nombre} {paciente.apellido} '
+                    f'(sugerido: {cd["fecha"]} a las {cd["hora"]}). '
+                    'Quedará agendada cuando la radióloga la confirme.',
+                )
+            return redirect('dashboard')
 
     return render(request, 'pacientes/agendar_cita.html', {
         'form': form,
@@ -604,6 +699,7 @@ def agendar_cita(request, convenio):
         'fecha_valor': fecha,
         'hora_valor': hora,
         'requiere_carnet_igss': convenio in (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS),
+        'hay_conflicto': hay_conflicto,
     })
 
 

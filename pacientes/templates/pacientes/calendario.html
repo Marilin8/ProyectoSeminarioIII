@@ -81,6 +81,13 @@
             background: #e2e8f0;
             color: #94a3b8;
         }
+        a.slot.ocupado {
+            background: #fecaca;
+            color: #7f1d1d;
+        }
+        a.slot.ocupado:hover {
+            background: #fca5a5;
+        }
         .leyenda {
             margin-top: 1rem;
             font-size: 0.8rem;
@@ -150,10 +157,16 @@
                                 <span class="pasado">Pasado</span>
                             {% elif celda.fuera_rango %}
                                 <span class="pasado">No disponible</span>
+                            {% elif celda.ocupado or celda.asignado %}
+                                {% if reagendar_cita %}
+                                    <a class="slot ocupado" href="{% url reagendar_url_name cita_id=reagendar_cita.id %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}" title="Ya hay una cita que ocupa este horario. Se puede agendar igual solo si es una emergencia — se pedirá confirmación.">Ocupado</a>
+                                {% else %}
+                                    <a class="slot ocupado" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}" title="Ya hay una cita que ocupa este horario. Se puede agendar igual solo si es una emergencia — se pedirá confirmación.">Ocupado</a>
+                                {% endif %}
                             {% elif reagendar_cita %}
-                                <a class="slot" href="{% url reagendar_url_name cita_id=reagendar_cita.id %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|stringformat:'02d' }}:00">{{ celda.cantidad }} cita{{ celda.cantidad|pluralize }}</a>
+                                <a class="slot" href="{% url reagendar_url_name cita_id=reagendar_cita.id %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}">Agendar</a>
                             {% else %}
-                                <a class="slot" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|stringformat:'02d' }}:00">{{ celda.cantidad }} cita{{ celda.cantidad|pluralize }}</a>
+                                <a class="slot" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}">Agendar</a>
                             {% endif %}
                         </td>
                     {% endfor %}
@@ -162,7 +175,9 @@
         </table>
     </div>
     <p class="leyenda">
-        <span style="background:#bfdbfe;"></span> Disponible — el número es solo referencia, no hay límite de cupo
+        <span style="background:#bfdbfe;"></span> Disponible
+        &nbsp;&nbsp;
+        <span style="background:#fecaca;"></span> Ocupado — ya hay una cita en ese horario; se puede agendar igual solo como emergencia (máximo {{ maximo_emergencias_por_dia }} por día), con aviso a la radióloga
     </p>
 </body>
 </html>

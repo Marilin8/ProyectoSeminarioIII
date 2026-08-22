@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Estudios - Clínica de Imágenes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        h1 {
+            color: #0f172a;
+            font-size: 1.4rem;
+        }
+        a.volver {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem 2rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        a.btn-nuevo {
+            background: #2563eb;
+            color: white;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: bold;
+        }
+        a.btn-nuevo:hover {
+            background: #1d4ed8;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        th, td {
+            padding: 0.6rem 0.5rem;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 0.9rem;
+        }
+        th {
+            color: #64748b;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+        .inactivo {
+            color: #94a3b8;
+        }
+        .etiqueta-inactivo {
+            display: inline-block;
+            background: #f1f5f9;
+            color: #64748b;
+            border-radius: 4px;
+            padding: 0.1rem 0.4rem;
+            font-size: 0.7rem;
+            margin-left: 0.4rem;
+        }
+        a.btn-editar {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: bold;
+        }
+        a.btn-editar:hover {
+            text-decoration: underline;
+        }
+        .vacio {
+            color: #64748b;
+            font-size: 0.85rem;
+            padding: 1rem 0;
+        }
+    </style>
+</head>
+<body>
+{% include 'includes/notificaciones.html' %}
+    <div class="topbar">
+        <h1>Estudios</h1>
+        <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
+    </div>
+    <div class="card">
+        <div class="card-header">
+            <span></span>
+            <a class="btn-nuevo" href="{% url 'crear_estudio' %}">+ Nuevo estudio</a>
+        </div>
+        {% if estudios %}
+            <table>
+                <tr>
+                    <th>Nombre</th>
+                    <th>Precio</th>
+                    <th>Duración</th>
+                    <th></th>
+                </tr>
+                {% for estudio in estudios %}
+                    <tr class="{% if not estudio.activo %}inactivo{% endif %}">
+                        <td>
+                            {{ estudio.nombre }}
+                            {% if not estudio.activo %}<span class="etiqueta-inactivo">inactivo</span>{% endif %}
+                        </td>
+                        <td>Q{{ estudio.precio }}</td>
+                        <td>{{ estudio.duracion_minutos }} min</td>
+                        <td><a class="btn-editar" href="{% url 'editar_estudio' estudio_id=estudio.id %}">Editar</a></td>
+                    </tr>
+                {% endfor %}
+            </table>
+        {% else %}
+            <p class="vacio">Todavía no hay estudios creados.</p>
+        {% endif %}
+    </div>
+</body>
+</html>

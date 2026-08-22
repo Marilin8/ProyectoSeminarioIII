@@ -109,6 +109,10 @@ class AgendarCitaForm(forms.Form):
     fecha = forms.DateField(widget=forms.DateInput(attrs={'type': 'date'}))
     hora = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}))
     notas = forms.CharField(widget=forms.Textarea, required=False)
+    es_emergencia = forms.BooleanField(
+        label='Confirmo que es una cita de emergencia: debe agendarse en este horario aunque ya esté ocupado.',
+        required=False,
+    )
 
     def __init__(self, *args, convenio=None, **kwargs):
         super().__init__(*args, **kwargs)

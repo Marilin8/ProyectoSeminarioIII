@@ -67,6 +67,7 @@ class Bitacora(models.Model):
     ACCION_LOGIN_FALLIDO = 'login_fallido'
     ACCION_CREAR_USUARIO = 'crear_usuario'
     ACCION_CREAR_ESTUDIO = 'crear_estudio'
+    ACCION_EDITAR_ESTUDIO = 'editar_estudio'
     ACCION_SOLICITAR_CITA = 'solicitar_cita'
     ACCION_CONFIRMAR_CITA = 'confirmar_cita'
     ACCION_RECHAZAR_CITA = 'rechazar_cita'
@@ -85,6 +86,7 @@ class Bitacora(models.Model):
         (ACCION_LOGIN_FALLIDO, 'Intento de inicio de sesión fallido'),
         (ACCION_CREAR_USUARIO, 'Creación de usuario'),
         (ACCION_CREAR_ESTUDIO, 'Creación de estudio'),
+        (ACCION_EDITAR_ESTUDIO, 'Edición de estudio'),
         (ACCION_SOLICITAR_CITA, 'Solicitud de cita'),
         (ACCION_CONFIRMAR_CITA, 'Confirmación de cita'),
         (ACCION_RECHAZAR_CITA, 'Rechazo de solicitud de cita'),
