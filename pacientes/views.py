@@ -232,7 +232,35 @@ def obtener_o_actualizar_paciente(cd):
             cambiados.append('carnet_igss')
         if cambiados:
             paciente.save(update_fields=cambiados)
+    _notificar_datos_pendientes_si_corresponde(paciente)
     return paciente
+
+
+def _notificar_datos_pendientes_si_corresponde(paciente):
+    """Si el paciente quedó con datos opcionales sin llenar (sexo, teléfono
+    o fecha de nacimiento), avisa a las recepcionistas activas. No duplica
+    el aviso si ya hay uno sin leer para este mismo paciente — por eso se
+    puede llamar cada vez que se agenda una cita o se registra un ticket
+    sin que se acumulen notificaciones repetidas."""
+    campos = paciente.campos_pendientes()
+    if not campos:
+        return
+    url = reverse('completar_datos_paciente', args=[paciente.id])
+    ya_avisado = Notificacion.objects.filter(
+        tipo=Notificacion.TIPO_DATOS_PACIENTE_PENDIENTES, url=url, leida=False,
+    ).exists()
+    if ya_avisado:
+        return
+    recepcionistas = Usuario.objects.filter(rol=Usuario.ROL_RECEPCIONISTA, is_active=True)
+    Notificacion.notificar_a_varios(
+        usuarios=recepcionistas,
+        tipo=Notificacion.TIPO_DATOS_PACIENTE_PENDIENTES,
+        mensaje=(
+            f'{paciente.nombre} {paciente.apellido} (DPI {paciente.dpi}) tiene datos '
+            f'pendientes: {", ".join(campos)}.'
+        ),
+        url=url,
+    )
 
 
 @login_required
@@ -1217,14 +1245,22 @@ def notificaciones_pendientes(request):
 @login_required
 def marcar_notificacion_leida(request, notificacion_id):
     if request.method == 'POST':
-        request.user.notificaciones.filter(id=notificacion_id).update(leida=True)
+        # Los avisos de "datos de paciente pendientes" no se pueden cerrar a
+        # mano: se apagan solos cuando el dato realmente se completa (ver
+        # completar_datos_paciente). Se valida también aquí, no solo en el
+        # JS, para que no se puedan cerrar llamando el endpoint directo.
+        request.user.notificaciones.filter(id=notificacion_id).exclude(
+            tipo=Notificacion.TIPO_DATOS_PACIENTE_PENDIENTES,
+        ).update(leida=True)
     return JsonResponse({'ok': True})
 
 
 @login_required
 def marcar_notificaciones_leidas(request):
     if request.method == 'POST':
-        request.user.notificaciones.filter(leida=False).update(leida=True)
+        request.user.notificaciones.filter(leida=False).exclude(
+            tipo=Notificacion.TIPO_DATOS_PACIENTE_PENDIENTES,
+        ).update(leida=True)
     return JsonResponse({'ok': True})
 
 
@@ -1446,11 +1482,14 @@ def lista_reportes_diarios(request, convenio):
     # existen, deben seguir apareciendo aunque las citas que los originaron
     # cambien después (se reagenden a otra fecha, se rechacen, etc.). Por
     # eso se listan desde ReporteDiario y no recalculando a partir de Cita
-    # en cada visita. Se incluyen fechas futuras a propósito: si el
-    # radiólogo ya confirmó una cita para un día próximo, la recepcionista
-    # puede adelantar y enviar ese reporte si quiere, sin esperar a que
-    # llegue la fecha.
-    reportes = ReporteDiario.objects.filter(convenio=convenio).order_by('-fecha')
+    # en cada visita. Solo se muestran días anteriores a hoy: el reporte de
+    # un día que todavía no terminó puede cambiar (citas que se cancelan,
+    # reagendan o completan durante el día), así que hasta que el día pasa
+    # no se puede confiar en el conteo de estudios realizados / cancelados /
+    # reagendados / finalizados.
+    reportes = ReporteDiario.objects.filter(
+        convenio=convenio, fecha__lt=timezone.localdate(),
+    ).order_by('-fecha')
     if solo_enviados:
         reportes = reportes.filter(estado=ReporteDiario.ESTADO_ENVIADO)
 
@@ -1515,6 +1554,14 @@ def enviar_reporte_diario(request, convenio, fecha):
     volver_url = reverse('ver_reporte_diario', args=[convenio, fecha])
 
     if request.method == 'POST' and reporte.estado == ReporteDiario.ESTADO_BORRADOR:
+        if fecha_valor >= timezone.localdate():
+            messages.error(
+                request,
+                'No se puede enviar el reporte de hoy ni de una fecha futura: todavía puede '
+                'haber citas de ese día que se cancelen, reagenden o finalicen. Esperá a que '
+                'el día termine.',
+            )
+            return redirect(volver_url)
         pendientes = _pacientes_con_datos_pendientes(reporte)
         if pendientes:
             nombres = ', '.join(paciente['nombre'] for paciente in pendientes)
