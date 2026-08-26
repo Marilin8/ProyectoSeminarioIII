@@ -1,42 +1,46 @@
 {% if pacientes %}
     {% for paciente in pacientes %}
-        <div class="paciente{% if paciente.datos_pendientes %} pendiente{% endif %}">
-            <div>
-                <div class="nombre">{{ paciente.nombre }} {{ paciente.apellido }}</div>
-                <div class="dpi">DPI: {{ paciente.dpi }}</div>
-                {% if paciente.datos_pendientes %}
-                    <div class="etiqueta-pendiente">
-                        Falta: {{ paciente.datos_pendientes|join:", " }}
-                    </div>
-                {% else %}
-                    <div class="etiquetas-convenio">
-                        {% for convenio in paciente.convenios_estudios %}
-                            <span class="convenio">{{ convenio }}</span>
-                        {% endfor %}
-                    </div>
-                {% endif %}
-            </div>
-            <div class="acciones">
-                {% if paciente.datos_pendientes %}
-                    <a
-                        class="btn-completar"
-                        href="{% url 'completar_datos_paciente' paciente_id=paciente.id %}"
-                    >
-                        Completar datos
+        <div class="card{% if paciente.datos_pendientes %} pendiente{% endif %}">
+            <div class="card-body" style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <div class="card-title">{{ paciente.nombre }} {{ paciente.apellido }}</div>
+                    <div class="text-sm text-muted">DPI: {{ paciente.dpi }}</div>
+                    {% if paciente.datos_pendientes %}
+                        <div class="estado estado-pendiente" style="margin-top: 0.35rem;">
+                            Falta: {{ paciente.datos_pendientes|join:", " }}
+                        </div>
+                    {% else %}
+                        <div style="display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.35rem;">
+                            {% for convenio in paciente.convenios_estudios %}
+                                <span class="badge badge-muted">{{ convenio }}</span>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                </div>
+                <div class="acciones" style="display: flex; gap: 0.5rem; flex-shrink: 0;">
+                    {% if paciente.datos_pendientes %}
+                        <a
+                            class="btn btn-outline btn-sm"
+                            href="{% url 'completar_datos_paciente' paciente_id=paciente.id %}"
+                        >
+                            <svg width="14" height="14"><use href="#i-edit"/></svg>
+                            Completar datos
+                        </a>
+                    {% endif %}
+                    <a class="btn btn-primary btn-sm" href="{% url 'historial_paciente' paciente_id=paciente.id %}">
+                        <svg width="14" height="14"><use href="#i-list"/></svg>
+                        Ver estudios
                     </a>
-                {% endif %}
-                <a class="btn-ver" href="{% url 'historial_paciente' paciente_id=paciente.id %}">
-                    Ver estudios
-                </a>
+                </div>
             </div>
         </div>
     {% endfor %}
 {% else %}
-    <p class="vacio">
+    <div class="empty-state">
         {% if busqueda or filtro_convenio or filtro_fecha or filtro_tipo_estudio %}
             Ningún paciente con estudios realizados coincide con la búsqueda o los filtros elegidos.
         {% else %}
             Todavía no hay pacientes con estudios realizados.
         {% endif %}
-    </p>
+    </div>
 {% endif %}

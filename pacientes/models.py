@@ -266,6 +266,12 @@ class OrdenTrabajo(models.Model):
     )
     informe_creado_en = models.DateTimeField(null=True, blank=True)
 
+    # El envío de resultados al paciente ya no ocurre automáticamente cuando
+    # la radióloga adjunta el informe: ahora lo dispara la recepcionista
+    # manualmente desde "Estudios realizados" (botón "Enviar estudio").
+    # Este campo queda null hasta que efectivamente se envía.
+    resultados_enviados_en = models.DateTimeField(null=True, blank=True)
+
     @property
     def tiene_informe(self):
         return bool(self.informe_texto or self.informe_archivo)

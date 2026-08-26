@@ -1,0 +1,76 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Clínica de Imágenes{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'css/theme.css' %}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    {% include 'includes/icons.html' %}
+
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <h1>&#9764; Clínica de Imágenes</h1>
+            <small>Sistema de Gestión Médica</small>
+        </div>
+        <nav>
+            <a href="{% url 'dashboard' %}" class="{% block nav_dashboard %}{% endblock %}">
+                <svg width="16" height="16"><use href="#i-home"/></svg> Panel principal
+            </a>
+            {% block sidebar_extra %}{% endblock %}
+        </nav>
+        <form method="post" action="{% url 'logout' %}" class="sidebar-logout">
+            {% csrf_token %}
+            <button type="submit">
+                <svg width="16" height="16"><use href="#i-log-out"/></svg> Cerrar sesión
+            </button>
+        </form>
+        <div class="sidebar-footer">v1.0 · Clínica de Imágenes</div>
+    </aside>
+
+    <div class="main">
+        <div class="topbar">
+            <h1>{% block page_title %}Panel{% endblock %}</h1>
+            <div class="acciones-top">
+                {% block topbar_actions %}{% endblock %}
+            </div>
+        </div>
+        <div class="content">
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+
+    {% if messages %}
+        <div class="toast-container" id="toast-container">
+            {% for msg in messages %}
+                <div class="toast alert alert-{{ msg.tags }}">
+                    <span>{{ msg }}</span>
+                    <button type="button" class="toast-cerrar" aria-label="Cerrar">&times;</button>
+                </div>
+            {% endfor %}
+        </div>
+        <script>
+            (function () {
+                var contenedor = document.getElementById('toast-container');
+                if (!contenedor) return;
+
+                function cerrarToast(toast) {
+                    toast.classList.add('saliendo');
+                    setTimeout(function () { toast.remove(); }, 200);
+                }
+
+                Array.prototype.slice.call(contenedor.querySelectorAll('.toast')).forEach(function (toast) {
+                    var boton = toast.querySelector('.toast-cerrar');
+                    if (boton) {
+                        boton.addEventListener('click', function () { cerrarToast(toast); });
+                    }
+                    setTimeout(function () { cerrarToast(toast); }, 5000);
+                });
+            })();
+        </script>
+    {% endif %}
+</body>
+</html>

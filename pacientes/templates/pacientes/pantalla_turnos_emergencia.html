@@ -1,145 +1,45 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Pantalla de turnos - Emergencia IGSS</title>
+{% extends 'base.html' %}
+
+{% block title %}Pantalla de turnos - Emergencia IGSS{% endblock %}
+{% block page_title %}Pantalla de turnos — Emergencia IGSS{% endblock %}
+
+{% block extra_css %}
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f1f5f9;
-            margin: 0;
-            padding: 2rem;
-        }
-        .topbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-        }
-        h1 {
-            color: #0f172a;
-            font-size: 1.3rem;
-        }
-        a.volver, a.nuevo {
-            text-decoration: none;
-            font-size: 0.85rem;
-        }
-        a.volver {
-            color: #2563eb;
-        }
-        a.nuevo {
-            background: #dc2626;
-            color: white;
-            padding: 0.5rem 0.9rem;
-            border-radius: 6px;
-            font-weight: bold;
-        }
-        .acciones-top {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-        }
-        .mensajes {
-            list-style: none;
-            padding: 0;
-        }
-        .mensajes li {
-            background: #dcfce7;
-            color: #166534;
-            padding: 0.5rem 0.75rem;
-            border-radius: 6px;
-            margin-bottom: 1rem;
-            font-size: 0.85rem;
-        }
+        .acciones { display: flex; gap: 0.4rem; flex-wrap: wrap; }
         .siguiente {
-            background: #eef2ff;
-            border: 1px solid #c7d2fe;
-            border-radius: 10px;
+            background: var(--info-light);
+            border: 1px solid #bfdbfe;
+            border-radius: var(--radius-lg);
             padding: 1rem;
             margin-bottom: 1rem;
-            color: #1e3a8a;
+            color: var(--primary-dark);
             font-size: 0.95rem;
         }
-        .siguiente strong {
-            font-size: 1.1rem;
-        }
-        table {
-            border-collapse: collapse;
-            width: 100%;
-            background: white;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-        }
-        th, td {
-            border: 1px solid #e2e8f0;
-            padding: 0.6rem;
-            text-align: left;
-            font-size: 0.85rem;
-        }
-        th {
-            background: #0f172a;
-            color: white;
-        }
-        .badge {
-            display: inline-block;
-            padding: 0.15rem 0.5rem;
-            border-radius: 999px;
-            font-size: 0.75rem;
-            font-weight: bold;
-            color: white;
-        }
-        .prioridad-1 { background: #2563eb; }
-        .prioridad-2 { background: #f59e0b; }
-        .prioridad-3 { background: #dc2626; }
-        .estado {
-            display: inline-block;
-            padding: 0.15rem 0.5rem;
-            border-radius: 999px;
-            font-size: 0.75rem;
-            font-weight: bold;
-        }
-        .estado-en_espera { background: #bfdbfe; color: #1e3a8a; }
-        .estado-en_atencion { background: #ddd6fe; color: #4c1d95; }
-        .acciones {
-            display: flex;
-            gap: 0.4rem;
-            flex-wrap: wrap;
-        }
-        .acciones a {
-            border: none;
-            border-radius: 6px;
-            padding: 0.35rem 0.6rem;
-            font-size: 0.78rem;
-            cursor: pointer;
-            color: white;
-            white-space: nowrap;
-            text-decoration: none;
-        }
-        .btn-procesar { background: #2563eb; }
-        .vacio {
-            color: #64748b;
+        .siguiente strong { font-size: 1.1rem; }
+        .prioridad-1 { background: var(--primary); color: white; }
+        .prioridad-2 { background: var(--warning); color: white; }
+        .prioridad-3 { background: var(--danger); color: white; }
+        .estado-en_espera { background: #dbeafe; color: #1e40af; }
+        .estado-en_atencion { background: #ede9fe; color: #5b21b6; }
+        .empty-state-vacio {
+            color: var(--text-muted);
             font-size: 0.9rem;
+            text-align: center;
+            padding: 2rem;
         }
     </style>
-</head>
-<body>
-{% include 'includes/notificaciones.html' %}
-    <div class="topbar">
-        <h1>Pantalla de turnos — Emergencia IGSS</h1>
-        <a class="volver" href="{{ volver_url }}">&larr; Volver a Emergencia IGSS</a>
-    </div>
+{% endblock %}
 
-    {% if messages %}
-        <ul class="mensajes">
-            {% for message in messages %}
-                <li>{{ message }}</li>
-            {% endfor %}
-        </ul>
-    {% endif %}
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{{ volver_url }}">
+        <svg><use href="#i-arrow-left"/></svg>
+        Volver a Emergencia IGSS
+    </a>
+{% endblock %}
 
-    <div class="acciones-top">
+{% block content %}
+    <div class="flex-between mb-2">
         {% if siguiente %}
             <div class="siguiente">
                 Siguiente: <strong>{{ siguiente.turno }}</strong> — {{ siguiente.paciente }}
@@ -148,40 +48,56 @@
         {% else %}
             <div class="siguiente">No hay turnos en espera en este momento.</div>
         {% endif %}
-        <a class="nuevo" href="{% url 'registrar_ticket_emergencia' %}">+ Registrar ticket</a>
+        <a class="btn btn-danger" href="{% url 'registrar_ticket_emergencia' %}">
+            <svg><use href="#i-plus"/></svg>
+            Registrar Ticket
+        </a>
     </div>
 
     {% if cola %}
-        <table>
-            <tr>
-                <th>Turno</th>
-                <th>Paciente</th>
-                <th>DPI</th>
-                <th>Prioridad</th>
-                <th>Motivo</th>
-                <th>Hora de llegada</th>
-                <th>Estado</th>
-                <th>Acciones</th>
-            </tr>
-            {% for ticket in cola %}
-                <tr>
-                    <td>{{ ticket.turno }}</td>
-                    <td>{{ ticket.paciente.nombre }} {{ ticket.paciente.apellido }}</td>
-                    <td>{{ ticket.paciente.dpi }}</td>
-                    <td><span class="badge prioridad-{{ ticket.prioridad }}">{{ ticket.get_prioridad_display }}</span></td>
-                    <td>{{ ticket.motivo|default:"—" }}</td>
-                    <td>{{ ticket.creado_en|time:'H:i' }}</td>
-                    <td><span class="estado estado-{{ ticket.estado }}">{{ ticket.get_estado_display }}</span></td>
-                    <td>
-                        <div class="acciones">
-                            <a class="btn-procesar" href="{% url 'procesar_ticket_emergencia' ticket.id %}">Procesar</a>
-                        </div>
-                    </td>
-                </tr>
-            {% endfor %}
-        </table>
+        <div class="card">
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Turno</th>
+                            <th>Paciente</th>
+                            <th>DPI</th>
+                            <th>Prioridad</th>
+                            <th>Motivo</th>
+                            <th>Hora de llegada</th>
+                            <th>Estado</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for ticket in cola %}
+                            <tr>
+                                <td>{{ ticket.turno }}</td>
+                                <td>{{ ticket.paciente.nombre }} {{ ticket.paciente.apellido }}</td>
+                                <td>{{ ticket.paciente.dpi }}</td>
+                                <td><span class="badge prioridad-{{ ticket.prioridad }}">{{ ticket.get_prioridad_display }}</span></td>
+                                <td>{{ ticket.motivo|default:"—" }}</td>
+                                <td>{{ ticket.creado_en|time:'H:i' }}</td>
+                                <td><span class="estado estado-{{ ticket.estado }}">{{ ticket.get_estado_display }}</span></td>
+                                <td>
+                                    <div class="acciones">
+                                        <a class="btn btn-primary btn-sm" href="{% url 'procesar_ticket_emergencia' ticket.id %}">
+                                            <svg><use href="#i-file-medical"/></svg>
+                                            Procesar
+                                        </a>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
     {% else %}
-        <p class="vacio">La fila de emergencia está vacía.</p>
+        <div class="empty-state">
+            <svg style="width:48px;height:48px;opacity:0.3;"><use href="#i-clipboard"/></svg>
+            <p>La fila de emergencia está vacía.</p>
+        </div>
     {% endif %}
-</body>
-</html>
+{% endblock %}

@@ -1,155 +1,64 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Completar datos - {{ paciente.nombre }} {{ paciente.apellido }}</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f1f5f9;
-            margin: 0;
-            padding: 2rem;
-        }
-        .topbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-        }
-        h1 {
-            color: #0f172a;
-            font-size: 1.3rem;
-        }
-        a.volver {
-            color: #2563eb;
-            text-decoration: none;
-            font-size: 0.85rem;
-        }
-        .card {
-            background: white;
-            border-radius: 12px;
-            padding: 2rem;
-            max-width: 480px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-        }
-        .resumen {
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            padding: 0.85rem 1rem;
-            font-size: 0.85rem;
-            color: #334155;
-            margin-bottom: 1rem;
-        }
-        .resumen strong {
-            color: #0f172a;
-        }
-        .aviso-pendientes {
-            background: #fef9c3;
-            color: #854d0e;
-            border: 1px solid #fde68a;
-            border-radius: 8px;
-            padding: 0.6rem 0.75rem;
-            font-size: 0.85rem;
-            margin-bottom: 1.25rem;
-        }
-        .mensajes {
-            list-style: none;
-            padding: 0;
-        }
-        .mensajes li {
-            background: #dcfce7;
-            color: #166534;
-            padding: 0.5rem 0.75rem;
-            border-radius: 6px;
-            margin-bottom: 1rem;
-            font-size: 0.85rem;
-        }
-        label {
-            display: block;
-            font-size: 0.85rem;
-            color: #334155;
-            margin-bottom: 0.25rem;
-            margin-top: 1rem;
-        }
-        label:first-of-type {
-            margin-top: 0;
-        }
-        input, select {
-            width: 100%;
-            padding: 0.5rem;
-            border: 1px solid #cbd5e1;
-            border-radius: 6px;
-            box-sizing: border-box;
-            font-family: inherit;
-        }
-        .errorlist {
-            color: #dc2626;
-            font-size: 0.8rem;
-            list-style: none;
-            padding: 0;
-            margin: 0.25rem 0 0;
-        }
-        button {
-            margin-top: 1.5rem;
-            width: 100%;
-            padding: 0.6rem;
-            background: #2563eb;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        button:hover {
-            background: #1d4ed8;
-        }
-    </style>
-</head>
-<body>
-{% include 'includes/notificaciones.html' %}
-    <div class="topbar">
-        <h1>Completar datos del paciente</h1>
-        <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
-    </div>
+{% extends 'base.html' %}
+
+{% block title %}Completar datos - {{ paciente.nombre }} {{ paciente.apellido }}{% endblock %}
+{% block page_title %}Completar datos del paciente{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+<div style="max-width:560px;margin:0 auto;">
     <div class="card">
-        <div class="resumen">
-            <strong>{{ paciente.nombre }} {{ paciente.apellido }}</strong><br>
-            DPI: {{ paciente.dpi }}
-        </div>
-
-        {% if messages %}
-            <ul class="mensajes">
-                {% for message in messages %}
-                    <li>{{ message }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-
-        {% if pendientes %}
-            <div class="aviso-pendientes">
-                Todavía falta: {{ pendientes|join:", " }}.
+        <div class="card-body">
+            <div class="resumen">
+                <strong>{{ paciente.nombre }} {{ paciente.apellido }}</strong><br>
+                DPI: {{ paciente.dpi }}
             </div>
-        {% endif %}
 
-        <form method="post">
-            {% csrf_token %}
-            {{ form.non_field_errors }}
+            {% if pendientes %}
+                <div class="alert alert-warning">
+                    <svg width="14" height="14"><use href="#i-alert-triangle"/></svg>
+                    Todavia falta: {{ pendientes|join:", " }}.
+                </div>
+            {% endif %}
 
-            <label for="{{ form.sexo.id_for_label }}">Sexo</label>
-            {{ form.sexo }}
-            {{ form.sexo.errors }}
+            <form method="post">
+                {% csrf_token %}
+                {{ form.non_field_errors }}
 
-            <label for="{{ form.telefono.id_for_label }}">Teléfono</label>
-            {{ form.telefono }}
-            {{ form.telefono.errors }}
+                <label for="{{ form.sexo.id_for_label }}">Sexo</label>
+                {{ form.sexo }}
+                {{ form.sexo.errors }}
 
-            <label for="{{ form.fecha_nacimiento.id_for_label }}">Fecha de nacimiento</label>
-            {{ form.fecha_nacimiento }}
-            {{ form.fecha_nacimiento.errors }}
+                <label for="{{ form.telefono.id_for_label }}">Telefono</label>
+                {{ form.telefono }}
+                {{ form.telefono.errors }}
 
-            <button type="submit">Guardar datos</button>
-        </form>
+                <label for="{{ form.fecha_nacimiento.id_for_label }}">Fecha de nacimiento</label>
+                {{ form.fecha_nacimiento }}
+                {{ form.fecha_nacimiento.errors }}
+
+                <button type="submit" class="btn btn-primary btn-block mt-2">
+                    <svg width="14" height="14"><use href="#i-save"/></svg>
+                    Guardar datos
+                </button>
+            </form>
+        </div>
     </div>
-</body>
-</html>
+</div>
+
+<script>
+    (function () {
+        var dpiInput = document.querySelector('input[name="dpi"]');
+        if (!dpiInput) return;
+        dpiInput.addEventListener('input', function () {
+            this.value = this.value.replace(/\D/g, '').substring(0, 13);
+        });
+    })();
+</script>
+{% endblock %}

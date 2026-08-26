@@ -301,6 +301,24 @@ class CompletarDatosPacienteForm(forms.Form):
         return fecha
 
 
+class IngresarCorreoEnvioForm(forms.Form):
+    """Usado cuando la recepcionista quiere enviar un estudio pero el
+    paciente todavía no tiene correo registrado: pide el correo y, al
+    guardarlo, la vista manda el estudio de una vez."""
+
+    correo = forms.EmailField(
+        label='Correo electrónico',
+        max_length=254,
+        widget=forms.EmailInput(attrs={
+            'placeholder': 'paciente@correo.com',
+            'autocomplete': 'email',
+        }),
+    )
+
+    def clean_correo(self):
+        return self.cleaned_data['correo'].strip().lower()
+
+
 class ProcesarTicketForm(forms.Form):
     """Convierte un ticket en espera directamente en una orden de trabajo
     para el técnico (se salta la revisión del radiólogo: el paciente ya

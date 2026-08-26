@@ -2,7 +2,6 @@ import datetime
 import os
 import zipfile
 from io import BytesIO
-from urllib.parse import urlencode
 
 from django import forms
 from django.contrib import messages
@@ -29,6 +28,7 @@ from .forms import (
     CrearTipoEstudioForm,
     EXTENSIONES_IMAGEN_DIRECTA,
     GenerarOrdenForm,
+    IngresarCorreoEnvioForm,
     NOMBRES_IGNORADOS_EN_CARPETA,
     ProcesarTicketForm,
     RegistrarTicketForm,
@@ -467,6 +467,86 @@ def historial_paciente(request, paciente_id):
     })
 
 
+def _enviar_estudio_y_registrar(request, cita, orden):
+    """Envía el estudio (asume que el paciente ya tiene correo) y deja
+    constancia: bitácora, marca de tiempo y mensaje de éxito. Si el envío
+    falla (ej. el sistema no tiene configuradas las credenciales SMTP),
+    avisa con un mensaje de error en vez de dejar la pantalla reventar, y
+    NO marca el estudio como enviado — así el botón sigue disponible para
+    reintentar."""
+    if not enviar_resultados(orden):
+        messages.error(
+            request,
+            'No se pudo enviar el correo. El sistema todavía no tiene configurado el '
+            'correo emisor (EMAIL_HOST_USER/EMAIL_HOST_PASSWORD) — avisá al '
+            'administrador. El estudio sigue marcado como no enviado.',
+        )
+        return
+
+    orden.resultados_enviados_en = timezone.now()
+    orden.save(update_fields=['resultados_enviados_en'])
+
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_ENVIAR_ESTUDIO,
+        descripcion=f'Envió el estudio de {cita.paciente} (cita #{cita.id}) por correo.',
+    )
+    messages.success(request, f'Estudio enviado a {cita.paciente} ({cita.paciente.correo}).')
+
+
+@login_required
+@user_passes_test(es_recepcionista)
+@require_POST
+def enviar_estudio(request, cita_id):
+    """Envía los resultados del estudio al correo del paciente. Antes esto
+    pasaba automático cuando la radióloga adjuntaba el informe; ahora lo
+    dispara la recepcionista a mano desde "Estudios realizados", una vez
+    que quiere confirmar el envío (botón "Enviar estudio"). Si el paciente
+    todavía no tiene correo registrado, primero la manda a completarlo."""
+    cita = get_object_or_404(Cita, id=cita_id, estado=Cita.ESTADO_PROCESADA)
+    orden = get_object_or_404(OrdenTrabajo, cita=cita)
+
+    if not cita.paciente.correo:
+        return redirect('ingresar_correo_envio', cita_id=cita.id)
+
+    _enviar_estudio_y_registrar(request, cita, orden)
+    return redirect('historial_paciente', paciente_id=cita.paciente_id)
+
+
+@login_required
+@user_passes_test(es_recepcionista)
+def ingresar_correo_envio(request, cita_id):
+    """El paciente no tenía correo registrado al momento de enviar el
+    estudio: pide el correo acá y, al guardarlo, envía el estudio de una
+    vez (sin que la recepcionista tenga que volver a apretar "Enviar
+    estudio")."""
+    cita = get_object_or_404(Cita, id=cita_id, estado=Cita.ESTADO_PROCESADA)
+    orden = get_object_or_404(OrdenTrabajo, cita=cita)
+
+    if cita.paciente.correo:
+        # Ya se completó (ej. en otra pestaña); no hace falta este paso,
+        # se envía directo.
+        _enviar_estudio_y_registrar(request, cita, orden)
+        return redirect('historial_paciente', paciente_id=cita.paciente_id)
+
+    if request.method == 'POST':
+        form = IngresarCorreoEnvioForm(request.POST)
+        if form.is_valid():
+            paciente = cita.paciente
+            paciente.correo = form.cleaned_data['correo']
+            paciente.save(update_fields=['correo'])
+            _enviar_estudio_y_registrar(request, cita, orden)
+            return redirect('historial_paciente', paciente_id=cita.paciente_id)
+    else:
+        form = IngresarCorreoEnvioForm()
+
+    return render(request, 'pacientes/ingresar_correo_envio.html', {
+        'form': form,
+        'cita': cita,
+    })
+
+
 @login_required
 @user_passes_test(es_recepcionista)
 def ver_estudio_historial(request, cita_id):
@@ -835,14 +915,55 @@ def generar_orden(request, convenio, cita_id):
 @login_required
 @user_passes_test(es_tecnico)
 def ordenes_pendientes(request):
+    """Órdenes esperando que el técnico cargue las imágenes, con búsqueda
+    por nombre/apellido/DPI y filtros por convenio, fecha de la cita y
+    tipo de estudio (mismo patrón que historial_pacientes)."""
+    busqueda = (request.GET.get('q') or '').strip()
+    filtro_convenio = (request.GET.get('convenio') or '').strip()
+    filtro_fecha = (request.GET.get('fecha') or '').strip()
+    filtro_tipo_estudio = (request.GET.get('tipo_estudio') or '').strip()
+
     ordenes = (
         OrdenTrabajo.objects.filter(cita__estado=Cita.ESTADO_EN_PROCESO)
         .exclude(imagenes__isnull=False)
         .select_related('cita', 'cita__paciente', 'cita__tipo_estudio')
         .distinct()
-        .order_by('creada_en')
     )
-    return render(request, 'pacientes/ordenes_pendientes.html', {'ordenes': ordenes})
+    if busqueda:
+        ordenes = ordenes.filter(
+            Q(cita__paciente__nombre__icontains=busqueda)
+            | Q(cita__paciente__apellido__icontains=busqueda)
+            | Q(cita__paciente__dpi__icontains=busqueda)
+        )
+    if filtro_convenio:
+        ordenes = ordenes.filter(cita__convenio=filtro_convenio)
+    if filtro_fecha:
+        ordenes = ordenes.filter(cita__fecha=filtro_fecha)
+    if filtro_tipo_estudio:
+        ordenes = ordenes.filter(cita__tipo_estudio_id=filtro_tipo_estudio)
+
+    ordenes = ordenes.order_by('creada_en')
+
+    contexto = {
+        'ordenes': ordenes,
+        'busqueda': busqueda,
+        'filtro_convenio': filtro_convenio,
+        'filtro_fecha': filtro_fecha,
+        'filtro_tipo_estudio': filtro_tipo_estudio,
+        'tipos_estudio': TipoEstudio.objects.filter(
+            id__in=OrdenTrabajo.objects.filter(cita__estado=Cita.ESTADO_EN_PROCESO)
+            .exclude(imagenes__isnull=False)
+            .values('cita__tipo_estudio_id')
+        ).order_by('nombre'),
+    }
+
+    # Búsqueda en vivo: el JS de la página pide solo el listado (sin el
+    # HTML completo) a medida que se escribe/filtra, igual que en
+    # historial_pacientes.
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return render(request, 'pacientes/includes/_resultados_ordenes.html', contexto)
+
+    return render(request, 'pacientes/ordenes_pendientes.html', contexto)
 
 
 def _guardar_imagen_o_convertir_dicom(archivo, orden, usuario):
@@ -1017,8 +1138,6 @@ def adjuntar_informe(request, cita_id):
             cita.estado = Cita.ESTADO_PROCESADA
             cita.save(update_fields=['estado'])
 
-            enviar_resultados(orden)
-
             _notificar_estudio_completado(cita)
             Bitacora.registrar(
                 request=request,
@@ -1027,12 +1146,7 @@ def adjuntar_informe(request, cita_id):
                 descripcion=f'Adjuntó el informe de {cita.paciente} (cita #{cita.id}).',
             )
             messages.success(request, f'Informe adjuntado para {cita.paciente}.')
-            parametros = urlencode({
-                'envio': 'exitoso',
-                'paciente': f'{cita.paciente.nombre} {cita.paciente.apellido}',
-                'correo': cita.paciente.correo or '',
-            })
-            return redirect(f'{volver_url}?{parametros}')
+            return redirect(volver_url)
     else:
         form = AdjuntarInformeForm()
 
@@ -1103,7 +1217,7 @@ def guardar_seleccion_imagenes(request, orden_id):
     else:
         messages.info(request, 'No se descartó ninguna imagen.')
 
-    return redirect('ver_imagenes_jpg', orden_id=orden.id)
+    return redirect('adjuntar_informe', cita_id=orden.cita_id)
 
 
 @login_required

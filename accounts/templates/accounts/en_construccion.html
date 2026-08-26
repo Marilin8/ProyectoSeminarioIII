@@ -1,45 +1,24 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>{{ pantalla.nombre }} - Clínica de Imágenes</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f1f5f9;
-            margin: 0;
-            padding: 2rem;
-        }
-        a.volver {
-            color: #2563eb;
-            text-decoration: none;
-            font-size: 0.85rem;
-        }
-        .card {
-            margin-top: 1.5rem;
-            background: white;
-            border-radius: 12px;
-            padding: 2.5rem;
-            max-width: 480px;
-            text-align: center;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-        }
-        h1 {
-            color: #0f172a;
-            font-size: 1.2rem;
-        }
-        p {
-            color: #64748b;
-            font-size: 0.9rem;
-        }
-    </style>
-</head>
-<body>
-{% include 'includes/notificaciones.html' %}
-    <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
-    <div class="card">
-        <h1>{{ pantalla.nombre }}</h1>
-        <p>Esta pantalla todavía está en construcción.</p>
+{% extends 'base.html' %}
+
+{% block title %}{{ pantalla.nombre }} - Clínica de Imágenes{% endblock %}
+{% block page_title %}{{ pantalla.nombre }}{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="card" style="max-width:480px;margin:0 auto;">
+        <div class="card-body text-center" style="padding:2.5rem;">
+            <svg width="48" height="48" style="color:var(--warning);margin-bottom:0.75rem;">
+                <use href="#i-alert-triangle"/>
+            </svg>
+            <h2 style="font-size:1.1rem;font-weight:700;margin-bottom:0.5rem;">{{ pantalla.nombre }}</h2>
+            <p class="text-muted">Esta pantalla todavía está en construcción.</p>
+        </div>
     </div>
-</body>
-</html>
+{% endblock %}

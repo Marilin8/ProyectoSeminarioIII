@@ -78,6 +78,7 @@ class Bitacora(models.Model):
     ACCION_ADJUNTAR_IMAGENES = 'adjuntar_imagenes'
     ACCION_SELECCIONAR_IMAGENES = 'seleccionar_imagenes'
     ACCION_ADJUNTAR_INFORME = 'adjuntar_informe'
+    ACCION_ENVIAR_ESTUDIO = 'enviar_estudio'
     ACCION_REGISTRAR_TICKET = 'registrar_ticket'
     ACCION_PROCESAR_TICKET = 'procesar_ticket'
     ACCION_ENVIAR_REPORTE_DIARIO = 'enviar_reporte_diario'
@@ -98,6 +99,7 @@ class Bitacora(models.Model):
         (ACCION_ADJUNTAR_IMAGENES, 'Carga de imágenes de estudio'),
         (ACCION_SELECCIONAR_IMAGENES, 'Selección de imágenes del estudio'),
         (ACCION_ADJUNTAR_INFORME, 'Carga de informe'),
+        (ACCION_ENVIAR_ESTUDIO, 'Envío de estudio al paciente'),
         (ACCION_REGISTRAR_TICKET, 'Registro de ticket de emergencia'),
         (ACCION_PROCESAR_TICKET, 'Procesamiento de ticket (genera orden de trabajo)'),
         (ACCION_ENVIAR_REPORTE_DIARIO, 'Envío de reporte diario'),

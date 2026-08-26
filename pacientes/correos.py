@@ -1,4 +1,8 @@
+import logging
+
 from django.core.mail import EmailMessage
+
+logger = logging.getLogger(__name__)
 
 
 def enviar_resultados(orden):
@@ -6,11 +10,18 @@ def enviar_resultados(orden):
 
     Portado del commit 758cb02 "Agregar envío de resultados por correo" de
     TechBlood/ProyectoSeminarioClinica. Si el paciente no tiene correo
-    registrado, no hace nada (no interrumpe el flujo de adjuntar informe)."""
+    registrado, no hace nada (no interrumpe el flujo de adjuntar informe).
+
+    Devuelve True si el correo se mandó, False si no había correo del
+    paciente o si el envío falló (ej. el sistema todavía no tiene
+    configuradas las credenciales SMTP en el .env: EMAIL_HOST_USER /
+    EMAIL_HOST_PASSWORD). Nunca deja que ese fallo tumbe la pantalla que
+    lo llamó — el llamador decide qué mostrarle al usuario según el
+    resultado."""
     paciente = orden.cita.paciente
 
     if not paciente.correo:
-        return
+        return False
 
     asunto = 'Resultados de su estudio - Clínica de Imágenes'
 
@@ -47,4 +58,15 @@ Clínica de Imágenes
     for imagen in orden.imagenes.filter(seleccionada=True).exclude(archivo=''):
         correo.attach_file(imagen.archivo.path)
 
-    correo.send()
+    try:
+        correo.send()
+    except Exception:
+        # Típicamente: EMAIL_HOST_USER/EMAIL_HOST_PASSWORD sin configurar
+        # en .env, o el servidor SMTP rechazó la conexión. Se registra en
+        # el log del servidor para que el administrador lo pueda revisar,
+        # pero no se propaga: quien llamó a esta función avisa al usuario
+        # con un mensaje entendible en vez de una pantalla de error.
+        logger.exception('No se pudo enviar el correo de resultados de la orden #%s', orden.id)
+        return False
+
+    return True

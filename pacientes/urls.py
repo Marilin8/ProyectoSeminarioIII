@@ -22,6 +22,16 @@ urlpatterns = [
         name='ver_estudio_historial',
     ),
     path(
+        'pacientes/historial/estudio/<int:cita_id>/enviar/',
+        views.enviar_estudio,
+        name='enviar_estudio',
+    ),
+    path(
+        'pacientes/historial/estudio/<int:cita_id>/enviar/correo/',
+        views.ingresar_correo_envio,
+        name='ingresar_correo_envio',
+    ),
+    path(
         'citas/calendario/coex/',
         views.seleccionar_horario,
         {'convenio': Cita.CONVENIO_COEX},

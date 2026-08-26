@@ -1,129 +1,81 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Panel - Clínica de Imágenes</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f1f5f9;
-            margin: 0;
-            padding: 0;
-        }
-        .navbar-clinica {
-            background-color: #0f172a;
-            color: #ffffff;
-            font-weight: bold;
-            font-size: 1.1rem;
-            padding: 0.8rem 1.5rem;
-        }
-        .contenido {
-            padding: 2rem;
-        }
-        .topbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-            padding-bottom: 0.75rem;
-            border-bottom: 1px solid #cbd5e1;
-        }
-        h1 {
-            color: #0f172a;
-            font-size: 1.3rem;
-        }
-        button.logout {
-            background-color: #ef4444;
-            color: #ffffff;
-            border: none;
-            padding: 0.45rem 0.85rem;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            cursor: pointer;
-        }
-        button.logout:hover {
-            background-color: #dc2626;
-        }
-        .mensajes {
-            list-style: none;
-            padding: 0;
-        }
-        .mensajes li {
-            background: #dcfce7;
-            color: #166534;
-            padding: 0.5rem 0.75rem;
-            border-radius: 6px;
-            margin-bottom: 1rem;
-        }
-        .pantallas {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-            gap: 1.25rem;
-        }
-        .pantallas a {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 0.4rem;
-            min-height: 85px;
-            background-color: #2563eb;
-            color: #ffffff;
-            font-weight: bold;
-            font-size: 0.9rem;
-            text-align: center;
-            border-radius: 8px;
-            text-decoration: none;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-            transition: transform 0.15s ease, background-color 0.2s ease;
-        }
-        .pantallas a:hover {
-            background-color: #1d4ed8;
-            transform: translateY(-2px);
-        }
-        .pantallas a i {
-            font-size: 1.5rem;
-        }
-        .vacio {
-            color: #64748b;
-            font-size: 0.9rem;
-        }
-    </style>
-</head>
-<body>
-    <div class="navbar-clinica">Clínica Médica</div>
-    <div class="contenido">
+{% extends 'base.html' %}
+
+{% block title %}Panel — Clínica de Imágenes{% endblock %}
+{% block page_title %}Bienvenido, {{ user.get_full_name|default:user.username }}{% endblock %}
+
+{% block topbar_actions %}
     {% include 'includes/notificaciones.html' %}
-    <div class="topbar">
-        <h1>Bienvenido, {{ user.get_full_name|default:user.username }} <span style="color:#64748b; font-weight:normal;">({{ user.get_rol_display }})</span></h1>
-        <form method="post" action="{% url 'logout' %}">
-            {% csrf_token %}
-            <button class="logout" type="submit">Cerrar sesión</button>
-        </form>
-    </div>
-    {% if messages %}
-        <ul class="mensajes">
-            {% for message in messages %}
-                <li>{{ message }}</li>
-            {% endfor %}
-        </ul>
+{% endblock %}
+
+{% block content %}
+
+<p class="text-muted text-sm mb-2">{{ user.get_rol_display }}</p>
+
+<div class="section-title">Acciones principales</div>
+<div class="grid-4 mb-3">
+    {% for pantalla in pantallas %}
+        {% if pantalla.url_name != 'ordenes_pendientes' and pantalla.url_name != 'citas_procesadas' %}
+            {% if pantalla.clave %}
+                <a href="{% url 'pantalla_placeholder' clave=pantalla.clave %}" class="btn btn-primary" style="flex-direction:column;min-height:90px;padding:1.25rem 1rem;font-size:0.85rem;font-weight:600;text-align:center;">
+                    <svg width="28" height="28"><use href="#i-grid"/></svg>
+                    {{ pantalla.nombre }}
+                </a>
+            {% else %}
+                <a href="{% url pantalla.url_name %}" class="btn btn-primary" style="flex-direction:column;min-height:90px;padding:1.25rem 1rem;font-size:0.85rem;font-weight:600;text-align:center;">
+                    <svg width="28" height="28"><use href="#i-grid"/></svg>
+                    {{ pantalla.nombre }}
+                </a>
+            {% endif %}
+        {% endif %}
+    {% endfor %}
+
+    {% if user.rol == 'tecnico_imagenes' %}
+        <a href="{% url 'ordenes_pendientes' %}" class="btn btn-success" style="flex-direction:column;min-height:90px;padding:1.25rem 1rem;font-size:0.85rem;font-weight:600;text-align:center;">
+            <svg width="28" height="28"><use href="#i-camera"/></svg>
+            Procesar Orden / Cargar Captura
+        </a>
     {% endif %}
 
-    {% if pantallas %}
-        <div class="pantallas">
-            {% for pantalla in pantallas %}
-                {% if pantalla.clave %}
-                    <a href="{% url 'pantalla_placeholder' clave=pantalla.clave %}"><i class="bi bi-wallet2"></i>{{ pantalla.nombre }}</a>
-                {% else %}
-                    <a href="{% url pantalla.url_name %}"><i class="bi bi-wallet2"></i>{{ pantalla.nombre }}</a>
-                {% endif %}
-            {% endfor %}
-        </div>
-    {% else %}
-        <p class="vacio">Tu rol todavía no tiene pantallas asignadas.</p>
+    {% if user.rol == 'medico_radiologo' %}
+        <a href="{% url 'citas_procesadas' %}" class="btn btn-success" style="flex-direction:column;min-height:90px;padding:1.25rem 1rem;font-size:0.85rem;font-weight:600;text-align:center;">
+            <svg width="28" height="28"><use href="#i-file-medical"/></svg>
+            Estudios
+        </a>
     {% endif %}
+</div>
+
+{% if ordenes %}
+<div class="card mt-2">
+    <div class="card-header">Dictámenes e Informes Radiológicos</div>
+    <div class="card-body" style="padding: 0;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Paciente</th>
+                    <th>Estudio</th>
+                    <th>Fecha</th>
+                    <th>Dictamen / Informe</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for orden in ordenes %}
+                <tr>
+                    <td>{{ orden.cita.paciente.nombre }} {{ orden.cita.paciente.apellido }}</td>
+                    <td>{{ orden.cita.tipo_estudio.nombre }}</td>
+                    <td>{{ orden.informe_creado_en|date:"d/m/Y H:i"|default:"-" }}</td>
+                    <td>
+                        {% if orden.informe_archivo %}
+                            <a href="{{ orden.informe_archivo.url }}" target="_blank" class="btn btn-outline btn-sm">PDF</a>
+                        {% endif %}
+                        {% if not orden.informe_archivo and not orden.informe_texto %}
+                            <span class="badge badge-warning">Pendiente</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
-</body>
-</html>
+</div>
+{% endif %}
+{% endblock %}

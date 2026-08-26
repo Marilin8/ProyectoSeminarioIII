@@ -1,219 +1,48 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Agendar cita - Clínica de Imágenes</title>
+{% extends 'base.html' %}
+
+{% block title %}Agendar cita — Clínica de Imágenes{% endblock %}
+{% block page_title %}Agendar cita — {{ convenio_nombre }}{% endblock %}
+
+{% block extra_css %}
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f1f5f9;
-            margin: 0;
-            padding: 2rem;
-        }
-        .topbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-        }
-        h1 {
-            color: #0f172a;
-            font-size: 1.4rem;
-        }
-        a.volver {
-            color: #2563eb;
-            text-decoration: none;
-            font-size: 0.85rem;
-        }
-        .card {
-            background: white;
-            border-radius: 12px;
-            padding: 2rem;
-            max-width: 640px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-        }
-        h2 {
-            font-size: 1rem;
-            color: #334155;
-            margin: 1.5rem 0 0.25rem;
-            border-bottom: 1px solid #e2e8f0;
-            padding-bottom: 0.25rem;
-        }
-        h2:first-child {
-            margin-top: 0;
-        }
-        label {
-            display: block;
-            font-size: 0.85rem;
-            color: #334155;
-            margin-bottom: 0.25rem;
-            margin-top: 1rem;
-        }
-        input, select, textarea {
-            width: 100%;
-            padding: 0.5rem;
-            border: 1px solid #cbd5e1;
-            border-radius: 6px;
-            box-sizing: border-box;
-            font-family: inherit;
-        }
-        .errorlist {
-            color: #dc2626;
-            font-size: 0.8rem;
-            list-style: none;
-            padding: 0;
-            margin: 0.25rem 0 0;
-        }
-        .ayuda {
-            font-size: 0.75rem;
-            color: #64748b;
-            margin-top: 0.25rem;
-        }
-        button {
-            margin-top: 1.5rem;
-            width: 100%;
-            padding: 0.6rem;
-            background: #2563eb;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        button:hover {
-            background: #1d4ed8;
-        }
-        .horario {
-            background: #eff6ff;
-            border: 1px solid #bfdbfe;
-            border-radius: 6px;
-            padding: 0.6rem 0.75rem;
-            font-size: 0.85rem;
-            color: #1e3a8a;
-        }
-        .horario a {
-            color: #2563eb;
-            margin-left: 0.5rem;
-        }
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(15, 23, 42, 0.55);
-            align-items: center;
-            justify-content: center;
-            z-index: 50;
-        }
-        .modal-overlay.abierto {
-            display: flex;
-        }
-        .modal-card {
-            background: white;
-            border-radius: 12px;
-            padding: 1.5rem 2rem;
-            max-width: 480px;
-            width: 90%;
-            max-height: 80vh;
-            overflow-y: auto;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.25);
-        }
-        .modal-card h2 {
-            margin-top: 0;
-            font-size: 1.1rem;
-            color: #0f172a;
-            border-bottom: none;
-            padding-bottom: 0;
-        }
-        .modal-resumen dt {
-            font-size: 0.75rem;
-            color: #64748b;
-            margin-top: 0.6rem;
-        }
-        .modal-resumen dd {
-            font-size: 0.9rem;
-            color: #0f172a;
-            margin: 0.1rem 0 0;
-        }
-        .modal-botones {
-            display: flex;
-            gap: 0.75rem;
-            margin-top: 1.5rem;
-        }
-        .modal-botones button {
-            margin-top: 0;
-            flex: 1;
-        }
-        .btn-editar {
-            background: #e2e8f0 !important;
-            color: #334155 !important;
-        }
-        .btn-editar:hover {
-            background: #cbd5e1 !important;
-        }
-        .aviso-paciente {
-            display: none;
-            margin-top: 0.75rem;
-            padding: 0.6rem 0.75rem;
-            border-radius: 6px;
-            font-size: 0.85rem;
-        }
-        .aviso-paciente.encontrado {
-            background: #dcfce7;
-            color: #166534;
-            border: 1px solid #bbf7d0;
-        }
-        .aviso-paciente a {
-            color: inherit;
-            font-weight: bold;
-            margin-left: 0.5rem;
-        }
-        .aviso-emergencia {
-            margin-top: 0.75rem;
-            padding: 0.75rem;
-            border-radius: 6px;
-            background: #fef9c3;
-            border: 1px solid #fde047;
-            color: #713f12;
-            font-size: 0.85rem;
-        }
-        .aviso-emergencia label {
-            display: flex;
-            align-items: flex-start;
-            gap: 0.5rem;
-            margin-top: 0.6rem;
-            font-size: 0.85rem;
-            font-weight: bold;
-            color: #713f12;
-        }
-        .aviso-emergencia input[type="checkbox"] {
-            width: auto;
-            margin-top: 0.15rem;
-        }
+        .horario { background: var(--info-light); border: 1px solid #bfdbfe; border-radius: var(--radius); padding: 0.6rem 0.75rem; font-size: 0.82rem; color: var(--primary-dark); margin-top: 1rem; }
+        .horario a { color: var(--primary); margin-left: 0.5rem; font-weight: 500; }
+        .aviso-paciente { display: none; margin-top: 0.75rem; padding: 0.6rem 0.75rem; border-radius: var(--radius); font-size: 0.82rem; background: var(--success-light); color: #166534; border: 1px solid #bbf7d0; }
+        .aviso-paciente a { color: inherit; font-weight: bold; margin-left: 0.5rem; }
+        .aviso-emergencia { margin-top: 0.75rem; padding: 0.75rem; border-radius: var(--radius); background: var(--warning-light); border: 1px solid #fde047; color: #713f12; font-size: 0.82rem; }
+        .aviso-emergencia label { display: flex; align-items: flex-start; gap: 0.5rem; margin-top: 0.6rem; font-size: 0.82rem; font-weight: 600; color: #713f12; }
+        .aviso-emergencia input[type="checkbox"] { width: auto; margin-top: 0.15rem; }
+        .ayuda-dpi-incompleto { color: var(--danger); }
+        .btn-editar { background: var(--border-light); color: #334155; }
+        .btn-editar:hover { background: var(--border); }
     </style>
-</head>
-<body>
-{% include 'includes/notificaciones.html' %}
-    <div class="topbar">
-        <h1>Agendar cita — {{ convenio_nombre }}</h1>
-        <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
-    </div>
-    <div class="card">
+{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a href="{% url 'dashboard' %}" class="btn btn-outline btn-sm">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg> Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="card" style="padding:1.5rem;max-width:640px;">
         <form method="post" id="form-agendar-cita">
             {% csrf_token %}
             {{ form.non_field_errors }}
             {% if form.errors %}
-                <div class="aviso-paciente" style="display:block; background:#fee2e2; color:#991b1b; border:1px solid #fecaca;">
+                <div class="aviso-paciente" style="display:block; background:var(--danger-light); color:#991b1b; border:1px solid #fecaca;">
                     No se pudo enviar la solicitud: revisá los campos marcados en rojo más abajo.
                 </div>
             {% endif %}
 
-            <h2>Paciente</h2>
+            <h2 style="font-size:0.95rem;color:var(--text);margin:1.5rem 0 0.25rem;border-bottom:1px solid var(--border-light);padding-bottom:0.3rem;font-weight:600;">Paciente</h2>
 
             <label for="{{ form.dpi.id_for_label }}">DPI</label>
             {{ form.dpi }}
             {{ form.dpi.errors }}
-            <p class="ayuda ayuda-dpi-incompleto" id="ayuda-dpi-incompleto" style="display:none; color:#dc2626;"></p>
-            <div class="aviso-paciente encontrado" id="aviso-paciente-existente">
+            <p class="ayuda ayuda-dpi-incompleto" id="ayuda-dpi-incompleto" style="display:none;"></p>
+            <div class="aviso-paciente" id="aviso-paciente-existente">
                 Paciente ya registrado — se completaron sus datos automáticamente.
                 <a href="#" id="btn-buscar-otro">No es este paciente</a>
             </div>
@@ -252,11 +81,13 @@
             {{ form.carnet_igss }}
             {{ form.carnet_igss.errors }}
 
-            <h2>Cita</h2>
+            <h2 style="font-size:0.95rem;color:var(--text);margin:1.5rem 0 0.25rem;border-bottom:1px solid var(--border-light);padding-bottom:0.3rem;font-weight:600;">Cita</h2>
 
             <div class="horario">
                 Horario elegido: <strong>{{ fecha_valor }} — {{ hora_valor }}</strong>
-                <a href="{{ calendario_url }}">Cambiar horario</a>
+                <a href="{{ calendario_url }}" id="btn-cambiar-horario">
+                    <svg width="14" height="14"><use href="#i-calendar"/></svg> Cambiar horario
+                </a>
             </div>
             {% if hay_conflicto %}
                 <div class="aviso-emergencia">
@@ -286,7 +117,9 @@
             {{ form.notas }}
             {{ form.notas.errors }}
 
-            <button type="submit">Agendar cita</button>
+            <button type="submit" class="btn btn-primary btn-block btn-lg mt-2">
+                <svg width="14" height="14"><use href="#i-check-circle"/></svg> Agendar cita
+            </button>
         </form>
     </div>
 
@@ -295,13 +128,58 @@
             <h2>Verificá los datos antes de enviar la solicitud</h2>
             <dl class="modal-resumen" id="modal-resumen"></dl>
             <div class="modal-botones">
-                <button type="button" class="btn-editar" id="btn-editar">Editar</button>
-                <button type="button" id="btn-confirmar">Confirmar y enviar</button>
+                <button type="button" class="btn btn-outline btn-editar" id="btn-editar">
+                    <svg width="14" height="14"><use href="#i-edit"/></svg> Editar
+                </button>
+                <button type="button" class="btn btn-primary btn-confirmar" id="btn-confirmar">
+                    <svg width="14" height="14"><use href="#i-check"/></svg> Confirmar y enviar
+                </button>
             </div>
         </div>
     </div>
 
     <script>
+    (function() {
+        var STORAGE_KEY = 'agendar_cita_draft';
+        var form = document.getElementById('form-agendar-cita');
+        var btnCambiar = document.getElementById('btn-cambiar-horario');
+
+        var campos = ['dpi', 'nombre', 'apellido', 'sexo', 'fecha_nacimiento',
+                       'telefono', 'correo', 'carnet_igss', 'tipo_estudio',
+                       'radiologo', 'notas'];
+
+        function guardarDraft() {
+            var data = {};
+            campos.forEach(function(nombre) {
+                var el = form.querySelector('[name="' + nombre + '"]');
+                if (el) {
+                    if (el.type === 'checkbox') { data[nombre] = el.checked; }
+                    else { data[nombre] = el.value; }
+                }
+            });
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+        }
+
+        function restaurarDraft() {
+            try {
+                var raw = localStorage.getItem(STORAGE_KEY);
+                if (!raw) return;
+                var data = JSON.parse(raw);
+                campos.forEach(function(nombre) {
+                    var el = form.querySelector('[name="' + nombre + '"]');
+                    if (el && data[nombre] !== undefined) {
+                        if (el.type === 'checkbox') { el.checked = data[nombre]; }
+                        else { el.value = data[nombre]; }
+                    }
+                });
+                localStorage.removeItem(STORAGE_KEY);
+            } catch(e) {}
+        }
+
+        if (btnCambiar) { btnCambiar.addEventListener('click', guardarDraft); }
+        restaurarDraft();
+    })();
+
         // Autocompleta los datos del paciente si el DPI ya está registrado,
         // para no volver a escribir nombre/apellido/sexo/teléfono/fecha de
         // nacimiento cada vez.
@@ -500,6 +378,12 @@
                 {% if hay_conflicto %}['id_es_emergencia', 'Cita de emergencia (horario ocupado)'],{% endif %}
             ];
 
+            function enviarFormulario() {
+                if (form.dataset.enviando) return;
+                form.dataset.enviando = '1';
+                form.submit();
+            }
+
             form.addEventListener('submit', function (evento) {
                 evento.preventDefault();
                 // Refuerzo por si algún campo obligatorio (ej. Carné IGSS en
@@ -535,10 +419,7 @@
             document.getElementById('btn-editar').addEventListener('click', function () {
                 modal.classList.remove('abierto');
             });
-            document.getElementById('btn-confirmar').addEventListener('click', function () {
-                form.submit();
-            });
+            document.getElementById('btn-confirmar').addEventListener('click', enviarFormulario);
         })();
     </script>
-</body>
-</html>
+{% endblock %}
