@@ -26,6 +26,7 @@ class Paciente(models.Model):
     apellido = models.CharField(max_length=100)
     sexo = models.CharField(max_length=1, choices=SEXO_CHOICES, blank=True)
     telefono = models.CharField(max_length=20, blank=True)
+    correo = models.EmailField(max_length=254, blank=True, null=True)
     fecha_nacimiento = models.DateField(null=True, blank=True)
 
     # Campos que se pueden dejar sin llenar al registrar al paciente (ej. en
@@ -290,10 +291,23 @@ class OrdenTrabajo(models.Model):
 class ImagenEstudio(models.Model):
     orden = models.ForeignKey(OrdenTrabajo, on_delete=models.CASCADE, related_name='imagenes')
     archivo = models.FileField(upload_to='imagenes_estudio/%Y/%m/')
+    # Cuando el técnico sube un DICOM, "archivo" queda con el JPG ya
+    # convertido (para poder mostrarlo en el navegador) y acá se conserva el
+    # .dcm original tal cual se subió, para que la radióloga pueda
+    # descargarlo. Queda vacío si lo que se subió ya era JPG/PNG.
+    archivo_original = models.FileField(
+        upload_to='imagenes_estudio/dicom_original/%Y/%m/', null=True, blank=True,
+    )
     subida_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='imagenes_subidas'
     )
     subida_en = models.DateTimeField(auto_now_add=True)
+    # La radióloga cura la galería (ver_imagenes_jpg): las que deja
+    # marcadas son las que se siguen mostrando y las que se adjuntan en el
+    # correo al paciente. Al descartar una, se le borra el JPG (queda
+    # seleccionada=False y "archivo" vacío) pero "archivo_original" (el
+    # DICOM) nunca se toca — se conserva completo pase lo que pase.
+    seleccionada = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'imagenes_estudio'

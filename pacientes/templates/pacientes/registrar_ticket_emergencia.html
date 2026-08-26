@@ -159,6 +159,10 @@
             {{ form.telefono }}
             {{ form.telefono.errors }}
 
+            <label for="{{ form.correo.id_for_label }}">Correo electrónico</label>
+            {{ form.correo }}
+            {{ form.correo.errors }}
+
             <label for="{{ form.fecha_nacimiento.id_for_label }}">Fecha de nacimiento (opcional)</label>
             {{ form.fecha_nacimiento }}
             {{ form.fecha_nacimiento.errors }}
@@ -191,7 +195,7 @@
             var dpiInput = document.getElementById('id_dpi');
             var aviso = document.getElementById('aviso-paciente-existente');
             var camposAutocompletables = [
-                'nombre', 'apellido', 'sexo', 'telefono', 'fecha_nacimiento', 'carnet_igss',
+                'nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento', 'carnet_igss',
             ];
             var temporizadorBusqueda = null;
             var ultimoDpiBuscado = '';

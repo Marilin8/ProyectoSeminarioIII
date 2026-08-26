@@ -76,6 +76,103 @@
             color: #64748b;
             font-size: 0.9rem;
         }
+
+        /* Ventana de éxito */
+        .modal {
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            background: rgba(15, 23, 42, 0.72);
+            z-index: 9999;
+        }
+        .modal.mostrar {
+            display: flex;
+        }
+        .modal-contenido {
+            width: 100%;
+            max-width: 450px;
+            background: white;
+            border-radius: 20px;
+            padding: 2rem;
+            text-align: center;
+            box-shadow: 0 25px 70px rgba(15, 23, 42, 0.35);
+            animation: aparecerModal 0.25s ease-out;
+        }
+        .icono-exito {
+            width: 82px;
+            height: 82px;
+            margin: 0 auto 1rem;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #dcfce7;
+            color: #15803d;
+            font-size: 2.8rem;
+            font-weight: bold;
+            animation: aparecerCheck 0.35s ease-out;
+        }
+        .modal-contenido h2 {
+            margin: 0 0 0.75rem;
+            color: #0f172a;
+            font-size: 1.45rem;
+        }
+        .modal-contenido p {
+            margin: 0.4rem 0;
+            color: #475569;
+            line-height: 1.5;
+        }
+        .detalle-envio {
+            margin-top: 1.2rem;
+            padding: 1rem;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            text-align: left;
+            color: #334155;
+            line-height: 1.7;
+        }
+        .detalle-envio strong {
+            color: #0f172a;
+        }
+        .btn-cerrar {
+            width: 100%;
+            margin-top: 1.4rem;
+            padding: 0.75rem;
+            border: none;
+            border-radius: 8px;
+            background: #16a34a;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        .btn-cerrar:hover {
+            background: #15803d;
+        }
+        @keyframes aparecerModal {
+            from {
+                opacity: 0;
+                transform: translateY(20px) scale(0.96);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+        @keyframes aparecerCheck {
+            from {
+                opacity: 0;
+                transform: scale(0.5);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
     </style>
 </head>
 <body>
@@ -105,5 +202,55 @@
     {% else %}
         <p class="vacio">No hay citas pendientes de informe por el momento.</p>
     {% endif %}
+
+    <!-- Modal de envío exitoso -->
+    <div id="modal-exito" class="modal">
+        <div class="modal-contenido">
+            <div class="icono-exito">✓</div>
+            <h2>Resultados enviados correctamente</h2>
+            <p>El informe médico fue guardado y el estudio quedó marcado como procesado.</p>
+            <p>Los archivos fueron enviados al correo registrado del paciente.</p>
+            <div class="detalle-envio">
+                <strong>Paciente:</strong> <span id="paciente-enviado"></span><br>
+                <strong>Correo:</strong> <span id="correo-enviado"></span>
+            </div>
+            <button type="button" id="btn-cerrar-exito" class="btn-cerrar">Cerrar</button>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            var parametros = new URLSearchParams(window.location.search);
+            var envio = parametros.get('envio');
+
+            if (envio !== 'exitoso') {
+                return;
+            }
+
+            var modal = document.getElementById('modal-exito');
+            var paciente = document.getElementById('paciente-enviado');
+            var correo = document.getElementById('correo-enviado');
+            var botonCerrar = document.getElementById('btn-cerrar-exito');
+
+            paciente.textContent = parametros.get('paciente') || 'Paciente';
+            correo.textContent = parametros.get('correo') || 'Correo no registrado';
+
+            modal.classList.add('mostrar');
+
+            function cerrarModal() {
+                modal.classList.remove('mostrar');
+                var urlLimpia = window.location.pathname + window.location.hash;
+                window.history.replaceState({}, document.title, urlLimpia);
+            }
+
+            botonCerrar.addEventListener('click', cerrarModal);
+
+            document.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape') {
+                    cerrarModal();
+                }
+            });
+        });
+    </script>
 </body>
 </html>

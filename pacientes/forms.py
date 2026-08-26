@@ -80,6 +80,14 @@ class AgendarCitaForm(forms.Form):
         choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
     )
     telefono = forms.CharField(max_length=20, required=False)
+    correo = forms.EmailField(
+        label='Correo electrónico',
+        max_length=254,
+        widget=forms.EmailInput(attrs={
+            'placeholder': 'paciente@correo.com',
+            'autocomplete': 'email',
+        }),
+    )
     fecha_nacimiento = forms.DateField(
         required=False, widget=forms.DateInput(attrs={'type': 'date'}),
     )
@@ -145,6 +153,9 @@ class AgendarCitaForm(forms.Form):
             raise forms.ValidationError('El apellido solo puede contener letras y espacios.')
         return apellido
 
+    def clean_correo(self):
+        return self.cleaned_data['correo'].strip().lower()
+
     def clean_fecha_nacimiento(self):
         fecha = self.cleaned_data['fecha_nacimiento']
         validar_fecha_nacimiento_no_futura(fecha)
@@ -203,6 +214,14 @@ class RegistrarTicketForm(forms.Form):
         choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
     )
     telefono = forms.CharField(max_length=20, required=False)
+    correo = forms.EmailField(
+        label='Correo electrónico',
+        max_length=254,
+        widget=forms.EmailInput(attrs={
+            'placeholder': 'paciente@correo.com',
+            'autocomplete': 'email',
+        }),
+    )
     fecha_nacimiento = forms.DateField(
         required=False, widget=forms.DateInput(attrs={'type': 'date'}),
     )
@@ -246,6 +265,9 @@ class RegistrarTicketForm(forms.Form):
         if not NOMBRE_REGEX.match(apellido):
             raise forms.ValidationError('El apellido solo puede contener letras y espacios.')
         return apellido
+
+    def clean_correo(self):
+        return self.cleaned_data['correo'].strip().lower()
 
     def clean_fecha_nacimiento(self):
         fecha = self.cleaned_data['fecha_nacimiento']
@@ -321,7 +343,12 @@ class GenerarOrdenForm(forms.Form):
     )
 
 
-EXTENSIONES_IMAGEN_VALIDAS = ('.jpg', '.jpeg', '.png', '.dcm')
+EXTENSIONES_IMAGEN_DIRECTA = ('.jpg', '.jpeg', '.png')
+
+# Archivos que suelen venir "de regalo" al subir una carpeta completa del
+# escáner (miniaturas/metadatos del sistema operativo, no son parte del
+# estudio) y que se descartan en silencio en vez de rechazar todo el envío.
+NOMBRES_IGNORADOS_EN_CARPETA = ('.ds_store', 'thumbs.db', 'desktop.ini')
 
 
 class MultipleFileInput(forms.ClearableFileInput):
@@ -341,19 +368,31 @@ class MultipleFileField(forms.FileField):
 
 
 class AdjuntarImagenesForm(forms.Form):
+    """Acepta tanto imágenes sueltas (JPG/PNG) como la carpeta completa que
+    exporta el equipo de rayos X/tomógrafo: series DICOM con archivos
+    `.dcm` o sin extensión (ej. `I0`, `I1`, ...). Los `.dcm`/sin extensión
+    se convierten a JPG al guardarlos (ver dicom_utils.dicom_a_jpg_memoria),
+    portado de la rama Andres de TechBlood/ProyectoSeminarioClinica."""
+
     imagenes = MultipleFileField(
         label='Imágenes del estudio',
-        help_text='Formatos permitidos: JPG, PNG o DICOM (.dcm). Puedes seleccionar varias.',
+        help_text=(
+            'Selecciona la carpeta completa del estudio DICOM, o imágenes JPG/PNG '
+            'sueltas. Los archivos DICOM se convierten a JPG automáticamente.'
+        ),
+        widget=MultipleFileInput(attrs={'webkitdirectory': True, 'directory': True}),
     )
 
     def clean_imagenes(self):
         archivos = self.cleaned_data['imagenes']
-        for archivo in archivos:
-            if not archivo.name.lower().endswith(EXTENSIONES_IMAGEN_VALIDAS):
-                raise forms.ValidationError(
-                    f'"{archivo.name}" no es un formato válido (JPG, PNG o DCM).'
-                )
-        return archivos
+        archivos_utiles = [
+            archivo for archivo in archivos
+            if not archivo.name.lower().endswith(NOMBRES_IGNORADOS_EN_CARPETA)
+            and not archivo.name.startswith('.')
+        ]
+        if not archivos_utiles:
+            raise forms.ValidationError('No se seleccionó ningún archivo válido.')
+        return archivos_utiles
 
 
 class AdjuntarInformeForm(forms.Form):

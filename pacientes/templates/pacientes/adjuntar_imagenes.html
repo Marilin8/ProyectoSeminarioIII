@@ -58,6 +58,10 @@
             box-sizing: border-box;
             font-family: inherit;
         }
+        input[type="file"]:disabled {
+            background: #f1f5f9;
+            color: #94a3b8;
+        }
         .ayuda {
             font-size: 0.75rem;
             color: #64748b;
@@ -92,6 +96,44 @@
         button:hover {
             background: #1d4ed8;
         }
+        button:disabled {
+            background: #94a3b8;
+            cursor: not-allowed;
+        }
+        .progreso {
+            margin-top: 1.25rem;
+        }
+        .progreso-texto {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            color: #334155;
+            margin-bottom: 0.4rem;
+        }
+        .progreso-barra-fondo {
+            width: 100%;
+            height: 14px;
+            background: #e2e8f0;
+            border-radius: 999px;
+            overflow: hidden;
+        }
+        .progreso-barra-relleno {
+            height: 100%;
+            width: 0%;
+            background: #2563eb;
+            border-radius: 999px;
+            transition: width 0.2s ease;
+        }
+        .progreso-detalle {
+            font-size: 0.75rem;
+            color: #64748b;
+            margin-top: 0.4rem;
+        }
+        .progreso-error {
+            font-size: 0.8rem;
+            color: #dc2626;
+            margin-top: 0.6rem;
+        }
     </style>
 </head>
 <body>
@@ -115,15 +157,143 @@
             </ul>
         {% endif %}
 
-        <form method="post" enctype="multipart/form-data">
+        <form method="post" enctype="multipart/form-data" id="form-imagenes">
             {% csrf_token %}
             {{ form.non_field_errors }}
             <label for="{{ form.imagenes.id_for_label }}">{{ form.imagenes.label }}</label>
             {{ form.imagenes }}
             <p class="ayuda">{{ form.imagenes.help_text }}</p>
             {{ form.imagenes.errors }}
-            <button type="submit">Adjuntar y enviar a radióloga</button>
+            <button type="submit" id="btn-adjuntar">Adjuntar y enviar a radióloga</button>
         </form>
+
+        <div class="progreso" id="progreso" style="display:none;">
+            <div class="progreso-texto">
+                <span id="progreso-etiqueta">Procesando archivos…</span>
+                <span id="progreso-porcentaje">0%</span>
+            </div>
+            <div class="progreso-barra-fondo">
+                <div class="progreso-barra-relleno" id="progreso-relleno"></div>
+            </div>
+            <div class="progreso-detalle" id="progreso-detalle"></div>
+            <div class="progreso-error" id="progreso-error" style="display:none;"></div>
+        </div>
     </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            var form = document.getElementById('form-imagenes');
+            var input = document.getElementById('{{ form.imagenes.id_for_label }}');
+            var boton = document.getElementById('btn-adjuntar');
+            var progreso = document.getElementById('progreso');
+            var relleno = document.getElementById('progreso-relleno');
+            var porcentajeTexto = document.getElementById('progreso-porcentaje');
+            var etiquetaTexto = document.getElementById('progreso-etiqueta');
+            var detalleTexto = document.getElementById('progreso-detalle');
+            var errorTexto = document.getElementById('progreso-error');
+
+            if (!form || !input || !boton || !progreso) {
+                return;
+            }
+
+            // Nombres de archivo que no son parte del estudio (los suele
+            // agregar el propio sistema operativo al exportar la carpeta).
+            var IGNORADOS = ['.ds_store', 'thumbs.db', 'desktop.ini'];
+            var TAMANO_TANDA = 15;
+            var urlLote = '{% url "adjuntar_imagenes_lote" orden.id %}';
+            var urlFinalizar = '{% url "adjuntar_imagenes_finalizar" orden.id %}';
+            var csrfToken = form.querySelector('[name=csrfmiddlewaretoken]').value;
+
+            function esArchivoUtil(archivo) {
+                var nombre = archivo.name.toLowerCase();
+                if (nombre.charAt(0) === '.') {
+                    return false;
+                }
+                return IGNORADOS.indexOf(nombre) === -1;
+            }
+
+            function actualizarBarra(procesados, total) {
+                var porcentaje = total > 0 ? Math.round((procesados / total) * 100) : 0;
+                relleno.style.width = porcentaje + '%';
+                porcentajeTexto.textContent = porcentaje + '%';
+                detalleTexto.textContent = procesados + ' de ' + total + ' archivos procesados';
+            }
+
+            function subirTanda(archivos) {
+                var datos = new FormData();
+                datos.append('csrfmiddlewaretoken', csrfToken);
+                archivos.forEach(function (archivo) {
+                    datos.append('imagenes', archivo, archivo.name);
+                });
+                return fetch(urlLote, { method: 'POST', body: datos, credentials: 'same-origin' })
+                    .then(function (respuesta) {
+                        if (!respuesta.ok) {
+                            throw new Error('Fallo al subir un grupo de archivos (HTTP ' + respuesta.status + ').');
+                        }
+                        return respuesta.json();
+                    });
+            }
+
+            function finalizar() {
+                var datos = new FormData();
+                datos.append('csrfmiddlewaretoken', csrfToken);
+                return fetch(urlFinalizar, { method: 'POST', body: datos, credentials: 'same-origin' })
+                    .then(function (respuesta) { return respuesta.json().then(function (json) {
+                        return { status: respuesta.status, json: json };
+                    }); });
+            }
+
+            async function procesarCarga(archivos) {
+                var total = archivos.length;
+                var procesados = 0;
+                var guardadas = 0;
+                actualizarBarra(0, total);
+
+                for (var i = 0; i < archivos.length; i += TAMANO_TANDA) {
+                    var tanda = archivos.slice(i, i + TAMANO_TANDA);
+                    var resultado = await subirTanda(tanda);
+                    guardadas += resultado.guardadas || 0;
+                    procesados += tanda.length;
+                    actualizarBarra(procesados, total);
+                }
+
+                etiquetaTexto.textContent = 'Finalizando…';
+                var respuestaFinal = await finalizar();
+                if (!respuestaFinal.json.ok) {
+                    throw new Error(respuestaFinal.json.error || 'No se pudo completar la carga.');
+                }
+                etiquetaTexto.textContent = 'Listo — ' + guardadas + ' imagen(es) guardada(s)';
+                window.location.href = respuestaFinal.json.redirect_url;
+            }
+
+            form.addEventListener('submit', function (evento) {
+                evento.preventDefault();
+
+                var todosLosArchivos = Array.prototype.slice.call(input.files);
+                var archivosUtiles = todosLosArchivos.filter(esArchivoUtil);
+
+                if (archivosUtiles.length === 0) {
+                    errorTexto.textContent = 'No se seleccionó ningún archivo válido.';
+                    errorTexto.style.display = 'block';
+                    return;
+                }
+
+                errorTexto.style.display = 'none';
+                boton.disabled = true;
+                boton.textContent = 'Procesando…';
+                input.disabled = true;
+                progreso.style.display = 'block';
+
+                procesarCarga(archivosUtiles).catch(function (error) {
+                    errorTexto.textContent = error.message || 'Ocurrió un error al subir los archivos.';
+                    errorTexto.style.display = 'block';
+                    etiquetaTexto.textContent = 'Se detuvo por un error';
+                    boton.disabled = false;
+                    boton.textContent = 'Reintentar';
+                    input.disabled = false;
+                });
+            });
+        });
+    </script>
 </body>
 </html>

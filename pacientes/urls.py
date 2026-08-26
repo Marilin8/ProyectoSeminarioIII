@@ -91,8 +91,29 @@ urlpatterns = [
     path('citas/solicitudes/<int:cita_id>/revisar/', views.revisar_solicitud, name='revisar_solicitud'),
     path('ordenes/pendientes/', views.ordenes_pendientes, name='ordenes_pendientes'),
     path('ordenes/pendientes/<int:orden_id>/imagenes/', views.adjuntar_imagenes, name='adjuntar_imagenes'),
+    path(
+        'ordenes/pendientes/<int:orden_id>/imagenes/lote/',
+        views.adjuntar_imagenes_lote,
+        name='adjuntar_imagenes_lote',
+    ),
+    path(
+        'ordenes/pendientes/<int:orden_id>/imagenes/finalizar/',
+        views.adjuntar_imagenes_finalizar,
+        name='adjuntar_imagenes_finalizar',
+    ),
     path('citas/procesadas/', views.citas_procesadas, name='citas_procesadas'),
     path('citas/procesadas/<int:cita_id>/informe/', views.adjuntar_informe, name='adjuntar_informe'),
+    path('ordenes/<int:orden_id>/imagenes/ver/', views.ver_imagenes_jpg, name='ver_imagenes_jpg'),
+    path(
+        'ordenes/<int:orden_id>/imagenes/seleccion/',
+        views.guardar_seleccion_imagenes,
+        name='guardar_seleccion_imagenes',
+    ),
+    path(
+        'ordenes/<int:orden_id>/imagenes/descargar-dicom/',
+        views.descargar_dicom_orden,
+        name='descargar_dicom_orden',
+    ),
     path('emergencia/tickets/nuevo/', views.registrar_ticket_emergencia, name='registrar_ticket_emergencia'),
     path('emergencia/tickets/', views.pantalla_turnos_emergencia, name='pantalla_turnos_emergencia'),
     path(

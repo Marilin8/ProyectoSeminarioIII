@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Imágenes del estudio - Clínica de Imágenes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        h1 {
+            color: #0f172a;
+            font-size: 1.3rem;
+        }
+        a.volver {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .resumen {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 0.85rem 1rem;
+            font-size: 0.85rem;
+            color: #334155;
+            margin-bottom: 1rem;
+        }
+        .resumen strong {
+            color: #0f172a;
+        }
+        .ayuda-seleccion {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+        .ayuda-seleccion p {
+            font-size: 0.8rem;
+            color: #64748b;
+            margin: 0;
+        }
+        .botones-seleccion {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .btn-texto {
+            background: none;
+            border: none;
+            color: #2563eb;
+            font-size: 0.78rem;
+            font-weight: bold;
+            cursor: pointer;
+            padding: 0;
+        }
+        .btn-texto:hover {
+            text-decoration: underline;
+        }
+        .galeria {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.25rem;
+        }
+        .item-imagen {
+            position: relative;
+            display: block;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            border: 2px solid transparent;
+            cursor: pointer;
+        }
+        .item-imagen.marcada {
+            border-color: #2563eb;
+        }
+        .item-imagen img {
+            width: 100%;
+            height: 220px;
+            object-fit: contain;
+            background: #0f172a;
+            display: block;
+        }
+        .item-imagen .casilla {
+            position: absolute;
+            top: 0.5rem;
+            left: 0.5rem;
+            width: 22px;
+            height: 22px;
+            cursor: pointer;
+        }
+        .item-imagen .ver-completa {
+            display: block;
+            text-align: center;
+            font-size: 0.72rem;
+            color: #2563eb;
+            padding: 0.4rem;
+            text-decoration: none;
+        }
+        .vacio {
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+        .barra-acciones {
+            position: sticky;
+            bottom: 0;
+            background: white;
+            border-top: 1px solid #e2e8f0;
+            border-radius: 10px 10px 0 0;
+            padding: 1rem;
+            box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.08);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+        .barra-acciones span {
+            font-size: 0.85rem;
+            color: #334155;
+        }
+        .barra-acciones button {
+            padding: 0.6rem 1.2rem;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 7px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .barra-acciones button:hover {
+            background: #1d4ed8;
+        }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <h1>Imágenes del estudio</h1>
+        <a class="volver" href="{% url 'adjuntar_informe' cita_id=cita.id %}">&larr; Volver al informe</a>
+    </div>
+
+    <div class="resumen">
+        <strong>{{ cita.paciente.nombre }} {{ cita.paciente.apellido }}</strong> ({{ cita.paciente.dpi }})<br>
+        Estudio: {{ cita.tipo_estudio.nombre }} — {{ cita.fecha }} {{ cita.hora|time:'H:i' }}
+    </div>
+
+    {% if imagenes %}
+        <div class="ayuda-seleccion">
+            <p>
+                Marcá las imágenes que quedan: las que dejes marcadas son las que se le
+                envían al paciente por correo. Las que desmarques se descartan de acá (el
+                archivo DICOM original, si lo tenía, no se toca).
+            </p>
+            <div class="botones-seleccion">
+                <button type="button" class="btn-texto" id="btn-marcar-todas">Marcar todas</button>
+                <button type="button" class="btn-texto" id="btn-desmarcar-todas">Desmarcar todas</button>
+            </div>
+        </div>
+
+        <form method="post" action="{% url 'guardar_seleccion_imagenes' orden.id %}" id="form-seleccion">
+            {% csrf_token %}
+            <div class="galeria">
+                {% for img in imagenes %}
+                    <label class="item-imagen marcada">
+                        <input
+                            type="checkbox"
+                            class="casilla"
+                            name="seleccionadas"
+                            value="{{ img.id }}"
+                            checked
+                        >
+                        <img src="{{ img.archivo.url }}" alt="Imagen del estudio">
+                        <a class="ver-completa" href="{{ img.archivo.url }}" target="_blank"
+                           onclick="event.stopPropagation();">
+                            Ver completa
+                        </a>
+                    </label>
+                {% endfor %}
+            </div>
+
+            <div class="barra-acciones">
+                <span id="texto-contador"></span>
+                <button type="submit" id="btn-guardar-seleccion">Guardar selección</button>
+            </div>
+        </form>
+    {% else %}
+        <p class="vacio">Este estudio no tiene imágenes en la galería.</p>
+    {% endif %}
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            var form = document.getElementById('form-seleccion');
+            if (!form) {
+                return;
+            }
+            var casillas = Array.prototype.slice.call(form.querySelectorAll('.casilla'));
+            var contador = document.getElementById('texto-contador');
+            var btnMarcarTodas = document.getElementById('btn-marcar-todas');
+            var btnDesmarcarTodas = document.getElementById('btn-desmarcar-todas');
+
+            function actualizarEstado() {
+                var marcadas = casillas.filter(function (c) { return c.checked; }).length;
+                contador.textContent = marcadas + ' de ' + casillas.length + ' imágenes marcadas';
+                casillas.forEach(function (casilla) {
+                    var item = casilla.closest('.item-imagen');
+                    item.classList.toggle('marcada', casilla.checked);
+                });
+            }
+
+            casillas.forEach(function (casilla) {
+                casilla.addEventListener('change', actualizarEstado);
+            });
+
+            btnMarcarTodas.addEventListener('click', function () {
+                casillas.forEach(function (c) { c.checked = true; });
+                actualizarEstado();
+            });
+            btnDesmarcarTodas.addEventListener('click', function () {
+                casillas.forEach(function (c) { c.checked = false; });
+                actualizarEstado();
+            });
+
+            form.addEventListener('submit', function (evento) {
+                var desmarcadas = casillas.filter(function (c) { return !c.checked; }).length;
+                if (desmarcadas === 0) {
+                    return;
+                }
+                var confirmar = window.confirm(
+                    'Se van a descartar ' + desmarcadas + ' imagen(es) de la galería. ' +
+                    'El archivo DICOM original (si lo tenían) no se borra, pero el JPG sí ' +
+                    'y no vas a poder recuperarlo acá. ¿Continuar?'
+                );
+                if (!confirmar) {
+                    evento.preventDefault();
+                }
+            });
+
+            actualizarEstado();
+        });
+    </script>
+</body>
+</html>

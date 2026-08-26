@@ -1,25 +1,35 @@
 import datetime
+import os
+import zipfile
+from io import BytesIO
+from urllib.parse import urlencode
 
 from django import forms
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.core.files.base import ContentFile
 from django.db.models import Q
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from django.views.decorators.http import require_POST
 
 from accounts.models import Bitacora, Usuario
 from accounts.views import es_administrador
 
+from .correos import enviar_resultados
+from .dicom_utils import dicom_a_jpg_memoria
 from .forms import (
     AdjuntarImagenesForm,
     AdjuntarInformeForm,
     AgendarCitaForm,
     CompletarDatosPacienteForm,
     CrearTipoEstudioForm,
+    EXTENSIONES_IMAGEN_DIRECTA,
     GenerarOrdenForm,
+    NOMBRES_IGNORADOS_EN_CARPETA,
     ProcesarTicketForm,
     RegistrarTicketForm,
 )
@@ -200,7 +210,7 @@ def _notificar_reporte_enviado(reporte, enviado_por):
     )
 
 
-CAMPOS_DATOS_PACIENTE = ('nombre', 'apellido', 'sexo', 'telefono', 'fecha_nacimiento')
+CAMPOS_DATOS_PACIENTE = ('nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento')
 
 
 def obtener_o_actualizar_paciente(cd):
@@ -332,6 +342,7 @@ def buscar_paciente_por_dpi(request):
         'apellido': paciente.apellido,
         'sexo': paciente.sexo,
         'telefono': paciente.telefono,
+        'correo': paciente.correo or '',
         'fecha_nacimiento': (
             paciente.fecha_nacimiento.isoformat() if paciente.fecha_nacimiento else ''
         ),
@@ -834,9 +845,45 @@ def ordenes_pendientes(request):
     return render(request, 'pacientes/ordenes_pendientes.html', {'ordenes': ordenes})
 
 
+def _guardar_imagen_o_convertir_dicom(archivo, orden, usuario):
+    """Guarda un archivo como ImagenEstudio: si ya es JPG/PNG lo guarda tal
+    cual, si no (.dcm o sin extensión, como viene de la carpeta que exporta
+    el equipo) intenta convertirlo de DICOM a JPG y conserva además el
+    archivo DICOM original (para que la radióloga lo pueda descargar).
+    Devuelve True si quedó guardada, False si se omitió (no era un DICOM
+    válido)."""
+    if archivo.name.lower().endswith(EXTENSIONES_IMAGEN_DIRECTA):
+        ImagenEstudio.objects.create(orden=orden, archivo=archivo, subida_por=usuario)
+        return True
+
+    # dicom_a_jpg_memoria consume el stream del archivo al leerlo con
+    # pydicom, así que hay que guardar los bytes originales antes.
+    archivo.seek(0)
+    contenido_original = archivo.read()
+    archivo.seek(0)
+
+    jpg_convertido = dicom_a_jpg_memoria(archivo)
+    if jpg_convertido:
+        nueva_imagen = ImagenEstudio(orden=orden, subida_por=usuario)
+        nueva_imagen.archivo.save(jpg_convertido.name, jpg_convertido, save=False)
+        nombre_original = archivo.name if '.' in archivo.name else f'{archivo.name}.dcm'
+        nueva_imagen.archivo_original.save(
+            nombre_original, ContentFile(contenido_original), save=False
+        )
+        nueva_imagen.save()
+        return True
+    # No se pudo convertir (no era un DICOM válido): se omite en silencio,
+    # es habitual que una carpeta traiga archivos que no son parte del estudio.
+    return False
+
+
 @login_required
 @user_passes_test(es_tecnico)
 def adjuntar_imagenes(request, orden_id):
+    """Pantalla de carga. El envío real (y la barra de progreso) los maneja
+    el JS del template llamando a adjuntar_imagenes_lote/_finalizar en
+    tandas; este POST solo queda como respaldo por si el navegador no
+    ejecuta JavaScript."""
     orden = get_object_or_404(OrdenTrabajo, id=orden_id, cita__estado=Cita.ESTADO_EN_PROCESO)
     volver_url = reverse('ordenes_pendientes')
 
@@ -844,15 +891,25 @@ def adjuntar_imagenes(request, orden_id):
         form = AdjuntarImagenesForm(request.POST, request.FILES)
         if form.is_valid():
             archivos = form.cleaned_data['imagenes']
-            for archivo in archivos:
-                ImagenEstudio.objects.create(orden=orden, archivo=archivo, subida_por=request.user)
+            adjuntadas = sum(
+                _guardar_imagen_o_convertir_dicom(archivo, orden, request.user)
+                for archivo in archivos
+            )
+
+            if adjuntadas == 0:
+                messages.error(
+                    request,
+                    'No se encontraron imágenes ni archivos DICOM válidos en lo seleccionado.',
+                )
+                return redirect('adjuntar_imagenes', orden_id=orden.id)
+
             _notificar_estudio_listo_para_informar(orden.cita)
             Bitacora.registrar(
                 request=request,
                 usuario=request.user,
                 accion=Bitacora.ACCION_ADJUNTAR_IMAGENES,
                 descripcion=(
-                    f'Adjuntó {len(archivos)} imagen(es) a la orden de {orden.cita.paciente} '
+                    f'Adjuntó {adjuntadas} imagen(es) a la orden de {orden.cita.paciente} '
                     f'(orden #{orden.id}).'
                 ),
             )
@@ -870,6 +927,58 @@ def adjuntar_imagenes(request, orden_id):
         'edad': orden.edad_paciente,
         'volver_url': volver_url,
     })
+
+
+@login_required
+@user_passes_test(es_tecnico)
+@require_POST
+def adjuntar_imagenes_lote(request, orden_id):
+    """Guarda una tanda de archivos de la carpeta que está subiendo el
+    técnico. El JS de adjuntar_imagenes.html llama a esta vista una vez por
+    tanda (en vez de mandar la carpeta entera en un solo POST) para poder
+    mostrar una barra de progreso real mientras se procesan los DICOM."""
+    orden = get_object_or_404(OrdenTrabajo, id=orden_id, cita__estado=Cita.ESTADO_EN_PROCESO)
+    archivos = request.FILES.getlist('imagenes')
+    guardadas = 0
+    for archivo in archivos:
+        nombre = archivo.name.lower()
+        if nombre.startswith('.') or nombre.endswith(NOMBRES_IGNORADOS_EN_CARPETA):
+            continue
+        if _guardar_imagen_o_convertir_dicom(archivo, orden, request.user):
+            guardadas += 1
+    return JsonResponse({'guardadas': guardadas, 'recibidas': len(archivos)})
+
+
+@login_required
+@user_passes_test(es_tecnico)
+@require_POST
+def adjuntar_imagenes_finalizar(request, orden_id):
+    """Cierra la carga después de que el JS terminó de mandar todas las
+    tandas: notifica a la radióloga y registra la bitácora, igual que hacía
+    el envío síncrono de un solo POST."""
+    orden = get_object_or_404(OrdenTrabajo, id=orden_id, cita__estado=Cita.ESTADO_EN_PROCESO)
+    adjuntadas = orden.imagenes.count()
+
+    if adjuntadas == 0:
+        return JsonResponse(
+            {'ok': False, 'error': 'No se encontraron imágenes ni archivos DICOM válidos en lo seleccionado.'},
+            status=400,
+        )
+
+    _notificar_estudio_listo_para_informar(orden.cita)
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_ADJUNTAR_IMAGENES,
+        descripcion=(
+            f'Adjuntó {adjuntadas} imagen(es) a la orden de {orden.cita.paciente} '
+            f'(orden #{orden.id}).'
+        ),
+    )
+    messages.success(
+        request, f'Imágenes adjuntadas para {orden.cita.paciente}. Ya está lista para la radióloga.'
+    )
+    return JsonResponse({'ok': True, 'redirect_url': reverse('ordenes_pendientes')})
 
 
 @login_required
@@ -907,6 +1016,9 @@ def adjuntar_informe(request, cita_id):
             ])
             cita.estado = Cita.ESTADO_PROCESADA
             cita.save(update_fields=['estado'])
+
+            enviar_resultados(orden)
+
             _notificar_estudio_completado(cita)
             Bitacora.registrar(
                 request=request,
@@ -915,7 +1027,12 @@ def adjuntar_informe(request, cita_id):
                 descripcion=f'Adjuntó el informe de {cita.paciente} (cita #{cita.id}).',
             )
             messages.success(request, f'Informe adjuntado para {cita.paciente}.')
-            return redirect(volver_url)
+            parametros = urlencode({
+                'envio': 'exitoso',
+                'paciente': f'{cita.paciente.nombre} {cita.paciente.apellido}',
+                'correo': cita.paciente.correo or '',
+            })
+            return redirect(f'{volver_url}?{parametros}')
     else:
         form = AdjuntarInformeForm()
 
@@ -925,7 +1042,105 @@ def adjuntar_informe(request, cita_id):
         'orden': orden,
         'edad': cita.paciente.edad_en(cita.fecha),
         'volver_url': volver_url,
+        'tiene_dicom_original': any(img.archivo_original for img in orden.imagenes.all()),
     })
+
+
+@login_required
+@user_passes_test(es_radiologo)
+def ver_imagenes_jpg(request, orden_id):
+    """Galería con las imágenes JPG (ya convertidas si venían de DICOM) de
+    un estudio, con casillas para que la radióloga elija cuáles quedan: las
+    que deje marcadas son las que se siguen viendo y las que se le envían
+    al paciente por correo; las que desmarque se borran de acá (el JPG),
+    pero si tenían un DICOM detrás ese se conserva completo sin tocar. Es
+    a donde manda el botón "Ver JPG" de adjuntar_informe.html."""
+    orden = get_object_or_404(OrdenTrabajo, id=orden_id)
+    imagenes = orden.imagenes.filter(seleccionada=True).exclude(archivo='')
+    return render(request, 'pacientes/ver_imagenes_jpg.html', {
+        'orden': orden,
+        'cita': orden.cita,
+        'imagenes': imagenes,
+    })
+
+
+@login_required
+@user_passes_test(es_radiologo)
+@require_POST
+def guardar_seleccion_imagenes(request, orden_id):
+    """Aplica la selección hecha en ver_imagenes_jpg.html: descarta el JPG
+    de las imágenes que quedaron sin marcar. Si esa imagen venía de un
+    DICOM, el .dcm original se conserva íntegro (solo se le borra el JPG y
+    se le apaga "seleccionada"); si no tenía DICOM detrás (se subió como
+    JPG/PNG directo), no queda nada que conservar y se elimina del todo."""
+    orden = get_object_or_404(OrdenTrabajo, id=orden_id)
+    ids_marcados = set(request.POST.getlist('seleccionadas'))
+
+    descartadas = 0
+    for imagen in orden.imagenes.filter(seleccionada=True).exclude(archivo=''):
+        if str(imagen.id) in ids_marcados:
+            continue
+        descartadas += 1
+        if imagen.archivo_original:
+            imagen.archivo.delete(save=False)
+            imagen.seleccionada = False
+            imagen.save(update_fields=['archivo', 'seleccionada'])
+        else:
+            imagen.archivo.delete(save=False)
+            imagen.delete()
+
+    if descartadas:
+        Bitacora.registrar(
+            request=request,
+            usuario=request.user,
+            accion=Bitacora.ACCION_SELECCIONAR_IMAGENES,
+            descripcion=(
+                f'Descartó {descartadas} imagen(es) de la galería de la orden #{orden.id} '
+                f'({orden.cita.paciente}).'
+            ),
+        )
+        messages.success(request, f'Se descartaron {descartadas} imagen(es) de la galería.')
+    else:
+        messages.info(request, 'No se descartó ninguna imagen.')
+
+    return redirect('ver_imagenes_jpg', orden_id=orden.id)
+
+
+@login_required
+@user_passes_test(es_radiologo)
+def descargar_dicom_orden(request, orden_id):
+    """Empaqueta en un .zip los archivos DICOM originales (los que el
+    técnico subió y se convirtieron a JPG) de un estudio, para que la
+    radióloga los baje a su equipo desde el botón "Descargar DICOM"."""
+    orden = get_object_or_404(OrdenTrabajo, id=orden_id)
+    imagenes_con_dicom = [img for img in orden.imagenes.all() if img.archivo_original]
+
+    if not imagenes_con_dicom:
+        messages.error(request, 'Este estudio no tiene archivos DICOM originales para descargar.')
+        return redirect('adjuntar_informe', cita_id=orden.cita_id)
+
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zip_archivo:
+        nombres_usados = set()
+        for imagen in imagenes_con_dicom:
+            nombre = os.path.basename(imagen.archivo_original.name)
+            base, ext = os.path.splitext(nombre)
+            candidato = nombre
+            contador = 1
+            # Evita pisar archivos dentro del zip si dos vinieran con el
+            # mismo nombre (ej. "I0" en dos series distintas).
+            while candidato in nombres_usados:
+                candidato = f'{base}_{contador}{ext}'
+                contador += 1
+            nombres_usados.add(candidato)
+            with imagen.archivo_original.open('rb') as contenido:
+                zip_archivo.writestr(candidato, contenido.read())
+    buffer.seek(0)
+
+    nombre_zip = f'dicom_{orden.cita.paciente.dpi}_orden{orden.id}.zip'
+    respuesta = HttpResponse(buffer.getvalue(), content_type='application/zip')
+    respuesta['Content-Disposition'] = f'attachment; filename="{nombre_zip}"'
+    return respuesta
 
 
 @login_required

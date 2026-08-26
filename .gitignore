@@ -8,6 +8,7 @@ db.sqlite3
 
 # Artefactos de pruebas
 media_test/
+media/
 reports/
 .coverage
 .pytest_cache/
