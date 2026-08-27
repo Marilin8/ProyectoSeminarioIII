@@ -282,7 +282,9 @@ class RegistrarTicketEmergenciaViewTests(TestCase):
             'apellido': 'Gómez',
             'sexo': Paciente.SEXO_MASCULINO,
             'telefono': '55551234',
+            'correo': 'carlos.gomez@correo.com',
             'fecha_nacimiento': '1985-03-10',
+            'carnet_igss': '6666666666',
             'prioridad': Ticket.PRIORIDAD_URGENTE,
             'motivo': 'Dolor abdominal agudo',
         }
@@ -372,6 +374,7 @@ class AgendarCitaViewTests(TestCase):
         self.client.force_login(self.usuario)
         self.tipo_estudio = TipoEstudio.objects.create(nombre='Radiografía de tórax')
         self.radiologo = crear_usuario('radiologa_agendar', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.tipo_estudio.radiologos.add(self.radiologo)
         self.manana = timezone.localdate() + datetime.timedelta(days=1)
         self.datos_formulario = {
             'dpi': '2020202020202',
@@ -379,7 +382,9 @@ class AgendarCitaViewTests(TestCase):
             'apellido': 'Marroquín',
             'sexo': Paciente.SEXO_MASCULINO,
             'telefono': '55599999',
+            'correo': 'luis.marroquin@correo.com',
             'fecha_nacimiento': '1988-02-14',
+            'carnet_igss': '2020202020',
             'tipo_estudio': self.tipo_estudio.id,
             'radiologo': self.radiologo.id,
             'fecha': self.manana,
@@ -526,6 +531,7 @@ class FechaNacimientoNoFuturaTests(TestCase):
             'apellido': 'Pérez',
             'sexo': Paciente.SEXO_FEMENINO,
             'telefono': '',
+            'correo': 'juana.perez@correo.com',
             'fecha_nacimiento': fecha_nacimiento,
             'tipo_estudio': self.tipo_estudio.id,
             'radiologo': self.radiologo.id,
@@ -541,7 +547,9 @@ class FechaNacimientoNoFuturaTests(TestCase):
             'apellido': 'Pérez',
             'sexo': Paciente.SEXO_FEMENINO,
             'telefono': '',
+            'correo': 'juana.perez@correo.com',
             'fecha_nacimiento': fecha_nacimiento,
+            'carnet_igss': '1234567890',
             'prioridad': Ticket.PRIORIDAD_NORMAL,
             'motivo': '',
         }
@@ -576,6 +584,7 @@ class NotificacionesTests(TestCase):
         self.tecnico = crear_usuario('tecnico_notif', rol=Usuario.ROL_TECNICO_IMAGENES)
         self.radiologo = crear_usuario('radiologo_notif', rol=Usuario.ROL_MEDICO_RADIOLOGO)
         self.tipo_estudio = TipoEstudio.objects.create(nombre='Radiografía de tórax')
+        self.tipo_estudio.radiologos.add(self.radiologo)
 
     def test_agendar_cita_notifica_al_radiologo_asignado(self):
         self.client.force_login(self.recepcionista)
@@ -586,7 +595,9 @@ class NotificacionesTests(TestCase):
             'apellido': 'López',
             'sexo': Paciente.SEXO_FEMENINO,
             'telefono': '',
+            'correo': 'ana.lopez@correo.com',
             'fecha_nacimiento': '1990-01-01',
+            'carnet_igss': '3030303030',
             'tipo_estudio': self.tipo_estudio.id,
             'radiologo': self.radiologo.id,
             'fecha': manana,

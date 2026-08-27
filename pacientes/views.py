@@ -1,25 +1,35 @@
 import datetime
+import os
+import zipfile
+from io import BytesIO
 
 from django import forms
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.core.files.base import ContentFile
 from django.db.models import Q
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from django.views.decorators.http import require_POST
 
 from accounts.models import Bitacora, Usuario
 from accounts.views import es_administrador
 
+from .correos import enviar_resultados
+from .dicom_utils import dicom_a_jpg_memoria
 from .forms import (
     AdjuntarImagenesForm,
     AdjuntarInformeForm,
     AgendarCitaForm,
     CompletarDatosPacienteForm,
     CrearTipoEstudioForm,
+    EXTENSIONES_IMAGEN_DIRECTA,
     GenerarOrdenForm,
+    IngresarCorreoEnvioForm,
+    NOMBRES_IGNORADOS_EN_CARPETA,
     ProcesarTicketForm,
     RegistrarTicketForm,
 )
@@ -44,6 +54,11 @@ from .models import (
     Ticket,
     TipoEstudio,
 )
+
+
+# Cuántas citas de emergencia (agendadas encima de otra ya existente) se
+# permiten como máximo por día, para no saturar a la radióloga.
+MAXIMO_EMERGENCIAS_POR_DIA = 5
 
 
 def es_recepcionista(user):
@@ -72,15 +87,21 @@ def puede_descargar_reportes_diarios(user):
 
 def _notificar_cita_asignada(cita):
     """El radiólogo elegido al agendar la cita recibe una nueva solicitud
-    para revisar/confirmar."""
+    para revisar/confirmar. Si la recepcionista la marcó como emergencia
+    (agendada encima de otra cita ya existente), el mensaje lo deja claro
+    para que la radióloga sepa que se le está pidiendo hacer un espacio."""
+    prefijo = '🚨 EMERGENCIA — ' if cita.es_emergencia_forzada else ''
+    mensaje = (
+        f'{prefijo}Nueva cita asignada: {cita.tipo_estudio} para {cita.paciente.nombre} '
+        f'{cita.paciente.apellido} el {cita.fecha_sugerida or cita.fecha} a las '
+        f'{cita.hora_sugerida or cita.hora}.'
+    )
+    if cita.es_emergencia_forzada:
+        mensaje += ' Este horario ya tenía otra cita asignada: se agendó igual por ser una emergencia.'
     Notificacion.notificar(
         destinatario=cita.radiologo,
         tipo=Notificacion.TIPO_CITA_ASIGNADA,
-        mensaje=(
-            f'Nueva cita asignada: {cita.tipo_estudio} para {cita.paciente.nombre} '
-            f'{cita.paciente.apellido} el {cita.fecha_sugerida or cita.fecha} a las '
-            f'{cita.hora_sugerida or cita.hora}.'
-        ),
+        mensaje=mensaje,
         cita=cita,
         url=reverse('solicitudes_pendientes'),
     )
@@ -189,7 +210,7 @@ def _notificar_reporte_enviado(reporte, enviado_por):
     )
 
 
-CAMPOS_DATOS_PACIENTE = ('nombre', 'apellido', 'sexo', 'telefono', 'fecha_nacimiento')
+CAMPOS_DATOS_PACIENTE = ('nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento')
 
 
 def obtener_o_actualizar_paciente(cd):
@@ -221,7 +242,35 @@ def obtener_o_actualizar_paciente(cd):
             cambiados.append('carnet_igss')
         if cambiados:
             paciente.save(update_fields=cambiados)
+    _notificar_datos_pendientes_si_corresponde(paciente)
     return paciente
+
+
+def _notificar_datos_pendientes_si_corresponde(paciente):
+    """Si el paciente quedó con datos opcionales sin llenar (sexo, teléfono
+    o fecha de nacimiento), avisa a las recepcionistas activas. No duplica
+    el aviso si ya hay uno sin leer para este mismo paciente — por eso se
+    puede llamar cada vez que se agenda una cita o se registra un ticket
+    sin que se acumulen notificaciones repetidas."""
+    campos = paciente.campos_pendientes()
+    if not campos:
+        return
+    url = reverse('completar_datos_paciente', args=[paciente.id])
+    ya_avisado = Notificacion.objects.filter(
+        tipo=Notificacion.TIPO_DATOS_PACIENTE_PENDIENTES, url=url, leida=False,
+    ).exists()
+    if ya_avisado:
+        return
+    recepcionistas = Usuario.objects.filter(rol=Usuario.ROL_RECEPCIONISTA, is_active=True)
+    Notificacion.notificar_a_varios(
+        usuarios=recepcionistas,
+        tipo=Notificacion.TIPO_DATOS_PACIENTE_PENDIENTES,
+        mensaje=(
+            f'{paciente.nombre} {paciente.apellido} (DPI {paciente.dpi}) tiene datos '
+            f'pendientes: {", ".join(campos)}.'
+        ),
+        url=url,
+    )
 
 
 @login_required
@@ -293,6 +342,7 @@ def buscar_paciente_por_dpi(request):
         'apellido': paciente.apellido,
         'sexo': paciente.sexo,
         'telefono': paciente.telefono,
+        'correo': paciente.correo or '',
         'fecha_nacimiento': (
             paciente.fecha_nacimiento.isoformat() if paciente.fecha_nacimiento else ''
         ),
@@ -417,6 +467,86 @@ def historial_paciente(request, paciente_id):
     })
 
 
+def _enviar_estudio_y_registrar(request, cita, orden):
+    """Envía el estudio (asume que el paciente ya tiene correo) y deja
+    constancia: bitácora, marca de tiempo y mensaje de éxito. Si el envío
+    falla (ej. el sistema no tiene configuradas las credenciales SMTP),
+    avisa con un mensaje de error en vez de dejar la pantalla reventar, y
+    NO marca el estudio como enviado — así el botón sigue disponible para
+    reintentar."""
+    if not enviar_resultados(orden):
+        messages.error(
+            request,
+            'No se pudo enviar el correo. El sistema todavía no tiene configurado el '
+            'correo emisor (EMAIL_HOST_USER/EMAIL_HOST_PASSWORD) — avisá al '
+            'administrador. El estudio sigue marcado como no enviado.',
+        )
+        return
+
+    orden.resultados_enviados_en = timezone.now()
+    orden.save(update_fields=['resultados_enviados_en'])
+
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_ENVIAR_ESTUDIO,
+        descripcion=f'Envió el estudio de {cita.paciente} (cita #{cita.id}) por correo.',
+    )
+    messages.success(request, f'Estudio enviado a {cita.paciente} ({cita.paciente.correo}).')
+
+
+@login_required
+@user_passes_test(es_recepcionista)
+@require_POST
+def enviar_estudio(request, cita_id):
+    """Envía los resultados del estudio al correo del paciente. Antes esto
+    pasaba automático cuando la radióloga adjuntaba el informe; ahora lo
+    dispara la recepcionista a mano desde "Estudios realizados", una vez
+    que quiere confirmar el envío (botón "Enviar estudio"). Si el paciente
+    todavía no tiene correo registrado, primero la manda a completarlo."""
+    cita = get_object_or_404(Cita, id=cita_id, estado=Cita.ESTADO_PROCESADA)
+    orden = get_object_or_404(OrdenTrabajo, cita=cita)
+
+    if not cita.paciente.correo:
+        return redirect('ingresar_correo_envio', cita_id=cita.id)
+
+    _enviar_estudio_y_registrar(request, cita, orden)
+    return redirect('historial_paciente', paciente_id=cita.paciente_id)
+
+
+@login_required
+@user_passes_test(es_recepcionista)
+def ingresar_correo_envio(request, cita_id):
+    """El paciente no tenía correo registrado al momento de enviar el
+    estudio: pide el correo acá y, al guardarlo, envía el estudio de una
+    vez (sin que la recepcionista tenga que volver a apretar "Enviar
+    estudio")."""
+    cita = get_object_or_404(Cita, id=cita_id, estado=Cita.ESTADO_PROCESADA)
+    orden = get_object_or_404(OrdenTrabajo, cita=cita)
+
+    if cita.paciente.correo:
+        # Ya se completó (ej. en otra pestaña); no hace falta este paso,
+        # se envía directo.
+        _enviar_estudio_y_registrar(request, cita, orden)
+        return redirect('historial_paciente', paciente_id=cita.paciente_id)
+
+    if request.method == 'POST':
+        form = IngresarCorreoEnvioForm(request.POST)
+        if form.is_valid():
+            paciente = cita.paciente
+            paciente.correo = form.cleaned_data['correo']
+            paciente.save(update_fields=['correo'])
+            _enviar_estudio_y_registrar(request, cita, orden)
+            return redirect('historial_paciente', paciente_id=cita.paciente_id)
+    else:
+        form = IngresarCorreoEnvioForm()
+
+    return render(request, 'pacientes/ingresar_correo_envio.html', {
+        'form': form,
+        'cita': cita,
+    })
+
+
 @login_required
 @user_passes_test(es_recepcionista)
 def ver_estudio_historial(request, cita_id):
@@ -443,13 +573,51 @@ def crear_estudio(request):
                 request=request,
                 usuario=request.user,
                 accion=Bitacora.ACCION_CREAR_ESTUDIO,
-                descripcion=f'Creó el estudio "{tipo_estudio.nombre}" (precio: {tipo_estudio.precio}).',
+                descripcion=(
+                    f'Creó el estudio "{tipo_estudio.nombre}" '
+                    f'({tipo_estudio.get_modalidad_display()}, {tipo_estudio.duracion_minutos} min).'
+                ),
             )
             messages.success(request, f'Estudio "{tipo_estudio.nombre}" creado correctamente.')
             return redirect('dashboard')
     else:
         form = CrearTipoEstudioForm()
-    return render(request, 'pacientes/crear_estudio.html', {'form': form})
+    return render(request, 'pacientes/crear_estudio.html', {'form': form, 'editando': None})
+
+
+@login_required
+@user_passes_test(es_administrador)
+def lista_estudios(request):
+    estudios = (
+        TipoEstudio.objects.all()
+        .prefetch_related('precios')
+        .order_by('modalidad', 'nombre')
+    )
+    return render(request, 'pacientes/lista_estudios.html', {'estudios': estudios})
+
+
+@login_required
+@user_passes_test(es_administrador)
+def editar_estudio(request, estudio_id):
+    tipo_estudio = get_object_or_404(TipoEstudio, id=estudio_id)
+    if request.method == 'POST':
+        form = CrearTipoEstudioForm(request.POST, instance=tipo_estudio)
+        if form.is_valid():
+            tipo_estudio = form.save()
+            Bitacora.registrar(
+                request=request,
+                usuario=request.user,
+                accion=Bitacora.ACCION_EDITAR_ESTUDIO,
+                descripcion=(
+                    f'Editó el estudio "{tipo_estudio.nombre}" '
+                    f'({tipo_estudio.get_modalidad_display()}, {tipo_estudio.duracion_minutos} min).'
+                ),
+            )
+            messages.success(request, f'Estudio "{tipo_estudio.nombre}" actualizado correctamente.')
+            return redirect('lista_estudios')
+    else:
+        form = CrearTipoEstudioForm(instance=tipo_estudio)
+    return render(request, 'pacientes/crear_estudio.html', {'form': form, 'editando': tipo_estudio})
 
 
 @login_required
@@ -519,8 +687,24 @@ def seleccionar_horario(request, convenio):
         'reagendar_cita': reagendar_cita,
         'reagendar_url_name': f'confirmar_reagenda_{convenio}' if reagendar_cita else None,
         'procesar_url_name': f'procesar_citas_{convenio}',
+        'maximo_emergencias_por_dia': MAXIMO_EMERGENCIAS_POR_DIA,
     }
     return render(request, 'pacientes/calendario.html', contexto)
+
+
+def _hay_conflicto_horario(fecha_dt, hora_time, duracion_minutos):
+    """¿El horario dado se cruza con alguna cita ya existente ese día?
+    (no cuenta las citas rechazadas)."""
+    if not fecha_dt or not hora_time:
+        return False
+    ocupados = [
+        rango_ocupado_por(c.fecha, c.hora, c.tipo_estudio.duracion_minutos)
+        for c in Cita.objects.filter(fecha=fecha_dt)
+        .exclude(estado=Cita.ESTADO_RECHAZADA)
+        .select_related('tipo_estudio')
+    ]
+    rango_nuevo = rango_ocupado_por(fecha_dt, hora_time, duracion_minutos)
+    return any(se_cruzan(rango_nuevo, ocupado) for ocupado in ocupados)
 
 
 @login_required
@@ -542,6 +726,18 @@ def agendar_cita(request, convenio):
     form.fields['fecha'].widget = forms.HiddenInput()
     form.fields['hora'].widget = forms.HiddenInput()
 
+    # Aviso de si el horario elegido ya tiene otra cita encima: se calcula
+    # desde ya (sin esperar a elegir el tipo de estudio) usando PASO_MINUTOS
+    # como referencia, para que la advertencia de emergencia aparezca apenas
+    # se carga la pantalla. Al enviar el formulario se vuelve a calcular con
+    # la duración real del estudio elegido, que es la que manda.
+    fecha_dt = fecha if isinstance(fecha, datetime.date) else parse_date(fecha)
+    try:
+        hora_time = hora if isinstance(hora, datetime.time) else datetime.datetime.strptime(hora, '%H:%M').time()
+    except (TypeError, ValueError):
+        hora_time = None
+    hay_conflicto = _hay_conflicto_horario(fecha_dt, hora_time, PASO_MINUTOS)
+
     if request.method == 'POST' and form.is_valid():
         cd = form.cleaned_data
         if en_el_pasado(cd['fecha'], cd['hora']):
@@ -551,50 +747,75 @@ def agendar_cita(request, convenio):
             messages.error(request, 'Solo se pueden agendar citas hasta 3 semanas después de hoy.')
             return redirect(calendario_url)
 
-        ocupados = [
-            rango_ocupado_por(c.fecha, c.hora, c.tipo_estudio.duracion_minutos)
-            for c in Cita.objects.filter(fecha=cd['fecha'])
-            .exclude(estado=Cita.ESTADO_RECHAZADA)
-            .select_related('tipo_estudio')
-        ]
-        rango_nuevo = rango_ocupado_por(cd['fecha'], cd['hora'], cd['tipo_estudio'].duracion_minutos)
-        if any(se_cruzan(rango_nuevo, ocupado) for ocupado in ocupados):
-            messages.error(request, 'Ese horario ya no está disponible: se cruza con otra cita.')
-            return redirect(calendario_url)
+        hay_conflicto = _hay_conflicto_horario(cd['fecha'], cd['hora'], cd['tipo_estudio'].duracion_minutos)
 
-        paciente = obtener_o_actualizar_paciente(cd)
-        cita = Cita.objects.create(
-            paciente=paciente,
-            tipo_estudio=cd['tipo_estudio'],
-            radiologo=cd['radiologo'],
-            convenio=convenio,
-            estado=Cita.ESTADO_PENDIENTE,
-            fecha=cd['fecha'],
-            hora=cd['hora'],
-            medico_referente=cd['medico_referente'],
-            fecha_sugerida=cd['fecha'],
-            hora_sugerida=cd['hora'],
-            notas=cd['notas'],
-            creada_por=request.user,
-        )
-        _notificar_cita_asignada(cita)
-        Bitacora.registrar(
-            request=request,
-            usuario=request.user,
-            accion=Bitacora.ACCION_SOLICITAR_CITA,
-            descripcion=(
-                f'Registró al paciente {paciente.nombre} {paciente.apellido} (DPI {paciente.dpi}) '
-                f'y solicitó cita de {cd["tipo_estudio"]} para {cd["fecha"]} {cd["hora"]} ({convenio}), '
-                f'asignada a {cd["radiologo"]}.'
-            ),
-        )
-        messages.success(
-            request,
-            f'Solicitud enviada a {cd["radiologo"]} para {paciente.nombre} {paciente.apellido} '
-            f'(sugerido: {cd["fecha"]} a las {cd["hora"]}). '
-            'Quedará agendada cuando la radióloga la confirme.',
-        )
-        return redirect('dashboard')
+        if hay_conflicto and not cd['es_emergencia']:
+            form.add_error(
+                None,
+                'Este horario ya está ocupado por otra cita. Si es una emergencia que debe '
+                'agendarse sí o sí en este horario, marcá la casilla de confirmación de '
+                'emergencia (más abajo) y volvé a enviar.',
+            )
+        else:
+            if hay_conflicto:
+                emergencias_hoy = Cita.objects.filter(
+                    fecha=cd['fecha'], es_emergencia_forzada=True,
+                ).exclude(estado=Cita.ESTADO_RECHAZADA).count()
+                if emergencias_hoy >= MAXIMO_EMERGENCIAS_POR_DIA:
+                    messages.error(
+                        request,
+                        f'Ya se agendaron {MAXIMO_EMERGENCIAS_POR_DIA} citas de emergencia para el '
+                        f'{cd["fecha"]}, el máximo permitido por día. Elegí otra fecha.',
+                    )
+                    return redirect(calendario_url)
+
+            paciente = obtener_o_actualizar_paciente(cd)
+            cita = Cita.objects.create(
+                paciente=paciente,
+                tipo_estudio=cd['tipo_estudio'],
+                radiologo=cd['radiologo'],
+                convenio=convenio,
+                estado=Cita.ESTADO_PENDIENTE,
+                fecha=cd['fecha'],
+                hora=cd['hora'],
+                medico_referente=cd['medico_referente'],
+                fecha_sugerida=cd['fecha'],
+                hora_sugerida=cd['hora'],
+                notas=cd['notas'],
+                creada_por=request.user,
+                es_emergencia_forzada=hay_conflicto,
+            )
+            _notificar_cita_asignada(cita)
+            Bitacora.registrar(
+                request=request,
+                usuario=request.user,
+                accion=Bitacora.ACCION_SOLICITAR_CITA,
+                descripcion=(
+                    ('[EMERGENCIA] ' if hay_conflicto else '')
+                    + f'Registró al paciente {paciente.nombre} {paciente.apellido} (DPI {paciente.dpi}) '
+                    f'y solicitó cita de {cd["tipo_estudio"]} para {cd["fecha"]} {cd["hora"]} ({convenio}), '
+                    f'asignada a {cd["radiologo"]}.'
+                    + (
+                        ' Se agendó encima de otra cita ya existente por tratarse de una emergencia.'
+                        if hay_conflicto else ''
+                    )
+                ),
+            )
+            if hay_conflicto:
+                messages.success(
+                    request,
+                    f'Cita de EMERGENCIA agendada para {paciente.nombre} {paciente.apellido} el '
+                    f'{cd["fecha"]} a las {cd["hora"]}, encima de otra cita que ya ocupaba ese horario. '
+                    f'Se avisó a {cd["radiologo"]} que es una emergencia.',
+                )
+            else:
+                messages.success(
+                    request,
+                    f'Solicitud enviada a {cd["radiologo"]} para {paciente.nombre} {paciente.apellido} '
+                    f'(sugerido: {cd["fecha"]} a las {cd["hora"]}). '
+                    'Quedará agendada cuando la radióloga la confirme.',
+                )
+            return redirect('dashboard')
 
     return render(request, 'pacientes/agendar_cita.html', {
         'form': form,
@@ -604,6 +825,7 @@ def agendar_cita(request, convenio):
         'fecha_valor': fecha,
         'hora_valor': hora,
         'requiere_carnet_igss': convenio in (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS),
+        'hay_conflicto': hay_conflicto,
     })
 
 
@@ -700,19 +922,96 @@ def generar_orden(request, convenio, cita_id):
 @login_required
 @user_passes_test(es_tecnico)
 def ordenes_pendientes(request):
+    """Órdenes esperando que el técnico cargue las imágenes, con búsqueda
+    por nombre/apellido/DPI y filtros por convenio, fecha de la cita y
+    tipo de estudio (mismo patrón que historial_pacientes)."""
+    busqueda = (request.GET.get('q') or '').strip()
+    filtro_convenio = (request.GET.get('convenio') or '').strip()
+    filtro_fecha = (request.GET.get('fecha') or '').strip()
+    filtro_tipo_estudio = (request.GET.get('tipo_estudio') or '').strip()
+
     ordenes = (
         OrdenTrabajo.objects.filter(cita__estado=Cita.ESTADO_EN_PROCESO)
         .exclude(imagenes__isnull=False)
         .select_related('cita', 'cita__paciente', 'cita__tipo_estudio')
         .distinct()
-        .order_by('creada_en')
     )
-    return render(request, 'pacientes/ordenes_pendientes.html', {'ordenes': ordenes})
+    if busqueda:
+        ordenes = ordenes.filter(
+            Q(cita__paciente__nombre__icontains=busqueda)
+            | Q(cita__paciente__apellido__icontains=busqueda)
+            | Q(cita__paciente__dpi__icontains=busqueda)
+        )
+    if filtro_convenio:
+        ordenes = ordenes.filter(cita__convenio=filtro_convenio)
+    if filtro_fecha:
+        ordenes = ordenes.filter(cita__fecha=filtro_fecha)
+    if filtro_tipo_estudio:
+        ordenes = ordenes.filter(cita__tipo_estudio_id=filtro_tipo_estudio)
+
+    ordenes = ordenes.order_by('creada_en')
+
+    contexto = {
+        'ordenes': ordenes,
+        'busqueda': busqueda,
+        'filtro_convenio': filtro_convenio,
+        'filtro_fecha': filtro_fecha,
+        'filtro_tipo_estudio': filtro_tipo_estudio,
+        'tipos_estudio': TipoEstudio.objects.filter(
+            id__in=OrdenTrabajo.objects.filter(cita__estado=Cita.ESTADO_EN_PROCESO)
+            .exclude(imagenes__isnull=False)
+            .values('cita__tipo_estudio_id')
+        ).order_by('nombre'),
+    }
+
+    # Búsqueda en vivo: el JS de la página pide solo el listado (sin el
+    # HTML completo) a medida que se escribe/filtra, igual que en
+    # historial_pacientes.
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return render(request, 'pacientes/includes/_resultados_ordenes.html', contexto)
+
+    return render(request, 'pacientes/ordenes_pendientes.html', contexto)
+
+
+def _guardar_imagen_o_convertir_dicom(archivo, orden, usuario):
+    """Guarda un archivo como ImagenEstudio: si ya es JPG/PNG lo guarda tal
+    cual, si no (.dcm o sin extensión, como viene de la carpeta que exporta
+    el equipo) intenta convertirlo de DICOM a JPG y conserva además el
+    archivo DICOM original (para que la radióloga lo pueda descargar).
+    Devuelve True si quedó guardada, False si se omitió (no era un DICOM
+    válido)."""
+    if archivo.name.lower().endswith(EXTENSIONES_IMAGEN_DIRECTA):
+        ImagenEstudio.objects.create(orden=orden, archivo=archivo, subida_por=usuario)
+        return True
+
+    # dicom_a_jpg_memoria consume el stream del archivo al leerlo con
+    # pydicom, así que hay que guardar los bytes originales antes.
+    archivo.seek(0)
+    contenido_original = archivo.read()
+    archivo.seek(0)
+
+    jpg_convertido = dicom_a_jpg_memoria(archivo)
+    if jpg_convertido:
+        nueva_imagen = ImagenEstudio(orden=orden, subida_por=usuario)
+        nueva_imagen.archivo.save(jpg_convertido.name, jpg_convertido, save=False)
+        nombre_original = archivo.name if '.' in archivo.name else f'{archivo.name}.dcm'
+        nueva_imagen.archivo_original.save(
+            nombre_original, ContentFile(contenido_original), save=False
+        )
+        nueva_imagen.save()
+        return True
+    # No se pudo convertir (no era un DICOM válido): se omite en silencio,
+    # es habitual que una carpeta traiga archivos que no son parte del estudio.
+    return False
 
 
 @login_required
 @user_passes_test(es_tecnico)
 def adjuntar_imagenes(request, orden_id):
+    """Pantalla de carga. El envío real (y la barra de progreso) los maneja
+    el JS del template llamando a adjuntar_imagenes_lote/_finalizar en
+    tandas; este POST solo queda como respaldo por si el navegador no
+    ejecuta JavaScript."""
     orden = get_object_or_404(OrdenTrabajo, id=orden_id, cita__estado=Cita.ESTADO_EN_PROCESO)
     volver_url = reverse('ordenes_pendientes')
 
@@ -720,15 +1019,25 @@ def adjuntar_imagenes(request, orden_id):
         form = AdjuntarImagenesForm(request.POST, request.FILES)
         if form.is_valid():
             archivos = form.cleaned_data['imagenes']
-            for archivo in archivos:
-                ImagenEstudio.objects.create(orden=orden, archivo=archivo, subida_por=request.user)
+            adjuntadas = sum(
+                _guardar_imagen_o_convertir_dicom(archivo, orden, request.user)
+                for archivo in archivos
+            )
+
+            if adjuntadas == 0:
+                messages.error(
+                    request,
+                    'No se encontraron imágenes ni archivos DICOM válidos en lo seleccionado.',
+                )
+                return redirect('adjuntar_imagenes', orden_id=orden.id)
+
             _notificar_estudio_listo_para_informar(orden.cita)
             Bitacora.registrar(
                 request=request,
                 usuario=request.user,
                 accion=Bitacora.ACCION_ADJUNTAR_IMAGENES,
                 descripcion=(
-                    f'Adjuntó {len(archivos)} imagen(es) a la orden de {orden.cita.paciente} '
+                    f'Adjuntó {adjuntadas} imagen(es) a la orden de {orden.cita.paciente} '
                     f'(orden #{orden.id}).'
                 ),
             )
@@ -746,6 +1055,58 @@ def adjuntar_imagenes(request, orden_id):
         'edad': orden.edad_paciente,
         'volver_url': volver_url,
     })
+
+
+@login_required
+@user_passes_test(es_tecnico)
+@require_POST
+def adjuntar_imagenes_lote(request, orden_id):
+    """Guarda una tanda de archivos de la carpeta que está subiendo el
+    técnico. El JS de adjuntar_imagenes.html llama a esta vista una vez por
+    tanda (en vez de mandar la carpeta entera en un solo POST) para poder
+    mostrar una barra de progreso real mientras se procesan los DICOM."""
+    orden = get_object_or_404(OrdenTrabajo, id=orden_id, cita__estado=Cita.ESTADO_EN_PROCESO)
+    archivos = request.FILES.getlist('imagenes')
+    guardadas = 0
+    for archivo in archivos:
+        nombre = archivo.name.lower()
+        if nombre.startswith('.') or nombre.endswith(NOMBRES_IGNORADOS_EN_CARPETA):
+            continue
+        if _guardar_imagen_o_convertir_dicom(archivo, orden, request.user):
+            guardadas += 1
+    return JsonResponse({'guardadas': guardadas, 'recibidas': len(archivos)})
+
+
+@login_required
+@user_passes_test(es_tecnico)
+@require_POST
+def adjuntar_imagenes_finalizar(request, orden_id):
+    """Cierra la carga después de que el JS terminó de mandar todas las
+    tandas: notifica a la radióloga y registra la bitácora, igual que hacía
+    el envío síncrono de un solo POST."""
+    orden = get_object_or_404(OrdenTrabajo, id=orden_id, cita__estado=Cita.ESTADO_EN_PROCESO)
+    adjuntadas = orden.imagenes.count()
+
+    if adjuntadas == 0:
+        return JsonResponse(
+            {'ok': False, 'error': 'No se encontraron imágenes ni archivos DICOM válidos en lo seleccionado.'},
+            status=400,
+        )
+
+    _notificar_estudio_listo_para_informar(orden.cita)
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_ADJUNTAR_IMAGENES,
+        descripcion=(
+            f'Adjuntó {adjuntadas} imagen(es) a la orden de {orden.cita.paciente} '
+            f'(orden #{orden.id}).'
+        ),
+    )
+    messages.success(
+        request, f'Imágenes adjuntadas para {orden.cita.paciente}. Ya está lista para la radióloga.'
+    )
+    return JsonResponse({'ok': True, 'redirect_url': reverse('ordenes_pendientes')})
 
 
 @login_required
@@ -783,6 +1144,7 @@ def adjuntar_informe(request, cita_id):
             ])
             cita.estado = Cita.ESTADO_PROCESADA
             cita.save(update_fields=['estado'])
+
             _notificar_estudio_completado(cita)
             Bitacora.registrar(
                 request=request,
@@ -801,7 +1163,105 @@ def adjuntar_informe(request, cita_id):
         'orden': orden,
         'edad': cita.paciente.edad_en(cita.fecha),
         'volver_url': volver_url,
+        'tiene_dicom_original': any(img.archivo_original for img in orden.imagenes.all()),
     })
+
+
+@login_required
+@user_passes_test(es_radiologo)
+def ver_imagenes_jpg(request, orden_id):
+    """Galería con las imágenes JPG (ya convertidas si venían de DICOM) de
+    un estudio, con casillas para que la radióloga elija cuáles quedan: las
+    que deje marcadas son las que se siguen viendo y las que se le envían
+    al paciente por correo; las que desmarque se borran de acá (el JPG),
+    pero si tenían un DICOM detrás ese se conserva completo sin tocar. Es
+    a donde manda el botón "Ver JPG" de adjuntar_informe.html."""
+    orden = get_object_or_404(OrdenTrabajo, id=orden_id)
+    imagenes = orden.imagenes.filter(seleccionada=True).exclude(archivo='')
+    return render(request, 'pacientes/ver_imagenes_jpg.html', {
+        'orden': orden,
+        'cita': orden.cita,
+        'imagenes': imagenes,
+    })
+
+
+@login_required
+@user_passes_test(es_radiologo)
+@require_POST
+def guardar_seleccion_imagenes(request, orden_id):
+    """Aplica la selección hecha en ver_imagenes_jpg.html: descarta el JPG
+    de las imágenes que quedaron sin marcar. Si esa imagen venía de un
+    DICOM, el .dcm original se conserva íntegro (solo se le borra el JPG y
+    se le apaga "seleccionada"); si no tenía DICOM detrás (se subió como
+    JPG/PNG directo), no queda nada que conservar y se elimina del todo."""
+    orden = get_object_or_404(OrdenTrabajo, id=orden_id)
+    ids_marcados = set(request.POST.getlist('seleccionadas'))
+
+    descartadas = 0
+    for imagen in orden.imagenes.filter(seleccionada=True).exclude(archivo=''):
+        if str(imagen.id) in ids_marcados:
+            continue
+        descartadas += 1
+        if imagen.archivo_original:
+            imagen.archivo.delete(save=False)
+            imagen.seleccionada = False
+            imagen.save(update_fields=['archivo', 'seleccionada'])
+        else:
+            imagen.archivo.delete(save=False)
+            imagen.delete()
+
+    if descartadas:
+        Bitacora.registrar(
+            request=request,
+            usuario=request.user,
+            accion=Bitacora.ACCION_SELECCIONAR_IMAGENES,
+            descripcion=(
+                f'Descartó {descartadas} imagen(es) de la galería de la orden #{orden.id} '
+                f'({orden.cita.paciente}).'
+            ),
+        )
+        messages.success(request, f'Se descartaron {descartadas} imagen(es) de la galería.')
+    else:
+        messages.info(request, 'No se descartó ninguna imagen.')
+
+    return redirect('adjuntar_informe', cita_id=orden.cita_id)
+
+
+@login_required
+@user_passes_test(es_radiologo)
+def descargar_dicom_orden(request, orden_id):
+    """Empaqueta en un .zip los archivos DICOM originales (los que el
+    técnico subió y se convirtieron a JPG) de un estudio, para que la
+    radióloga los baje a su equipo desde el botón "Descargar DICOM"."""
+    orden = get_object_or_404(OrdenTrabajo, id=orden_id)
+    imagenes_con_dicom = [img for img in orden.imagenes.all() if img.archivo_original]
+
+    if not imagenes_con_dicom:
+        messages.error(request, 'Este estudio no tiene archivos DICOM originales para descargar.')
+        return redirect('adjuntar_informe', cita_id=orden.cita_id)
+
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zip_archivo:
+        nombres_usados = set()
+        for imagen in imagenes_con_dicom:
+            nombre = os.path.basename(imagen.archivo_original.name)
+            base, ext = os.path.splitext(nombre)
+            candidato = nombre
+            contador = 1
+            # Evita pisar archivos dentro del zip si dos vinieran con el
+            # mismo nombre (ej. "I0" en dos series distintas).
+            while candidato in nombres_usados:
+                candidato = f'{base}_{contador}{ext}'
+                contador += 1
+            nombres_usados.add(candidato)
+            with imagen.archivo_original.open('rb') as contenido:
+                zip_archivo.writestr(candidato, contenido.read())
+    buffer.seek(0)
+
+    nombre_zip = f'dicom_{orden.cita.paciente.dpi}_orden{orden.id}.zip'
+    respuesta = HttpResponse(buffer.getvalue(), content_type='application/zip')
+    respuesta['Content-Disposition'] = f'attachment; filename="{nombre_zip}"'
+    return respuesta
 
 
 @login_required
@@ -1121,14 +1581,22 @@ def notificaciones_pendientes(request):
 @login_required
 def marcar_notificacion_leida(request, notificacion_id):
     if request.method == 'POST':
-        request.user.notificaciones.filter(id=notificacion_id).update(leida=True)
+        # Los avisos de "datos de paciente pendientes" no se pueden cerrar a
+        # mano: se apagan solos cuando el dato realmente se completa (ver
+        # completar_datos_paciente). Se valida también aquí, no solo en el
+        # JS, para que no se puedan cerrar llamando el endpoint directo.
+        request.user.notificaciones.filter(id=notificacion_id).exclude(
+            tipo=Notificacion.TIPO_DATOS_PACIENTE_PENDIENTES,
+        ).update(leida=True)
     return JsonResponse({'ok': True})
 
 
 @login_required
 def marcar_notificaciones_leidas(request):
     if request.method == 'POST':
-        request.user.notificaciones.filter(leida=False).update(leida=True)
+        request.user.notificaciones.filter(leida=False).exclude(
+            tipo=Notificacion.TIPO_DATOS_PACIENTE_PENDIENTES,
+        ).update(leida=True)
     return JsonResponse({'ok': True})
 
 
@@ -1194,7 +1662,7 @@ def _filas_reporte(reporte):
             'radiologo': (
                 (cita.radiologo.get_full_name() or cita.radiologo.username) if cita.radiologo else ''
             ),
-            'precio': cita.tipo_estudio.precio,
+            'precio': cita.precio,
             'ausente': cita.estado == Cita.ESTADO_AUSENTE,
         })
     return filas
@@ -1350,11 +1818,14 @@ def lista_reportes_diarios(request, convenio):
     # existen, deben seguir apareciendo aunque las citas que los originaron
     # cambien después (se reagenden a otra fecha, se rechacen, etc.). Por
     # eso se listan desde ReporteDiario y no recalculando a partir de Cita
-    # en cada visita. Se incluyen fechas futuras a propósito: si el
-    # radiólogo ya confirmó una cita para un día próximo, la recepcionista
-    # puede adelantar y enviar ese reporte si quiere, sin esperar a que
-    # llegue la fecha.
-    reportes = ReporteDiario.objects.filter(convenio=convenio).order_by('-fecha')
+    # en cada visita. Solo se muestran días anteriores a hoy: el reporte de
+    # un día que todavía no terminó puede cambiar (citas que se cancelan,
+    # reagendan o completan durante el día), así que hasta que el día pasa
+    # no se puede confiar en el conteo de estudios realizados / cancelados /
+    # reagendados / finalizados.
+    reportes = ReporteDiario.objects.filter(
+        convenio=convenio, fecha__lt=timezone.localdate(),
+    ).order_by('-fecha')
     if solo_enviados:
         reportes = reportes.filter(estado=ReporteDiario.ESTADO_ENVIADO)
 
@@ -1419,6 +1890,14 @@ def enviar_reporte_diario(request, convenio, fecha):
     volver_url = reverse('ver_reporte_diario', args=[convenio, fecha])
 
     if request.method == 'POST' and reporte.estado == ReporteDiario.ESTADO_BORRADOR:
+        if fecha_valor >= timezone.localdate():
+            messages.error(
+                request,
+                'No se puede enviar el reporte de hoy ni de una fecha futura: todavía puede '
+                'haber citas de ese día que se cancelen, reagenden o finalicen. Esperá a que '
+                'el día termine.',
+            )
+            return redirect(volver_url)
         pendientes = _pacientes_con_datos_pendientes(reporte)
         if pendientes:
             nombres = ', '.join(paciente['nombre'] for paciente in pendientes)

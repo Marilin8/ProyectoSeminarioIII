@@ -1,6 +1,12 @@
-from django.contrib.auth.forms import UserCreationForm
+from django import forms
+from django.contrib.auth.forms import PasswordChangeForm, UserCreationForm
+
+from pacientes.models import TipoEstudio
 
 from .models import Usuario
+
+# Longitud mínima de contraseña en el cambio de contraseña del propio perfil.
+PASSWORD_MIN_LEN = 10
 
 ROLES_CON_COMISION = (
     Usuario.ROL_TECNICO_IMAGENES,
@@ -8,8 +14,39 @@ ROLES_CON_COMISION = (
     Usuario.ROL_MEDICO_REMITENTE,
 )
 
+CAMPOS_PORCENTAJE = ('porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss')
+
+
+def _campo_email():
+    """Correo obligatorio y con formato válido, para crear y editar usuario."""
+    return forms.EmailField(
+        label='Correo',
+        required=True,
+        error_messages={
+            'required': 'El correo es obligatorio.',
+            'invalid': 'Ingresá un correo electrónico válido (ejemplo: nombre@dominio.com).',
+        },
+    )
+
+
+def _validar_porcentajes(form, cleaned):
+    """Reglas de comisión compartidas por crear y editar usuario:
+    - cada porcentaje entre 0 y 100
+    - si el rol no cobra comisión, se fuerzan a 0"""
+    rol = cleaned.get('rol')
+    for campo in CAMPOS_PORCENTAJE:
+        valor = cleaned.get(campo)
+        if valor is not None and not (0 <= valor <= 100):
+            form.add_error(campo, 'El porcentaje debe estar entre 0 y 100.')
+    if rol not in ROLES_CON_COMISION:
+        for campo in CAMPOS_PORCENTAJE:
+            cleaned[campo] = 0
+    return cleaned
+
 
 class CrearUsuarioForm(UserCreationForm):
+    email = _campo_email()
+
     class Meta(UserCreationForm.Meta):
         model = Usuario
         fields = (
@@ -19,16 +56,112 @@ class CrearUsuarioForm(UserCreationForm):
 
     def clean(self):
         cleaned = super().clean()
-        rol = cleaned.get('rol')
-        campos_porcentaje = ('porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss')
+        return _validar_porcentajes(self, cleaned)
 
-        for campo in campos_porcentaje:
-            valor = cleaned.get(campo)
-            if valor is not None and not (0 <= valor <= 100):
-                self.add_error(campo, 'El porcentaje debe estar entre 0 y 100.')
 
-        if rol not in ROLES_CON_COMISION:
-            for campo in campos_porcentaje:
-                cleaned[campo] = 0
+class CambiarContrasenaForm(PasswordChangeForm):
+    """Cambio de contraseña del propio perfil con reglas propias (no las de
+    AUTH_PASSWORD_VALIDATORS): al menos 10 caracteres, una mayúscula, mezcla
+    de letras y números, distinta del nombre/usuario y de la anterior."""
 
-        return cleaned
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for campo in self.fields.values():
+            campo.help_text = ''
+
+    def clean_new_password1(self):
+        pw = self.cleaned_data.get('new_password1') or ''
+        errores = []
+        if len(pw) < PASSWORD_MIN_LEN:
+            errores.append(f'Debe tener al menos {PASSWORD_MIN_LEN} caracteres.')
+        if not any(c.isupper() for c in pw):
+            errores.append('Debe incluir al menos una letra mayúscula.')
+        if not (any(c.isalpha() for c in pw) and any(c.isdigit() for c in pw)):
+            errores.append('Debe combinar letras y números.')
+        datos_personales = [
+            self.user.username, self.user.first_name, self.user.last_name,
+        ]
+        if any(dato and pw.lower() == dato.lower() for dato in datos_personales):
+            errores.append('No puede ser igual a tu nombre ni a tu usuario.')
+        if pw and self.user.check_password(pw):
+            errores.append('No puede ser igual a tu contraseña anterior.')
+        if errores:
+            raise forms.ValidationError(errores)
+        return pw
+
+    def _post_clean(self):
+        # Salta la validación de AUTH_PASSWORD_VALIDATORS que hace
+        # SetPasswordForm._post_clean; ya validamos en clean_new_password1.
+        forms.Form._post_clean(self)
+
+
+class PerfilForm(forms.ModelForm):
+    """Datos que cada usuario puede editar de su propio perfil. No incluye
+    rol, comisiones, estado ni username."""
+
+    email = _campo_email()
+
+    class Meta:
+        model = Usuario
+        fields = ('first_name', 'last_name', 'email')
+        labels = {'first_name': 'Nombres', 'last_name': 'Apellidos'}
+
+    def clean_first_name(self):
+        valor = (self.cleaned_data.get('first_name') or '').strip()
+        if not valor:
+            raise forms.ValidationError('El nombre es obligatorio.')
+        return valor
+
+    def clean_last_name(self):
+        valor = (self.cleaned_data.get('last_name') or '').strip()
+        if not valor:
+            raise forms.ValidationError('El apellido es obligatorio.')
+        return valor
+
+
+class EditarUsuarioForm(forms.ModelForm):
+    """Edición completa de un usuario existente desde la pantalla de
+    administración: datos personales, rol, comisiones, estado y — solo para
+    radiólogos — los tipos de estudio que puede realizar."""
+
+    email = _campo_email()
+
+    tipos_estudio = forms.ModelMultipleChoiceField(
+        queryset=TipoEstudio.objects.order_by('nombre'),
+        widget=forms.CheckboxSelectMultiple,
+        required=False,
+        label='Estudios que este radiólogo puede realizar',
+        help_text='Al agendar una cita, solo se podrá asignar el estudio a los radiólogos marcados aquí.',
+    )
+
+    class Meta:
+        model = Usuario
+        fields = (
+            'first_name', 'last_name', 'email', 'rol',
+            'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
+            'is_active',
+        )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk:
+            self.fields['tipos_estudio'].initial = self.instance.tipos_estudio_asignados.all()
+
+    def clean(self):
+        cleaned = super().clean()
+        return _validar_porcentajes(self, cleaned)
+
+    def save(self, commit=True):
+        usuario = super().save(commit=commit)
+
+        def guardar_estudios():
+            if usuario.rol == Usuario.ROL_MEDICO_RADIOLOGO:
+                usuario.tipos_estudio_asignados.set(self.cleaned_data['tipos_estudio'])
+            else:
+                usuario.tipos_estudio_asignados.clear()
+
+        if commit:
+            guardar_estudios()
+        else:
+            self._guardar_estudios = guardar_estudios
+        return usuario

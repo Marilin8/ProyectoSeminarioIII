@@ -1,117 +1,177 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Bitácora del sistema - Clínica de Imágenes</title>
+{% extends 'base.html' %}
+
+{% block title %}Bitácora del sistema - Clínica de Imágenes{% endblock %}
+{% block page_title %}
+    <svg width="14" height="14"><use href="#i-clipboard"/></svg>
+    Bitácora del sistema
+{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f1f5f9;
-            margin: 0;
-            padding: 2rem;
+        .tabla-bitacora { table-layout: fixed; width: 100%; }
+        .tabla-bitacora th, .tabla-bitacora td {
+            white-space: normal;
+            overflow-wrap: anywhere;
+            vertical-align: top;
         }
-        .topbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-        }
-        h1 {
-            color: #0f172a;
-            font-size: 1.3rem;
-        }
-        a.volver {
-            color: #2563eb;
-            text-decoration: none;
-            font-size: 0.85rem;
-        }
-        .navegacion {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-            font-size: 0.9rem;
-        }
-        .navegacion a {
-            color: #2563eb;
-            text-decoration: none;
-        }
-        .navegacion .fecha-actual {
-            font-weight: bold;
-            color: #0f172a;
-        }
-        table {
-            border-collapse: collapse;
-            width: 100%;
-            background: white;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-        }
-        th, td {
-            border: 1px solid #e2e8f0;
-            padding: 0.6rem;
+        .tabla-bitacora .col-hora { width: 5.5rem; }
+        .tabla-bitacora .col-usuario { width: 8rem; }
+        .tabla-bitacora .col-accion { width: 12rem; }
+        .tabla-bitacora .col-ip { width: 7rem; }
+        .tabla-bitacora td .badge {
+            white-space: normal;
             text-align: left;
-            font-size: 0.85rem;
+            line-height: 1.3;
         }
-        th {
-            background: #0f172a;
-            color: white;
+        .paginacion {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            border-top: 1px solid var(--border-light);
+            font-size: 0.82rem;
         }
-        .accion {
-            display: inline-block;
-            padding: 0.15rem 0.5rem;
-            border-radius: 999px;
-            font-size: 0.75rem;
-            font-weight: bold;
-            background: #e2e8f0;
-            color: #334155;
+        .paginacion .paginas { display: flex; gap: 0.4rem; align-items: center; }
+        .filtros-bitacora {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.6rem;
+            align-items: flex-end;
+            padding: 0.85rem 1rem;
         }
-        .accion-login_exitoso { background: #bbf7d0; color: #14532d; }
-        .accion-login_fallido { background: #fecaca; color: #7f1d1d; }
-        .vacio {
-            color: #64748b;
-            font-size: 0.9rem;
+        .filtros-bitacora .campo { display: flex; flex-direction: column; gap: 0.2rem; }
+        .filtros-bitacora .campo label {
+            margin: 0;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: var(--text-muted);
         }
+        .filtros-bitacora select, .filtros-bitacora input { min-width: 11rem; }
+        .filtros-bitacora .campo-busqueda input { min-width: 15rem; }
     </style>
-</head>
-<body>
-{% include 'includes/notificaciones.html' %}
-    <div class="topbar">
-        <h1>Bitácora del sistema</h1>
-        <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
-    </div>
-    <div class="navegacion">
-        <a href="?fecha={{ dia_anterior|date:'Y-m-d' }}">&larr; Día anterior</a>
+
+    <div class="nav-row mb-2">
+        <a href="?fecha={{ dia_anterior|date:'Y-m-d' }}{% if querystring_filtros %}&{{ querystring_filtros }}{% endif %}">
+            <svg width="14" height="14"><use href="#i-chevron-left"/></svg>
+            Día anterior
+        </a>
         <span class="fecha-actual">{{ fecha|date:'l d/m/Y' }}</span>
         {% if puede_avanzar %}
-            <a href="?fecha={{ dia_siguiente|date:'Y-m-d' }}">Día siguiente &rarr;</a>
+            <a href="?fecha={{ dia_siguiente|date:'Y-m-d' }}{% if querystring_filtros %}&{{ querystring_filtros }}{% endif %}">
+                Día siguiente
+                <svg width="14" height="14"><use href="#i-chevron-right"/></svg>
+            </a>
         {% else %}
             <span></span>
         {% endif %}
     </div>
 
+    <div class="card mb-2">
+        <form method="get" class="filtros-bitacora">
+            <input type="hidden" name="fecha" value="{{ fecha|date:'Y-m-d' }}">
+            <div class="campo">
+                <label for="f-accion">Acción</label>
+                <select name="accion" id="f-accion">
+                    <option value="">Todas</option>
+                    {% for valor, etiqueta in acciones %}
+                        <option value="{{ valor }}" {% if valor == filtro_accion %}selected{% endif %}>{{ etiqueta }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="campo">
+                <label for="f-usuario">Usuario</label>
+                <select name="usuario" id="f-usuario">
+                    <option value="">Todos</option>
+                    {% for u in usuarios %}
+                        <option value="{{ u.id }}" {% if u.id|stringformat:'s' == filtro_usuario %}selected{% endif %}>{{ u.username }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="campo campo-busqueda">
+                <label for="f-q">Buscar en el detalle</label>
+                <input type="text" name="q" id="f-q" value="{{ busqueda }}" placeholder="Ej: radiologo2, cita…">
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">
+                <svg width="14" height="14"><use href="#i-search"/></svg>
+                Filtrar
+            </button>
+            {% if filtro_accion or filtro_usuario or busqueda %}
+                <a class="btn btn-outline btn-sm" href="?fecha={{ fecha|date:'Y-m-d' }}">Limpiar</a>
+            {% endif %}
+        </form>
+    </div>
+
     {% if eventos %}
-        <table>
-            <tr>
-                <th>Hora</th>
-                <th>Usuario</th>
-                <th>Acción</th>
-                <th>Detalle</th>
-                <th>IP</th>
-            </tr>
-            {% for evento in eventos %}
-                <tr>
-                    <td>{{ evento.creado_en|time:'H:i:s' }}</td>
-                    <td>{{ evento.usuario.username|default:evento.username_intento|default:"—" }}</td>
-                    <td><span class="accion accion-{{ evento.accion }}">{{ evento.get_accion_display }}</span></td>
-                    <td>{{ evento.descripcion|default:"—" }}</td>
-                    <td>{{ evento.ip|default:"—" }}</td>
-                </tr>
-            {% endfor %}
-        </table>
+        <div class="card">
+            <div class="card-body" style="padding:0;overflow-x:auto;">
+                <table class="tabla-bitacora">
+                    <thead>
+                        <tr>
+                            <th class="col-hora">Hora</th>
+                            <th class="col-usuario">Usuario</th>
+                            <th class="col-accion">Acción</th>
+                            <th>Detalle</th>
+                            <th class="col-ip">IP</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for evento in eventos %}
+                            <tr>
+                                <td>{{ evento.creado_en|time:'H:i:s' }}</td>
+                                <td>{{ evento.usuario.username|default:evento.username_intento|default:"—" }}</td>
+                                <td><span class="badge badge-{{ evento.accion }}">{{ evento.get_accion_display }}</span></td>
+                                <td>{{ evento.descripcion|default:"—" }}</td>
+                                <td>{{ evento.ip|default:"—" }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if pagina.paginator.num_pages > 1 %}
+                <div class="paginacion">
+                    <span class="text-muted">
+                        {{ pagina.start_index }}–{{ pagina.end_index }} de {{ pagina.paginator.count }} registros
+                    </span>
+                    <span class="paginas">
+                        {% if pagina.has_previous %}
+                            <a class="btn btn-outline btn-sm" href="?fecha={{ fecha|date:'Y-m-d' }}{% if querystring_filtros %}&{{ querystring_filtros }}{% endif %}&page={{ pagina.previous_page_number }}">
+                                <svg width="12" height="12"><use href="#i-chevron-left"/></svg>
+                                Anterior
+                            </a>
+                        {% endif %}
+                        <span class="text-muted">Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+                        {% if pagina.has_next %}
+                            <a class="btn btn-outline btn-sm" href="?fecha={{ fecha|date:'Y-m-d' }}{% if querystring_filtros %}&{{ querystring_filtros }}{% endif %}&page={{ pagina.next_page_number }}">
+                                Siguiente
+                                <svg width="12" height="12"><use href="#i-chevron-right"/></svg>
+                            </a>
+                        {% endif %}
+                    </span>
+                </div>
+            {% endif %}
+        </div>
     {% else %}
-        <p class="vacio">No hay eventos registrados este día.</p>
+        <div class="card">
+            <div class="card-body">
+                <p class="text-muted text-center" style="padding:1.5rem 0;">
+                    <svg width="14" height="14"><use href="#i-info"/></svg>
+                    {% if filtro_accion or filtro_usuario or busqueda %}
+                        Ningún evento de este día coincide con el filtro.
+                    {% else %}
+                        No hay eventos registrados este día.
+                    {% endif %}
+                </p>
+            </div>
+        </div>
     {% endif %}
-</body>
-</html>
+{% endblock %}

@@ -10,7 +10,16 @@ from .models import Usuario
 PANTALLAS_POR_ROL = {
     Usuario.ROL_ADMINISTRADOR: [
         {'nombre': 'Crear usuario', 'url_name': 'crear_usuario'},
-        {'nombre': 'Crear estudio', 'url_name': 'crear_estudio'},
+        {
+            'nombre': 'Usuarios activos',
+            'clave': 'usuarios_activos',
+            'submenu': [
+                {'nombre': 'Radiólogos', 'url_name': 'lista_usuarios_radiologos'},
+                {'nombre': 'Técnicos', 'url_name': 'lista_usuarios_tecnicos'},
+                {'nombre': 'Secretarías', 'url_name': 'lista_usuarios_secretarias'},
+            ],
+        },
+        {'nombre': 'Estudios', 'url_name': 'lista_estudios'},
         {'nombre': 'Bitácora del sistema', 'url_name': 'bitacora'},
         {
             'nombre': 'Reportes diarios',

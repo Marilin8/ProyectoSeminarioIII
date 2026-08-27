@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 from decouple import config
+from email.utils import formataddr
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -61,7 +62,7 @@ ROOT_URLCONF = 'clinica.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -129,6 +130,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATICFILES_DIRS = [BASE_DIR / 'static']
 
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -143,3 +145,27 @@ LOGIN_REDIRECT_URL = 'dashboard'
 LOGOUT_REDIRECT_URL = 'login'
 
 AUTH_USER_MODEL = 'accounts.Usuario'
+
+# Configuración para envío de correos (resultados de estudios al paciente).
+# Portado del commit 758cb02 de TechBlood/ProyectoSeminarioClinica.
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+
+# Si EMAIL_HOST_USER todavía no está configurado en el .env, dejamos el
+# remitente por defecto de Django en vez de formatear una dirección vacía
+# ("Clínica de Imágenes" <>) — esa dirección inválida hace que Django
+# truene con un TypeError al armar el correo, antes de siquiera intentar
+# conectarse al servidor SMTP.
+DEFAULT_FROM_EMAIL = (
+    formataddr(('Clínica de Imágenes', EMAIL_HOST_USER)) if EMAIL_HOST_USER else 'webmaster@localhost'
+)
+
+# El técnico sube la carpeta completa de un estudio DICOM (adjuntar_imagenes),
+# que puede traer varios cientos de archivos (una serie de TAC/resonancia).
+# El límite por defecto de Django (100) es insuficiente para eso.
+DATA_UPLOAD_MAX_NUMBER_FILES = 5000

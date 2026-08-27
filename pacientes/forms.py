@@ -13,9 +13,9 @@ NOMBRE_REGEX = re.compile(r'^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]+$')
 
 
 class TipoEstudioSelect(forms.Select):
-    """Select de tipo de estudio que agrega precio y duración como atributos
-    data-* de cada <option>, para que el formulario los muestre en pantalla
-    sin pedirlos de nuevo al servidor."""
+    """Select de tipo de estudio que agrega precio (hábil e inhábil) y
+    duración como atributos data-* de cada <option>, para que el formulario
+    los muestre en pantalla sin pedirlos de nuevo al servidor."""
 
     detalles = {}
 
@@ -23,8 +23,9 @@ class TipoEstudioSelect(forms.Select):
         option = super().create_option(name, value, label, selected, index, subindex=subindex, attrs=attrs)
         detalle = self.detalles.get(str(value)) if value else None
         if detalle:
-            option['attrs']['data-precio'] = str(detalle[0])
-            option['attrs']['data-duracion'] = str(detalle[1])
+            option['attrs']['data-precio-habil'] = str(detalle[0])
+            option['attrs']['data-precio-inhabil'] = str(detalle[1])
+            option['attrs']['data-duracion'] = str(detalle[2])
         return option
 
 
@@ -80,6 +81,14 @@ class AgendarCitaForm(forms.Form):
         choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
     )
     telefono = forms.CharField(max_length=20, required=False)
+    correo = forms.EmailField(
+        label='Correo electrónico',
+        max_length=254,
+        widget=forms.EmailInput(attrs={
+            'placeholder': 'paciente@correo.com',
+            'autocomplete': 'email',
+        }),
+    )
     fecha_nacimiento = forms.DateField(
         required=False, widget=forms.DateInput(attrs={'type': 'date'}),
     )
@@ -109,12 +118,23 @@ class AgendarCitaForm(forms.Form):
     fecha = forms.DateField(widget=forms.DateInput(attrs={'type': 'date'}))
     hora = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}))
     notas = forms.CharField(widget=forms.Textarea, required=False)
+    es_emergencia = forms.BooleanField(
+        label='Confirmo que es una cita de emergencia: debe agendarse en este horario aunque ya esté ocupado.',
+        required=False,
+    )
 
     def __init__(self, *args, convenio=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['fecha_nacimiento'].widget.attrs['max'] = timezone.localdate().isoformat()
+        self.fields['tipo_estudio'].queryset = (
+            self.fields['tipo_estudio'].queryset.prefetch_related('precios')
+        )
         self.fields['tipo_estudio'].widget.detalles = {
-            str(te.pk): (te.precio, te.duracion_minutos)
+            str(te.pk): (
+                te.precio_para(convenio, True),
+                te.precio_para(convenio, False),
+                te.duracion_minutos,
+            )
             for te in self.fields['tipo_estudio'].queryset
         }
         self.convenio = convenio
@@ -140,6 +160,9 @@ class AgendarCitaForm(forms.Form):
         if not NOMBRE_REGEX.match(apellido):
             raise forms.ValidationError('El apellido solo puede contener letras y espacios.')
         return apellido
+
+    def clean_correo(self):
+        return self.cleaned_data['correo'].strip().lower()
 
     def clean_fecha_nacimiento(self):
         fecha = self.cleaned_data['fecha_nacimiento']
@@ -199,6 +222,14 @@ class RegistrarTicketForm(forms.Form):
         choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
     )
     telefono = forms.CharField(max_length=20, required=False)
+    correo = forms.EmailField(
+        label='Correo electrónico',
+        max_length=254,
+        widget=forms.EmailInput(attrs={
+            'placeholder': 'paciente@correo.com',
+            'autocomplete': 'email',
+        }),
+    )
     fecha_nacimiento = forms.DateField(
         required=False, widget=forms.DateInput(attrs={'type': 'date'}),
     )
@@ -243,6 +274,9 @@ class RegistrarTicketForm(forms.Form):
             raise forms.ValidationError('El apellido solo puede contener letras y espacios.')
         return apellido
 
+    def clean_correo(self):
+        return self.cleaned_data['correo'].strip().lower()
+
     def clean_fecha_nacimiento(self):
         fecha = self.cleaned_data['fecha_nacimiento']
         validar_fecha_nacimiento_no_futura(fecha)
@@ -275,6 +309,24 @@ class CompletarDatosPacienteForm(forms.Form):
         return fecha
 
 
+class IngresarCorreoEnvioForm(forms.Form):
+    """Usado cuando la recepcionista quiere enviar un estudio pero el
+    paciente todavía no tiene correo registrado: pide el correo y, al
+    guardarlo, la vista manda el estudio de una vez."""
+
+    correo = forms.EmailField(
+        label='Correo electrónico',
+        max_length=254,
+        widget=forms.EmailInput(attrs={
+            'placeholder': 'paciente@correo.com',
+            'autocomplete': 'email',
+        }),
+    )
+
+    def clean_correo(self):
+        return self.cleaned_data['correo'].strip().lower()
+
+
 class ProcesarTicketForm(forms.Form):
     """Convierte un ticket en espera directamente en una orden de trabajo
     para el técnico (se salta la revisión del radiólogo: el paciente ya
@@ -291,22 +343,59 @@ class ProcesarTicketForm(forms.Form):
     )
 
 
+# Cada estudio tiene un precio por convenio y por tipo de horario. COEX solo
+# tiene tarifa hábil; Privado y Emergencia IGSS tienen hábil e inhábil (a
+# partir de las 18:00). El formulario expone esas 5 celdas.
+PRECIOS_ESTUDIO = [
+    ('precio_coex_habil', Cita.CONVENIO_COEX, True, 'COEX'),
+    ('precio_privado_habil', Cita.CONVENIO_PRIVADO, True, 'Privado · hábil'),
+    ('precio_privado_inhabil', Cita.CONVENIO_PRIVADO, False, 'Privado · inhábil'),
+    ('precio_emergencia_igss_habil', Cita.CONVENIO_EMERGENCIA_IGSS, True, 'Emergencia IGSS · hábil'),
+    ('precio_emergencia_igss_inhabil', Cita.CONVENIO_EMERGENCIA_IGSS, False, 'Emergencia IGSS · inhábil'),
+]
+
+
 class CrearTipoEstudioForm(forms.ModelForm):
     class Meta:
         model = TipoEstudio
-        fields = ('nombre', 'precio', 'duracion_minutos')
+        fields = ('nombre', 'modalidad', 'duracion_minutos')
 
-    def clean_precio(self):
-        precio = self.cleaned_data['precio']
-        if precio <= 0:
-            raise forms.ValidationError('El precio debe ser mayor a 0.')
-        return precio
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        actuales = {}
+        if self.instance and self.instance.pk:
+            actuales = {
+                (p.convenio, p.horario_habil): p.precio
+                for p in self.instance.precios.all()
+            }
+        for campo, convenio, habil, etiqueta in PRECIOS_ESTUDIO:
+            self.fields[campo] = forms.DecimalField(
+                label=f'Precio {etiqueta}', max_digits=8, decimal_places=2, min_value=0,
+                initial=actuales.get((convenio, habil), 0),
+            )
 
     def clean_duracion_minutos(self):
         duracion = self.cleaned_data['duracion_minutos']
         if duracion <= 0:
             raise forms.ValidationError('La duración debe ser mayor a 0 minutos.')
         return duracion
+
+    def save(self, commit=True):
+        tipo_estudio = super().save(commit=commit)
+
+        def guardar_precios():
+            from .models import PrecioEstudio
+            for campo, convenio, habil, _ in PRECIOS_ESTUDIO:
+                PrecioEstudio.objects.update_or_create(
+                    tipo_estudio=tipo_estudio, convenio=convenio, horario_habil=habil,
+                    defaults={'precio': self.cleaned_data[campo]},
+                )
+
+        if commit:
+            guardar_precios()
+        else:
+            self._guardar_precios = guardar_precios
+        return tipo_estudio
 
 
 class GenerarOrdenForm(forms.Form):
@@ -317,7 +406,12 @@ class GenerarOrdenForm(forms.Form):
     )
 
 
-EXTENSIONES_IMAGEN_VALIDAS = ('.jpg', '.jpeg', '.png', '.dcm')
+EXTENSIONES_IMAGEN_DIRECTA = ('.jpg', '.jpeg', '.png')
+
+# Archivos que suelen venir "de regalo" al subir una carpeta completa del
+# escáner (miniaturas/metadatos del sistema operativo, no son parte del
+# estudio) y que se descartan en silencio en vez de rechazar todo el envío.
+NOMBRES_IGNORADOS_EN_CARPETA = ('.ds_store', 'thumbs.db', 'desktop.ini')
 
 
 class MultipleFileInput(forms.ClearableFileInput):
@@ -337,19 +431,31 @@ class MultipleFileField(forms.FileField):
 
 
 class AdjuntarImagenesForm(forms.Form):
+    """Acepta tanto imágenes sueltas (JPG/PNG) como la carpeta completa que
+    exporta el equipo de rayos X/tomógrafo: series DICOM con archivos
+    `.dcm` o sin extensión (ej. `I0`, `I1`, ...). Los `.dcm`/sin extensión
+    se convierten a JPG al guardarlos (ver dicom_utils.dicom_a_jpg_memoria),
+    portado de la rama Andres de TechBlood/ProyectoSeminarioClinica."""
+
     imagenes = MultipleFileField(
         label='Imágenes del estudio',
-        help_text='Formatos permitidos: JPG, PNG o DICOM (.dcm). Puedes seleccionar varias.',
+        help_text=(
+            'Selecciona la carpeta completa del estudio DICOM, o imágenes JPG/PNG '
+            'sueltas. Los archivos DICOM se convierten a JPG automáticamente.'
+        ),
+        widget=MultipleFileInput(attrs={'webkitdirectory': True, 'directory': True}),
     )
 
     def clean_imagenes(self):
         archivos = self.cleaned_data['imagenes']
-        for archivo in archivos:
-            if not archivo.name.lower().endswith(EXTENSIONES_IMAGEN_VALIDAS):
-                raise forms.ValidationError(
-                    f'"{archivo.name}" no es un formato válido (JPG, PNG o DCM).'
-                )
-        return archivos
+        archivos_utiles = [
+            archivo for archivo in archivos
+            if not archivo.name.lower().endswith(NOMBRES_IGNORADOS_EN_CARPETA)
+            and not archivo.name.startswith('.')
+        ]
+        if not archivos_utiles:
+            raise forms.ValidationError('No se seleccionó ningún archivo válido.')
+        return archivos_utiles
 
 
 class AdjuntarInformeForm(forms.Form):

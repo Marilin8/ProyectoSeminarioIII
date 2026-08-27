@@ -1,0 +1,174 @@
+{% extends 'base.html' %}
+
+{% block title %}Imágenes del estudio - Clínica de Imágenes{% endblock %}
+{% block page_title %}Imágenes del estudio{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .ayuda-seleccion { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem; }
+        .ayuda-seleccion p { font-size: 0.8rem; color: var(--text-muted); margin: 0; }
+        .botones-seleccion { display: flex; gap: 1rem; }
+        .btn-texto { background: none; border: none; color: var(--primary); font-size: 0.78rem; font-weight: 600; cursor: pointer; padding: 0; }
+        .btn-texto:hover { text-decoration: underline; }
+        .galeria { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1.25rem; }
+        .item-imagen { position: relative; display: block; background: var(--card); border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-md); border: 2px solid transparent; cursor: pointer; }
+        .item-imagen.marcada { border-color: var(--primary); }
+        .item-imagen img { width: 100%; height: 220px; object-fit: contain; background: var(--sidebar-bg); display: block; }
+        .item-imagen .casilla { position: absolute; top: 0.5rem; left: 0.5rem; width: 22px; height: 22px; cursor: pointer; }
+        .item-imagen .ver-completa { display: block; text-align: center; font-size: 0.72rem; color: var(--primary); padding: 0.4rem; text-decoration: none; }
+        .barra-acciones {
+            position: sticky; bottom: 0; background: var(--card); border-top: 1px solid var(--border-light);
+            border-radius: var(--radius-lg) var(--radius-lg) 0 0; padding: 1rem; box-shadow: 0 -4px 12px rgba(0,0,0,0.08);
+            display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;
+        }
+        .barra-acciones span { font-size: 0.85rem; color: var(--text); }
+        .barra-acciones button { width: auto; margin-top: 0; }
+    </style>
+{% endblock %}
+
+{% block topbar_actions %}
+    <a class="btn btn-ghost" href="{% url 'adjuntar_informe' cita_id=cita.id %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg> Volver al informe
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="resumen">
+        <strong>{{ cita.paciente.nombre }} {{ cita.paciente.apellido }}</strong> ({{ cita.paciente.dpi }})<br>
+        Estudio: {{ cita.tipo_estudio.nombre }} — {{ cita.fecha }} {{ cita.hora|time:'H:i' }}
+    </div>
+
+    {% if imagenes %}
+        <div class="ayuda-seleccion">
+            <p>
+                Marcá las imágenes que quedan: las que dejes marcadas son las que se le
+                envían al paciente por correo. Las que desmarques se descartan de acá (el
+                archivo DICOM original, si lo tenía, no se toca).
+            </p>
+            <div class="botones-seleccion">
+                <button type="button" class="btn-texto" id="btn-marcar-todas">Marcar todas</button>
+                <button type="button" class="btn-texto" id="btn-desmarcar-todas">Desmarcar todas</button>
+            </div>
+        </div>
+
+        <form method="post" action="{% url 'guardar_seleccion_imagenes' orden.id %}" id="form-seleccion">
+            {% csrf_token %}
+            <div class="galeria">
+                {% for img in imagenes %}
+                    <label class="item-imagen marcada">
+                        <input
+                            type="checkbox"
+                            class="casilla"
+                            name="seleccionadas"
+                            value="{{ img.id }}"
+                            checked
+                        >
+                        <img src="{{ img.archivo.url }}" alt="Imagen del estudio">
+                        <a class="ver-completa" href="{{ img.archivo.url }}" target="_blank"
+                           onclick="event.stopPropagation();">
+                            Ver completa
+                        </a>
+                    </label>
+                {% endfor %}
+            </div>
+
+            <div class="barra-acciones">
+                <span id="texto-contador"></span>
+                <button type="submit" class="btn btn-primary" id="btn-guardar-seleccion">
+                    <svg width="14" height="14"><use href="#i-save"/></svg> Guardar selección
+                </button>
+            </div>
+        </form>
+    {% else %}
+        <div class="empty-state">
+            <div class="icono"><svg width="32" height="32"><use href="#i-image"/></svg></div>
+            Este estudio no tiene imágenes en la galería.
+        </div>
+    {% endif %}
+
+    <div id="modal-confirmar-descarte" class="modal-overlay">
+        <div class="modal-card">
+            <h2>Confirmar descarte de imágenes</h2>
+            <p id="texto-confirmar-descarte" style="color:var(--text-muted);"></p>
+            <div class="modal-botones">
+                <button type="button" class="btn btn-outline" id="btn-cancelar-descarte">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="btn-confirmar-descarte">Sí, descartar</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            var form = document.getElementById('form-seleccion');
+            if (!form) {
+                return;
+            }
+            var casillas = Array.prototype.slice.call(form.querySelectorAll('.casilla'));
+            var contador = document.getElementById('texto-contador');
+            var btnMarcarTodas = document.getElementById('btn-marcar-todas');
+            var btnDesmarcarTodas = document.getElementById('btn-desmarcar-todas');
+            var modalDescarte = document.getElementById('modal-confirmar-descarte');
+            var textoDescarte = document.getElementById('texto-confirmar-descarte');
+            var btnCancelarDescarte = document.getElementById('btn-cancelar-descarte');
+            var btnConfirmarDescarte = document.getElementById('btn-confirmar-descarte');
+            var descarteConfirmado = false;
+
+            function actualizarEstado() {
+                var marcadas = casillas.filter(function (c) { return c.checked; }).length;
+                contador.textContent = marcadas + ' de ' + casillas.length + ' imágenes marcadas';
+                casillas.forEach(function (casilla) {
+                    var item = casilla.closest('.item-imagen');
+                    item.classList.toggle('marcada', casilla.checked);
+                });
+            }
+
+            casillas.forEach(function (casilla) {
+                casilla.addEventListener('change', actualizarEstado);
+            });
+
+            btnMarcarTodas.addEventListener('click', function () {
+                casillas.forEach(function (c) { c.checked = true; });
+                actualizarEstado();
+            });
+            btnDesmarcarTodas.addEventListener('click', function () {
+                casillas.forEach(function (c) { c.checked = false; });
+                actualizarEstado();
+            });
+
+            form.addEventListener('submit', function (evento) {
+                var desmarcadas = casillas.filter(function (c) { return !c.checked; }).length;
+                if (desmarcadas === 0 || descarteConfirmado) {
+                    return;
+                }
+                evento.preventDefault();
+                textoDescarte.textContent =
+                    'Se van a descartar ' + desmarcadas + ' imagen(es). ¿Estás seguro de continuar?';
+                modalDescarte.classList.add('abierto');
+            });
+
+            btnCancelarDescarte.addEventListener('click', function () {
+                modalDescarte.classList.remove('abierto');
+            });
+
+            btnConfirmarDescarte.addEventListener('click', function () {
+                descarteConfirmado = true;
+                modalDescarte.classList.remove('abierto');
+                form.submit();
+            });
+
+            modalDescarte.addEventListener('click', function (evento) {
+                if (evento.target === modalDescarte) {
+                    modalDescarte.classList.remove('abierto');
+                }
+            });
+
+            document.addEventListener('keydown', function (evento) {
+                if (evento.key === 'Escape' && modalDescarte.classList.contains('abierto')) {
+                    modalDescarte.classList.remove('abierto');
+                }
+            });
+
+            actualizarEstado();
+        });
+    </script>
+{% endblock %}

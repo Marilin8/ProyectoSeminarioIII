@@ -1,109 +1,136 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Órdenes pendientes - Clínica de Imágenes</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f1f5f9;
-            margin: 0;
-            padding: 2rem;
-        }
-        .topbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-        }
-        h1 {
-            color: #0f172a;
-            font-size: 1.3rem;
-        }
-        a.volver {
-            color: #2563eb;
-            text-decoration: none;
-            font-size: 0.85rem;
-        }
-        .orden {
-            background: white;
-            border-radius: 10px;
-            padding: 1.25rem;
-            margin-bottom: 1rem;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-        }
-        .orden .titulo {
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
-            margin-bottom: 0.5rem;
-        }
-        .orden .titulo strong {
-            color: #0f172a;
-            font-size: 1rem;
-        }
-        .orden .convenio {
-            background: #ddd6fe;
-            color: #4c1d95;
-            font-size: 0.75rem;
-            font-weight: bold;
-            padding: 0.15rem 0.5rem;
-            border-radius: 999px;
-        }
-        .orden .datos {
-            font-size: 0.85rem;
-            color: #334155;
-            margin-bottom: 0.5rem;
-        }
-        .orden .motivo {
-            font-size: 0.85rem;
-            color: #0f172a;
-            background: #f8fafc;
-            border-left: 3px solid #2563eb;
-            padding: 0.5rem 0.75rem;
-        }
-        .vacio {
-            color: #64748b;
-            font-size: 0.9rem;
-        }
-        .btn-imagenes {
-            display: inline-block;
-            background: #2563eb;
-            color: white;
-            text-decoration: none;
-            font-size: 0.85rem;
-            padding: 0.5rem 0.9rem;
-            border-radius: 6px;
-            margin-top: 0.5rem;
-        }
-    </style>
-</head>
-<body>
-{% include 'includes/notificaciones.html' %}
-    <div class="topbar">
-        <h1>Órdenes pendientes</h1>
-        <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
+{% extends 'base.html' %}
+
+{% block title %}Órdenes Pendientes — Clínica de Imágenes{% endblock %}
+{% block page_title %}Órdenes Pendientes{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a href="{% url 'dashboard' %}" class="btn btn-outline btn-sm">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <form class="flex gap-1 mb-2" method="get" id="form-buscador" style="max-width:480px;">
+        <input
+            type="text" name="q" value="{{ busqueda }}" id="input-buscador"
+            placeholder="Buscar por nombre, apellido o DPI" autocomplete="off"
+            style="flex:1;"
+        >
+        <button type="submit" class="btn btn-primary">
+            <svg width="14" height="14"><use href="#i-search"/></svg>
+            Buscar
+        </button>
+    </form>
+
+    <div class="card mb-2">
+        <div class="card-body">
+            <div class="flex flex-wrap gap-2" style="align-items:flex-end;">
+                <div style="flex:1;min-width:140px;">
+                    <label for="filtro-convenio" style="margin-top:0;">Convenio</label>
+                    <select id="filtro-convenio">
+                        <option value="">Todos</option>
+                        <option value="coex" {% if filtro_convenio == 'coex' %}selected{% endif %}>COEX</option>
+                        <option value="privado" {% if filtro_convenio == 'privado' %}selected{% endif %}>Privado</option>
+                        <option value="emergencia_igss" {% if filtro_convenio == 'emergencia_igss' %}selected{% endif %}>Emergencia IGSS</option>
+                    </select>
+                </div>
+                <div style="flex:1;min-width:140px;">
+                    <label for="filtro-fecha" style="margin-top:0;">Fecha</label>
+                    <input type="date" id="filtro-fecha" value="{{ filtro_fecha }}">
+                </div>
+                <div style="flex:1;min-width:140px;">
+                    <label for="filtro-tipo-estudio" style="margin-top:0;">Estudio</label>
+                    <select id="filtro-tipo-estudio">
+                        <option value="">Todos</option>
+                        {% for tipo in tipos_estudio %}
+                            <option value="{{ tipo.id }}" {% if filtro_tipo_estudio == tipo.id|stringformat:'s' %}selected{% endif %}>
+                                {{ tipo.nombre }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="button" class="btn btn-outline btn-sm" id="btn-limpiar-filtros">
+                    <svg width="14" height="14"><use href="#i-x"/></svg>
+                    Limpiar filtros
+                </button>
+            </div>
+        </div>
     </div>
 
-    {% if ordenes %}
-        {% for orden in ordenes %}
-            <div class="orden">
-                <div class="titulo">
-                    <strong>{{ orden.cita.paciente.nombre }} {{ orden.cita.paciente.apellido }}</strong>
-                    <span class="convenio">{{ orden.cita.get_convenio_display }}</span>
-                </div>
-                <div class="datos">
-                    {% if orden.edad_paciente is not None %}{{ orden.edad_paciente }} años{% else %}Edad no registrada{% endif %} —
-                    {{ orden.cita.paciente.get_sexo_display }} —
-                    Estudio: {{ orden.cita.tipo_estudio.nombre }} —
-                    Cita: {{ orden.cita.fecha }} {{ orden.cita.hora|time:'H:i' }}
-                </div>
-                <div class="motivo">{{ orden.motivo }}</div>
-                <a class="btn-imagenes" href="{% url 'adjuntar_imagenes' orden_id=orden.id %}">Adjuntar imágenes</a>
-            </div>
-        {% endfor %}
-    {% else %}
-        <p class="vacio">No hay órdenes pendientes por el momento.</p>
-    {% endif %}
-</body>
-</html>
+    <div id="resultados">
+        {% include 'pacientes/includes/_resultados_ordenes.html' %}
+    </div>
+
+    <script>
+        (function () {
+            var input = document.getElementById('input-buscador');
+            var filtroConvenio = document.getElementById('filtro-convenio');
+            var filtroFecha = document.getElementById('filtro-fecha');
+            var filtroTipoEstudio = document.getElementById('filtro-tipo-estudio');
+            var resultados = document.getElementById('resultados');
+            var baseUrl = "{% url 'ordenes_pendientes' %}";
+            var temporizador = null;
+            var peticionActual = null;
+
+            function construirUrl() {
+                var params = new URLSearchParams();
+                var q = input.value.trim();
+                if (q) params.set('q', q);
+                if (filtroConvenio.value) params.set('convenio', filtroConvenio.value);
+                if (filtroFecha.value) params.set('fecha', filtroFecha.value);
+                if (filtroTipoEstudio.value) params.set('tipo_estudio', filtroTipoEstudio.value);
+                var query = params.toString();
+                return query ? baseUrl + '?' + query : baseUrl;
+            }
+
+            function buscar() {
+                var url = construirUrl();
+
+                if (peticionActual) {
+                    peticionActual.abort();
+                }
+                var controlador = new AbortController();
+                peticionActual = controlador;
+
+                fetch(url, {
+                    headers: {'X-Requested-With': 'XMLHttpRequest'},
+                    signal: controlador.signal,
+                })
+                    .then(function (respuesta) { return respuesta.text(); })
+                    .then(function (html) {
+                        resultados.innerHTML = html;
+                        window.history.replaceState(null, '', url);
+                    })
+                    .catch(function (error) {
+                        if (error.name !== 'AbortError') {
+                            resultados.innerHTML = '<div class="empty-state"><p>Ocurrió un error al buscar. Intenta de nuevo.</p></div>';
+                        }
+                    });
+            }
+
+            input.addEventListener('input', function () {
+                clearTimeout(temporizador);
+                temporizador = setTimeout(buscar, 300);
+            });
+
+            document.getElementById('form-buscador').addEventListener('submit', function (evento) {
+                evento.preventDefault();
+                clearTimeout(temporizador);
+                buscar();
+            });
+
+            [filtroConvenio, filtroFecha, filtroTipoEstudio].forEach(function (elemento) {
+                elemento.addEventListener('change', buscar);
+            });
+
+            document.getElementById('btn-limpiar-filtros').addEventListener('click', function () {
+                filtroConvenio.value = '';
+                filtroFecha.value = '';
+                filtroTipoEstudio.value = '';
+                buscar();
+            });
+        })();
+    </script>
+{% endblock %}

@@ -1,95 +1,86 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Crear estudio - Clínica de Imágenes</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f1f5f9;
-            margin: 0;
-            padding: 2rem;
-        }
-        .topbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-        }
-        h1 {
-            color: #0f172a;
-            font-size: 1.4rem;
-        }
-        a.volver {
-            color: #2563eb;
-            text-decoration: none;
-            font-size: 0.85rem;
-        }
-        .card {
-            background: white;
-            border-radius: 12px;
-            padding: 2rem;
-            max-width: 640px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-        }
-        label {
-            display: block;
-            font-size: 0.85rem;
-            color: #334155;
-            margin-bottom: 0.25rem;
-            margin-top: 1rem;
-        }
-        input {
-            width: 100%;
-            padding: 0.5rem;
-            border: 1px solid #cbd5e1;
-            border-radius: 6px;
-            box-sizing: border-box;
-        }
-        .errorlist {
-            color: #dc2626;
-            font-size: 0.8rem;
-            list-style: none;
-            padding: 0;
-            margin: 0.25rem 0 0;
-        }
-        button {
-            margin-top: 1.5rem;
-            width: 100%;
-            padding: 0.6rem;
-            background: #2563eb;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        button:hover {
-            background: #1d4ed8;
-        }
-    </style>
-</head>
-<body>
-{% include 'includes/notificaciones.html' %}
-    <div class="topbar">
-        <h1>Crear estudio</h1>
-        <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
+{% extends 'base.html' %}
+
+{% block title %}{% if editando %}Editar estudio{% else %}Crear estudio{% endif %} - Clínica de Imágenes{% endblock %}
+{% block page_title %}{% if editando %}Editar estudio — {{ editando.nombre }}{% else %}Crear estudio{% endif %}{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'lista_estudios' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver a estudios
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="card" style="max-width: 640px;">
+        <div class="card-body" style="padding: 1.5rem 2rem;">
+            <form method="post">
+                {% csrf_token %}
+                {{ form.non_field_errors }}
+
+                <label for="{{ form.nombre.id_for_label }}">Nombre</label>
+                {{ form.nombre }}
+                {{ form.nombre.errors }}
+
+                <label for="{{ form.modalidad.id_for_label }}">Modalidad</label>
+                {{ form.modalidad }}
+                {{ form.modalidad.errors }}
+                <p class="form-help">
+                    Agrupa el estudio por equipo/sala. Define qué técnico y qué radiólogos
+                    pueden atenderlo.
+                </p>
+
+                <label for="{{ form.duracion_minutos.id_for_label }}">Duración estimada (minutos)</label>
+                {{ form.duracion_minutos }}
+                {{ form.duracion_minutos.errors }}
+                <p class="form-help">
+                    Cuánto tiempo ocupa este estudio en el calendario de citas — se usa para
+                    bloquear ese rango y que la recepcionista no agende a otra persona encima.
+                </p>
+
+                <div class="section-title" style="margin-top: 1.5rem;">Precios por convenio y horario</div>
+                <p class="form-help" style="margin-top: 0;">
+                    Después de las 18:00, las citas de <strong>Privado</strong> y
+                    <strong>Emergencia IGSS</strong> se cobran en tarifa inhábil. COEX siempre en hábil.
+                </p>
+                <div class="form-row">
+                    <div>
+                        <label for="{{ form.precio_coex_habil.id_for_label }}">COEX</label>
+                        {{ form.precio_coex_habil }}
+                        {{ form.precio_coex_habil.errors }}
+                    </div>
+                    <div></div>
+                </div>
+                <div class="form-row">
+                    <div>
+                        <label for="{{ form.precio_privado_habil.id_for_label }}">Privado · hábil</label>
+                        {{ form.precio_privado_habil }}
+                        {{ form.precio_privado_habil.errors }}
+                    </div>
+                    <div>
+                        <label for="{{ form.precio_privado_inhabil.id_for_label }}">Privado · inhábil</label>
+                        {{ form.precio_privado_inhabil }}
+                        {{ form.precio_privado_inhabil.errors }}
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div>
+                        <label for="{{ form.precio_emergencia_igss_habil.id_for_label }}">Emergencia IGSS · hábil</label>
+                        {{ form.precio_emergencia_igss_habil }}
+                        {{ form.precio_emergencia_igss_habil.errors }}
+                    </div>
+                    <div>
+                        <label for="{{ form.precio_emergencia_igss_inhabil.id_for_label }}">Emergencia IGSS · inhábil</label>
+                        {{ form.precio_emergencia_igss_inhabil }}
+                        {{ form.precio_emergencia_igss_inhabil.errors }}
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block" style="margin-top: 1.5rem;">
+                    <svg width="14" height="14"><use href="#i-plus"/></svg>
+                    {% if editando %}Guardar cambios{% else %}Crear estudio{% endif %}
+                </button>
+            </form>
+        </div>
     </div>
-    <div class="card">
-        <form method="post">
-            {% csrf_token %}
-            {{ form.non_field_errors }}
-
-            <label for="{{ form.nombre.id_for_label }}">Nombre</label>
-            {{ form.nombre }}
-            {{ form.nombre.errors }}
-
-            <label for="{{ form.precio.id_for_label }}">Precio</label>
-            {{ form.precio }}
-            {{ form.precio.errors }}
-
-            <button type="submit">Crear estudio</button>
-        </form>
-    </div>
-</body>
-</html>
+{% endblock %}

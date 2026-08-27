@@ -1,193 +1,78 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Crear usuario - Clínica de Imágenes</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f1f5f9;
-            margin: 0;
-            padding: 2rem;
-        }
-        .topbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-        }
-        h1 {
-            color: #0f172a;
-            font-size: 1.4rem;
-        }
-        a.volver {
-            color: #2563eb;
-            text-decoration: none;
-            font-size: 0.85rem;
-        }
-        .card {
-            background: white;
-            border-radius: 12px;
-            padding: 2rem;
-            max-width: 640px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-        }
-        label {
-            display: block;
-            font-size: 0.85rem;
-            color: #334155;
-            margin-bottom: 0.25rem;
-            margin-top: 1rem;
-        }
-        input, select {
-            width: 100%;
-            padding: 0.5rem;
-            border: 1px solid #cbd5e1;
-            border-radius: 6px;
-            box-sizing: border-box;
-        }
-        .errorlist {
-            color: #dc2626;
-            font-size: 0.8rem;
-            list-style: none;
-            padding: 0;
-            margin: 0.25rem 0 0;
-        }
-        .ayuda {
-            font-size: 0.75rem;
-            color: #64748b;
-            margin-top: 0.2rem;
-        }
-        button {
-            margin-top: 1.5rem;
-            width: 100%;
-            padding: 0.6rem;
-            background: #2563eb;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        button:hover {
-            background: #1d4ed8;
-        }
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(15, 23, 42, 0.55);
-            align-items: center;
-            justify-content: center;
-            z-index: 50;
-        }
-        .modal-overlay.abierto {
-            display: flex;
-        }
-        .modal-card {
-            background: white;
-            border-radius: 12px;
-            padding: 1.5rem 2rem;
-            max-width: 480px;
-            width: 90%;
-            max-height: 80vh;
-            overflow-y: auto;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.25);
-        }
-        .modal-card h2 {
-            margin-top: 0;
-            font-size: 1.1rem;
-            color: #0f172a;
-        }
-        .modal-card p.ayuda {
-            margin-top: -0.5rem;
-        }
-        .modal-resumen dt {
-            font-size: 0.75rem;
-            color: #64748b;
-            margin-top: 0.6rem;
-        }
-        .modal-resumen dd {
-            font-size: 0.9rem;
-            color: #0f172a;
-            margin: 0.1rem 0 0;
-        }
-        .modal-botones {
-            display: flex;
-            gap: 0.75rem;
-            margin-top: 1.5rem;
-        }
-        .modal-botones button {
-            margin-top: 0;
-            flex: 1;
-        }
-        .btn-editar {
-            background: #e2e8f0 !important;
-            color: #334155 !important;
-        }
-        .btn-editar:hover {
-            background: #cbd5e1 !important;
-        }
-    </style>
-</head>
-<body>
-{% include 'includes/notificaciones.html' %}
-    <div class="topbar">
-        <h1>Crear usuario</h1>
-        <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
-    </div>
-    <div class="card">
-        <form method="post" id="form-crear-usuario">
-            {% csrf_token %}
-            {{ form.non_field_errors }}
+{% extends 'base.html' %}
 
-            <label for="{{ form.username.id_for_label }}">Usuario</label>
-            {{ form.username }}
-            {{ form.username.errors }}
+{% block title %}Crear usuario - Clínica de Imágenes{% endblock %}
+{% block page_title %}Crear usuario{% endblock %}
 
-            <label for="{{ form.first_name.id_for_label }}">Nombres</label>
-            {{ form.first_name }}
-            {{ form.first_name.errors }}
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
 
-            <label for="{{ form.last_name.id_for_label }}">Apellidos</label>
-            {{ form.last_name }}
-            {{ form.last_name.errors }}
+{% block content %}
+    <div class="card" style="max-width:640px;">
+        <div class="card-header">
+            <svg width="14" height="14"><use href="#i-user"/></svg>
+            Datos del nuevo usuario
+        </div>
+        <div class="card-body">
+            <form method="post" id="form-crear-usuario">
+                {% csrf_token %}
+                {{ form.non_field_errors }}
 
-            <label for="{{ form.email.id_for_label }}">Correo</label>
-            {{ form.email }}
-            {{ form.email.errors }}
+                <label for="{{ form.username.id_for_label }}">Usuario</label>
+                {{ form.username }}
+                {{ form.username.errors }}
 
-            <label for="{{ form.rol.id_for_label }}">Rol</label>
-            {{ form.rol }}
-            {{ form.rol.errors }}
+                <label for="{{ form.first_name.id_for_label }}">Nombres</label>
+                {{ form.first_name }}
+                {{ form.first_name.errors }}
 
-            <p class="ayuda">
-                Los porcentajes de comisión solo aplican a técnicos de imágenes,
-                médicos radiólogos y médicos remitentes. Para otros roles, déjalos en 0.
-            </p>
+                <label for="{{ form.last_name.id_for_label }}">Apellidos</label>
+                {{ form.last_name }}
+                {{ form.last_name.errors }}
 
-            <label for="{{ form.porcentaje_coex.id_for_label }}">% comisión COEX</label>
-            {{ form.porcentaje_coex }}
-            {{ form.porcentaje_coex.errors }}
+                <label for="{{ form.email.id_for_label }}">Correo</label>
+                {{ form.email }}
+                {{ form.email.errors }}
 
-            <label for="{{ form.porcentaje_privado.id_for_label }}">% comisión Privado</label>
-            {{ form.porcentaje_privado }}
-            {{ form.porcentaje_privado.errors }}
+                <label for="{{ form.rol.id_for_label }}">Rol</label>
+                {{ form.rol }}
+                {{ form.rol.errors }}
 
-            <label for="{{ form.porcentaje_emergencia_igss.id_for_label }}">% comisión Emergencia IGSS</label>
-            {{ form.porcentaje_emergencia_igss }}
-            {{ form.porcentaje_emergencia_igss.errors }}
+                <p class="form-help mt-1">
+                    Los porcentajes de comisión solo aplican a técnicos de imágenes,
+                    médicos radiólogos y médicos remitentes. Para otros roles, déjalos en 0.
+                </p>
 
-            <label for="{{ form.password1.id_for_label }}">Contraseña</label>
-            {{ form.password1 }}
-            {{ form.password1.errors }}
+                <label for="{{ form.porcentaje_coex.id_for_label }}">% comisión COEX</label>
+                {{ form.porcentaje_coex }}
+                {{ form.porcentaje_coex.errors }}
 
-            <label for="{{ form.password2.id_for_label }}">Confirmar contraseña</label>
-            {{ form.password2 }}
-            {{ form.password2.errors }}
+                <label for="{{ form.porcentaje_privado.id_for_label }}">% comisión Privado</label>
+                {{ form.porcentaje_privado }}
+                {{ form.porcentaje_privado.errors }}
 
-            <button type="submit">Crear usuario</button>
-        </form>
+                <label for="{{ form.porcentaje_emergencia_igss.id_for_label }}">% comisión Emergencia IGSS</label>
+                {{ form.porcentaje_emergencia_igss }}
+                {{ form.porcentaje_emergencia_igss.errors }}
+
+                <label for="{{ form.password1.id_for_label }}">Contraseña</label>
+                {{ form.password1 }}
+                {{ form.password1.errors }}
+
+                <label for="{{ form.password2.id_for_label }}">Confirmar contraseña</label>
+                {{ form.password2 }}
+                {{ form.password2.errors }}
+
+                <button type="submit" class="btn btn-primary btn-block mt-2">
+                    <svg width="14" height="14"><use href="#i-plus"/></svg>
+                    Crear usuario
+                </button>
+            </form>
+        </div>
     </div>
 
     <div class="modal-overlay" id="modal-confirmar">
@@ -195,8 +80,14 @@
             <h2>Verificá los datos antes de crear el usuario</h2>
             <dl class="modal-resumen" id="modal-resumen"></dl>
             <div class="modal-botones">
-                <button type="button" class="btn-editar" id="btn-editar">Editar</button>
-                <button type="button" id="btn-confirmar">Confirmar y crear</button>
+                <button type="button" class="btn btn-outline" id="btn-editar">
+                    <svg width="14" height="14"><use href="#i-edit"/></svg>
+                    Editar
+                </button>
+                <button type="button" class="btn btn-success" id="btn-confirmar">
+                    <svg width="14" height="14"><use href="#i-check"/></svg>
+                    Confirmar y crear
+                </button>
             </div>
         </div>
     </div>
@@ -247,5 +138,4 @@
             });
         })();
     </script>
-</body>
-</html>
+{% endblock %}

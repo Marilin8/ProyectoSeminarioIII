@@ -1,0 +1,30 @@
+{% if ordenes %}
+    <div class="grid grid-2">
+        {% for orden in ordenes %}
+        <div class="card">
+            <div class="card-body">
+                <div class="flex-between" style="margin-bottom: 0.5rem;">
+                    <strong style="font-size: 0.95rem;">{{ orden.cita.paciente.nombre }} {{ orden.cita.paciente.apellido }}</strong>
+                    <span class="badge badge-info">{{ orden.cita.get_convenio_display }}</span>
+                </div>
+                <p class="text-sm text-muted" style="margin: 0.25rem 0;">
+                    {{ orden.edad_paciente|default:"—" }} años — {{ orden.cita.paciente.get_sexo_display }} — <strong>{{ orden.cita.tipo_estudio.nombre }}</strong>
+                </p>
+                <p class="text-xs text-muted" style="margin: 0.25rem 0;">Indicación: {{ orden.motivo }}</p>
+                <a href="{% url 'adjuntar_imagenes' orden.id %}" class="btn btn-primary btn-sm mt-1">
+                    <svg width="14" height="14"><use href="#i-camera"/></svg>
+                    Cargar Imágenes DICOM
+                </a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+{% else %}
+    <div class="empty-state">
+        {% if busqueda or filtro_convenio or filtro_fecha or filtro_tipo_estudio %}
+            Ninguna orden pendiente coincide con la búsqueda o los filtros elegidos.
+        {% else %}
+            No hay órdenes pendientes por el momento.
+        {% endif %}
+    </div>
+{% endif %}
