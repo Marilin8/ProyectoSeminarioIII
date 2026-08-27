@@ -1,10 +1,34 @@
 import datetime
+from decimal import Decimal
 
 from django.conf import settings
 from django.db import models, transaction
 from django.utils import timezone
 
 MINUTOS_TOLERANCIA_LLEGADA = 15
+
+# A partir de esta hora, las citas de convenio privado y de emergencia IGSS
+# cobran tarifa "inhábil" (ver PrecioEstudio y Cita.horario_habil). COEX
+# siempre se factura en tarifa hábil.
+HORA_INICIO_TARIFA_INHABIL = datetime.time(18, 0)
+CONVENIOS_CON_TARIFA_INHABIL = ('privado', 'emergencia_igss')
+
+CONVENIO_COEX = 'coex'
+CONVENIO_PRIVADO = 'privado'
+CONVENIO_EMERGENCIA_IGSS = 'emergencia_igss'
+
+CONVENIO_CHOICES = [
+    (CONVENIO_COEX, 'COEX'),
+    (CONVENIO_PRIVADO, 'Privado'),
+    (CONVENIO_EMERGENCIA_IGSS, 'Emergencia IGSS'),
+]
+
+
+def es_horario_habil(convenio, hora):
+    """¿La cita de este convenio a esta hora se factura en tarifa hábil?"""
+    if convenio in CONVENIOS_CON_TARIFA_INHABIL and hora >= HORA_INICIO_TARIFA_INHABIL:
+        return False
+    return True
 
 
 class Paciente(models.Model):
@@ -65,8 +89,25 @@ class Paciente(models.Model):
 
 
 class TipoEstudio(models.Model):
-    nombre = models.CharField(max_length=50, unique=True)
-    precio = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    MODALIDAD_RX = 'rx'
+    MODALIDAD_RX_CONTRASTE = 'rx_contraste'
+    MODALIDAD_TAC = 'tac'
+    MODALIDAD_USG = 'usg'
+    MODALIDAD_MAMO_DENSIT = 'mamo_densit'
+
+    MODALIDAD_CHOICES = [
+        (MODALIDAD_RX, 'Rayos X'),
+        (MODALIDAD_RX_CONTRASTE, 'Rayos X con contraste / fluoroscopía'),
+        (MODALIDAD_TAC, 'Tomografía (TAC)'),
+        (MODALIDAD_USG, 'Ultrasonido / Doppler'),
+        (MODALIDAD_MAMO_DENSIT, 'Mamografía / Densitometría'),
+    ]
+
+    nombre = models.CharField(max_length=120, unique=True)
+    modalidad = models.CharField(
+        max_length=20, choices=MODALIDAD_CHOICES, default=MODALIDAD_RX,
+        help_text='Agrupa el estudio por equipo/sala y define qué técnico y radiólogo pueden atenderlo.',
+    )
     duracion_minutos = models.PositiveIntegerField(
         default=30,
         verbose_name='duración (minutos)',
@@ -88,17 +129,59 @@ class TipoEstudio(models.Model):
     def __str__(self):
         return self.nombre
 
+    def precio_para(self, convenio, horario_habil=True):
+        """Precio de este estudio para un convenio y tipo de horario.
+        Si no hay tarifa inhábil cargada, cae a la hábil; si no hay ninguna,
+        devuelve 0."""
+        precios = {(p.convenio, p.horario_habil): p.precio for p in self.precios.all()}
+        return (
+            precios.get((convenio, horario_habil))
+            or precios.get((convenio, True))
+            or Decimal('0.00')
+        )
+
+    @property
+    def precio_referencia(self):
+        """Precio orientativo para listados: privado en horario hábil."""
+        return self.precio_para('privado', True)
+
+
+class PrecioEstudio(models.Model):
+    """Una celda de la matriz de precios: cuánto cuesta un estudio para un
+    convenio dado, en horario hábil o inhábil."""
+
+    HORARIO_CHOICES = [
+        (True, 'Hábil'),
+        (False, 'Inhábil (después de las 18:00 en privado y emergencia)'),
+    ]
+
+    tipo_estudio = models.ForeignKey(
+        TipoEstudio, on_delete=models.CASCADE, related_name='precios',
+    )
+    convenio = models.CharField(max_length=20, choices=CONVENIO_CHOICES)
+    horario_habil = models.BooleanField(default=True, verbose_name='horario', choices=HORARIO_CHOICES)
+    precio = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+
+    class Meta:
+        db_table = 'precios_estudio'
+        verbose_name = 'precio de estudio'
+        verbose_name_plural = 'precios de estudio'
+        unique_together = ('tipo_estudio', 'convenio', 'horario_habil')
+        ordering = ['tipo_estudio', 'convenio', '-horario_habil']
+
+    def __str__(self):
+        horario = 'hábil' if self.horario_habil else 'inhábil'
+        return f'{self.tipo_estudio.nombre} · {self.get_convenio_display()} {horario}: Q{self.precio}'
+
 
 class Cita(models.Model):
-    CONVENIO_COEX = 'coex'
-    CONVENIO_PRIVADO = 'privado'
-    CONVENIO_EMERGENCIA_IGSS = 'emergencia_igss'
-
-    CONVENIO_CHOICES = [
-        (CONVENIO_COEX, 'COEX'),
-        (CONVENIO_PRIVADO, 'Privado'),
-        (CONVENIO_EMERGENCIA_IGSS, 'Emergencia IGSS'),
-    ]
+    # Los valores viven a nivel de módulo (los usa también PrecioEstudio, que
+    # se define antes que Cita); acá se reexponen para no romper el código
+    # que ya usa Cita.CONVENIO_*.
+    CONVENIO_COEX = CONVENIO_COEX
+    CONVENIO_PRIVADO = CONVENIO_PRIVADO
+    CONVENIO_EMERGENCIA_IGSS = CONVENIO_EMERGENCIA_IGSS
+    CONVENIO_CHOICES = CONVENIO_CHOICES
 
     ESTADO_PENDIENTE = 'pendiente'
     ESTADO_AGENDADA = 'agendada'
@@ -198,6 +281,16 @@ class Cita(models.Model):
         el reporte diario pero no suman al total del día."""
         return self.estado != self.ESTADO_AUSENTE
 
+    @property
+    def horario_habil(self):
+        """True si esta cita se factura en tarifa hábil (ver es_horario_habil)."""
+        return es_horario_habil(self.convenio, self.hora)
+
+    @property
+    def precio(self):
+        """Precio de la cita según su estudio, convenio y horario."""
+        return self.tipo_estudio.precio_para(self.convenio, self.horario_habil)
+
 
 class ReporteDiario(models.Model):
     """Un reporte por convenio y fecha. Se crea automáticamente (en estado
@@ -238,13 +331,14 @@ class ReporteDiario(models.Model):
             Cita.objects.filter(convenio=self.convenio, fecha=self.fecha)
             .exclude(estado__in=(Cita.ESTADO_PENDIENTE, Cita.ESTADO_RECHAZADA))
             .select_related('paciente', 'tipo_estudio', 'radiologo')
+            .prefetch_related('tipo_estudio__precios')
             .order_by('hora')
         )
 
     def total(self):
         return sum(
-            (cita.tipo_estudio.precio for cita in self.citas() if cita.cuenta_en_total_reporte),
-            start=0,
+            (cita.precio for cita in self.citas() if cita.cuenta_en_total_reporte),
+            start=Decimal('0.00'),
         )
 
 

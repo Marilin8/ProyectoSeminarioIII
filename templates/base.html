@@ -20,6 +20,16 @@
             <a href="{% url 'dashboard' %}" class="{% block nav_dashboard %}{% endblock %}">
                 <svg width="16" height="16"><use href="#i-home"/></svg> Panel principal
             </a>
+            {% if user.is_authenticated %}
+                <a href="{% url 'mi_perfil' %}" class="{% block nav_perfil %}{% endblock %}">
+                    <svg width="16" height="16"><use href="#i-user"/></svg> Mi perfil
+                </a>
+            {% endif %}
+            {% if user.is_superuser or user.rol == 'administrador' %}
+                <a href="{% url 'pantalla_placeholder' clave='usuarios_activos' %}" class="{% block nav_usuarios %}{% endblock %}">
+                    <svg width="16" height="16"><use href="#i-users"/></svg> Usuarios activos
+                </a>
+            {% endif %}
             {% block sidebar_extra %}{% endblock %}
         </nav>
         <form method="post" action="{% url 'logout' %}" class="sidebar-logout">

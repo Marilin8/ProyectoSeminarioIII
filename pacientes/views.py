@@ -573,7 +573,10 @@ def crear_estudio(request):
                 request=request,
                 usuario=request.user,
                 accion=Bitacora.ACCION_CREAR_ESTUDIO,
-                descripcion=f'Creó el estudio "{tipo_estudio.nombre}" (precio: {tipo_estudio.precio}).',
+                descripcion=(
+                    f'Creó el estudio "{tipo_estudio.nombre}" '
+                    f'({tipo_estudio.get_modalidad_display()}, {tipo_estudio.duracion_minutos} min).'
+                ),
             )
             messages.success(request, f'Estudio "{tipo_estudio.nombre}" creado correctamente.')
             return redirect('dashboard')
@@ -585,7 +588,11 @@ def crear_estudio(request):
 @login_required
 @user_passes_test(es_administrador)
 def lista_estudios(request):
-    estudios = TipoEstudio.objects.all().order_by('nombre')
+    estudios = (
+        TipoEstudio.objects.all()
+        .prefetch_related('precios')
+        .order_by('modalidad', 'nombre')
+    )
     return render(request, 'pacientes/lista_estudios.html', {'estudios': estudios})
 
 
@@ -603,7 +610,7 @@ def editar_estudio(request, estudio_id):
                 accion=Bitacora.ACCION_EDITAR_ESTUDIO,
                 descripcion=(
                     f'Editó el estudio "{tipo_estudio.nombre}" '
-                    f'(precio: {tipo_estudio.precio}, duración: {tipo_estudio.duracion_minutos} min).'
+                    f'({tipo_estudio.get_modalidad_display()}, {tipo_estudio.duracion_minutos} min).'
                 ),
             )
             messages.success(request, f'Estudio "{tipo_estudio.nombre}" actualizado correctamente.')
@@ -1655,7 +1662,7 @@ def _filas_reporte(reporte):
             'radiologo': (
                 (cita.radiologo.get_full_name() or cita.radiologo.username) if cita.radiologo else ''
             ),
-            'precio': cita.tipo_estudio.precio,
+            'precio': cita.precio,
             'ausente': cita.estado == Cita.ESTADO_AUSENTE,
         })
     return filas

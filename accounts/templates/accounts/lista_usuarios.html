@@ -1,0 +1,98 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ rol_label }} - Clínica de Imágenes{% endblock %}
+{% block page_title %}Usuarios activos — {{ rol_label }}{% endblock %}
+{% block nav_usuarios %}active{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="tabs">
+        <a href="{% url 'lista_usuarios_radiologos' %}" class="{% if rol == 'medico_radiologo' %}active{% endif %}">Radiólogos</a>
+        <a href="{% url 'lista_usuarios_tecnicos' %}" class="{% if rol == 'tecnico_imagenes' %}active{% endif %}">Técnicos</a>
+        <a href="{% url 'lista_usuarios_secretarias' %}" class="{% if rol == 'recepcionista' %}active{% endif %}">Secretarías</a>
+        <a href="{% url 'crear_usuario' %}" class="btn btn-primary btn-sm" style="margin-left:auto;">
+            <svg width="14" height="14"><use href="#i-plus"/></svg>
+            Nuevo usuario
+        </a>
+    </div>
+
+    <div class="card">
+        <div class="card-body" style="padding: 0;">
+            {% if usuarios %}
+                <div style="overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Nombre</th>
+                            <th>Usuario</th>
+                            <th>Comisiones (COEX / Priv. / Emer.)</th>
+                            {% if es_radiologo %}<th>Estudios asignados</th>{% endif %}
+                            <th>Estado</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for u in usuarios %}
+                            <tr class="{% if not u.is_active %}text-muted{% endif %}">
+                                <td>{{ u.get_full_name|default:"—" }}</td>
+                                <td>{{ u.username }}</td>
+                                <td>{{ u.porcentaje_coex }}% / {{ u.porcentaje_privado }}% / {{ u.porcentaje_emergencia_igss }}%</td>
+                                {% if es_radiologo %}
+                                    <td>
+                                        {% for te in u.tipos_estudio_asignados.all %}
+                                            <span class="badge badge-info" style="margin:0 0.15rem 0.15rem 0;">{{ te.nombre }}</span>
+                                        {% empty %}
+                                            <span class="text-xs text-muted">sin estudios</span>
+                                        {% endfor %}
+                                    </td>
+                                {% endif %}
+                                <td>
+                                    {% if u.is_active %}
+                                        <span class="badge badge-success">Activo</span>
+                                    {% else %}
+                                        <span class="badge badge-danger">Suspendido</span>
+                                    {% endif %}
+                                    {% if u.is_superuser %}<span class="badge badge-muted">superusuario</span>{% endif %}
+                                </td>
+                                <td style="white-space:nowrap;">
+                                    <a class="btn btn-ghost btn-sm" href="{% url 'editar_usuario' usuario_id=u.id %}">
+                                        <svg width="14" height="14"><use href="#i-edit"/></svg>
+                                        Editar
+                                    </a>
+                                    {% if u != request.user and not u.is_superuser %}
+                                        <form method="post" action="{% url 'cambiar_estado_usuario' usuario_id=u.id %}"
+                                              style="display:inline;"
+                                              onsubmit="return confirm('{% if u.is_active %}¿Suspender{% else %}¿Reactivar{% endif %} a {{ u.username }}?');">
+                                            {% csrf_token %}
+                                            {% if u.is_active %}
+                                                <button type="submit" class="btn btn-danger btn-sm">
+                                                    <svg width="14" height="14"><use href="#i-user-x"/></svg>
+                                                    Suspender
+                                                </button>
+                                            {% else %}
+                                                <button type="submit" class="btn btn-success btn-sm">
+                                                    <svg width="14" height="14"><use href="#i-check"/></svg>
+                                                    Reactivar
+                                                </button>
+                                            {% endif %}
+                                        </form>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+            {% else %}
+                <p class="text-muted text-center" style="padding: 2rem 0;">No hay usuarios con el rol «{{ rol_label }}».</p>
+            {% endif %}
+        </div>
+    </div>
+{% endblock %}

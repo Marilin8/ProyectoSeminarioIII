@@ -334,25 +334,44 @@
         // calendario (esos datos ya vienen en cada <option> como data-*).
         (function () {
             var tipoEstudioSelect = document.getElementById('id_tipo_estudio');
+            var horaInput = document.getElementById('id_hora');
             var previa = document.getElementById('previa-tipo-estudio');
+
+            // Después de las 18:00, privado y emergencia IGSS cobran tarifa inhábil.
+            var convenioConInhabil = {% if convenio == 'privado' or convenio == 'emergencia_igss' %}true{% else %}false{% endif %};
+
+            function esInhabil() {
+                if (!convenioConInhabil || !horaInput || !horaInput.value) {
+                    return false;
+                }
+                return horaInput.value >= '18:00';
+            }
 
             function actualizarPrevia() {
                 var opcion = tipoEstudioSelect.options[tipoEstudioSelect.selectedIndex];
                 var duracion = opcion ? opcion.getAttribute('data-duracion') : null;
-                var precio = opcion ? opcion.getAttribute('data-precio') : null;
                 if (!duracion) {
                     previa.style.display = 'none';
                     return;
                 }
+                var precio = opcion.getAttribute(
+                    esInhabil() ? 'data-precio-inhabil' : 'data-precio-habil'
+                );
                 var texto = 'Duración estimada: ' + duracion + ' minutos';
                 if (precio) {
                     texto += ' · Precio: Q' + precio;
+                    if (esInhabil()) {
+                        texto += ' (tarifa inhábil)';
+                    }
                 }
                 previa.textContent = texto;
                 previa.style.display = 'block';
             }
 
             tipoEstudioSelect.addEventListener('change', actualizarPrevia);
+            if (horaInput) {
+                horaInput.addEventListener('change', actualizarPrevia);
+            }
             actualizarPrevia();
         })();
 

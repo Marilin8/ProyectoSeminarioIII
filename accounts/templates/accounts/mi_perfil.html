@@ -1,0 +1,170 @@
+{% extends 'base.html' %}
+
+{% block title %}Mi perfil - Clínica de Imágenes{% endblock %}
+{% block page_title %}Mi perfil{% endblock %}
+{% block nav_perfil %}active{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <style>
+        .requisitos-pass { list-style: none; padding: 0; margin: 0.5rem 0 0; }
+        .requisitos-pass li {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            padding: 0.15rem 0;
+        }
+        .requisitos-pass .marca {
+            width: 1rem;
+            height: 1rem;
+            border-radius: 999px;
+            border: 1.5px solid var(--border);
+            flex-shrink: 0;
+            position: relative;
+        }
+        .requisitos-pass li.ok { color: var(--success); }
+        .requisitos-pass li.ok .marca {
+            background: var(--success);
+            border-color: var(--success);
+        }
+        .requisitos-pass li.ok .marca::after {
+            content: '';
+            position: absolute;
+            left: 3px;
+            top: 0px;
+            width: 4px;
+            height: 8px;
+            border: solid white;
+            border-width: 0 2px 2px 0;
+            transform: rotate(45deg);
+        }
+    </style>
+
+    <div style="display:grid;gap:1.5rem;max-width:640px;">
+
+        <div class="card">
+            <div class="card-header">
+                <svg width="14" height="14"><use href="#i-user"/></svg>
+                Datos de la cuenta
+            </div>
+            <div class="card-body">
+                <div class="resumen">
+                    <strong>Usuario:</strong> {{ user.username }}<br>
+                    <strong>Rol:</strong> {{ user.get_rol_display }}
+                    <p class="form-help" style="margin-top:0.4rem;">
+                        El usuario y el rol solo los puede cambiar un administrador.
+                    </p>
+                </div>
+
+                <form method="post">
+                    {% csrf_token %}
+                    {{ perfil_form.non_field_errors }}
+
+                    <label for="{{ perfil_form.first_name.id_for_label }}">Nombres</label>
+                    {{ perfil_form.first_name }}
+                    {{ perfil_form.first_name.errors }}
+
+                    <label for="{{ perfil_form.last_name.id_for_label }}">Apellidos</label>
+                    {{ perfil_form.last_name }}
+                    {{ perfil_form.last_name.errors }}
+
+                    <label for="{{ perfil_form.email.id_for_label }}">Correo</label>
+                    {{ perfil_form.email }}
+                    {{ perfil_form.email.errors }}
+
+                    <button type="submit" name="guardar_perfil" class="btn btn-primary btn-block mt-2">
+                        <svg width="14" height="14"><use href="#i-save"/></svg>
+                        Guardar cambios
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <svg width="14" height="14"><use href="#i-shield"/></svg>
+                Cambiar contraseña
+            </div>
+            <div class="card-body">
+                <form method="post" id="form-contrasena">
+                    {% csrf_token %}
+                    {{ password_form.non_field_errors }}
+
+                    <label for="{{ password_form.old_password.id_for_label }}">Contraseña actual</label>
+                    {{ password_form.old_password }}
+                    {{ password_form.old_password.errors }}
+
+                    <label for="{{ password_form.new_password1.id_for_label }}">Contraseña nueva</label>
+                    {{ password_form.new_password1 }}
+                    {{ password_form.new_password1.errors }}
+
+                    <ul class="requisitos-pass" id="requisitos-pass">
+                        <li data-req="largo"><span class="marca"></span> Al menos 10 caracteres</li>
+                        <li data-req="mayus"><span class="marca"></span> Al menos una letra mayúscula</li>
+                        <li data-req="alfanum"><span class="marca"></span> Combina letras y números</li>
+                        <li data-req="personal"><span class="marca"></span> Distinta de tu nombre y tu usuario</li>
+                    </ul>
+                    <p class="form-help" style="margin-top:0;">
+                        Tampoco puede ser igual a tu contraseña anterior (se verifica al guardar).
+                    </p>
+
+                    <label for="{{ password_form.new_password2.id_for_label }}">Confirmar contraseña nueva</label>
+                    {{ password_form.new_password2 }}
+                    {{ password_form.new_password2.errors }}
+
+                    <button type="submit" name="cambiar_contrasena" class="btn btn-primary btn-block mt-2">
+                        <svg width="14" height="14"><use href="#i-shield"/></svg>
+                        Cambiar contraseña
+                    </button>
+                </form>
+
+                <script>
+                    (function () {
+                        var input = document.getElementById('id_new_password1');
+                        var lista = document.getElementById('requisitos-pass');
+                        if (!input || !lista) return;
+
+                        var datosPersonales = [
+                            '{{ user.username|lower|escapejs }}',
+                            '{{ user.first_name|lower|escapejs }}',
+                            '{{ user.last_name|lower|escapejs }}'
+                        ].filter(Boolean);
+
+                        function evaluar(v) {
+                            var tieneLetra = v.toLowerCase() !== v.toUpperCase();
+                            var tieneMayus = v !== v.toLowerCase() && tieneLetra;
+                            var tieneNumero = /[0-9]/.test(v);
+                            return {
+                                largo: v.length >= 10,
+                                mayus: tieneMayus,
+                                alfanum: tieneLetra && tieneNumero,
+                                personal: v.length > 0 && datosPersonales.indexOf(v.toLowerCase()) === -1
+                            };
+                        }
+
+                        function pintar() {
+                            var r = evaluar(input.value);
+                            lista.querySelectorAll('li').forEach(function (li) {
+                                li.classList.toggle('ok', !!r[li.dataset.req]);
+                            });
+                        }
+
+                        input.addEventListener('input', pintar);
+                        input.addEventListener('keyup', pintar);
+                        pintar();
+                    })();
+                </script>
+            </div>
+        </div>
+
+    </div>
+{% endblock %}

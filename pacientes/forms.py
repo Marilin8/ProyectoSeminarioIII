@@ -13,9 +13,9 @@ NOMBRE_REGEX = re.compile(r'^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]+$')
 
 
 class TipoEstudioSelect(forms.Select):
-    """Select de tipo de estudio que agrega precio y duración como atributos
-    data-* de cada <option>, para que el formulario los muestre en pantalla
-    sin pedirlos de nuevo al servidor."""
+    """Select de tipo de estudio que agrega precio (hábil e inhábil) y
+    duración como atributos data-* de cada <option>, para que el formulario
+    los muestre en pantalla sin pedirlos de nuevo al servidor."""
 
     detalles = {}
 
@@ -23,8 +23,9 @@ class TipoEstudioSelect(forms.Select):
         option = super().create_option(name, value, label, selected, index, subindex=subindex, attrs=attrs)
         detalle = self.detalles.get(str(value)) if value else None
         if detalle:
-            option['attrs']['data-precio'] = str(detalle[0])
-            option['attrs']['data-duracion'] = str(detalle[1])
+            option['attrs']['data-precio-habil'] = str(detalle[0])
+            option['attrs']['data-precio-inhabil'] = str(detalle[1])
+            option['attrs']['data-duracion'] = str(detalle[2])
         return option
 
 
@@ -125,8 +126,15 @@ class AgendarCitaForm(forms.Form):
     def __init__(self, *args, convenio=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['fecha_nacimiento'].widget.attrs['max'] = timezone.localdate().isoformat()
+        self.fields['tipo_estudio'].queryset = (
+            self.fields['tipo_estudio'].queryset.prefetch_related('precios')
+        )
         self.fields['tipo_estudio'].widget.detalles = {
-            str(te.pk): (te.precio, te.duracion_minutos)
+            str(te.pk): (
+                te.precio_para(convenio, True),
+                te.precio_para(convenio, False),
+                te.duracion_minutos,
+            )
             for te in self.fields['tipo_estudio'].queryset
         }
         self.convenio = convenio
@@ -335,22 +343,59 @@ class ProcesarTicketForm(forms.Form):
     )
 
 
+# Cada estudio tiene un precio por convenio y por tipo de horario. COEX solo
+# tiene tarifa hábil; Privado y Emergencia IGSS tienen hábil e inhábil (a
+# partir de las 18:00). El formulario expone esas 5 celdas.
+PRECIOS_ESTUDIO = [
+    ('precio_coex_habil', Cita.CONVENIO_COEX, True, 'COEX'),
+    ('precio_privado_habil', Cita.CONVENIO_PRIVADO, True, 'Privado · hábil'),
+    ('precio_privado_inhabil', Cita.CONVENIO_PRIVADO, False, 'Privado · inhábil'),
+    ('precio_emergencia_igss_habil', Cita.CONVENIO_EMERGENCIA_IGSS, True, 'Emergencia IGSS · hábil'),
+    ('precio_emergencia_igss_inhabil', Cita.CONVENIO_EMERGENCIA_IGSS, False, 'Emergencia IGSS · inhábil'),
+]
+
+
 class CrearTipoEstudioForm(forms.ModelForm):
     class Meta:
         model = TipoEstudio
-        fields = ('nombre', 'precio', 'duracion_minutos')
+        fields = ('nombre', 'modalidad', 'duracion_minutos')
 
-    def clean_precio(self):
-        precio = self.cleaned_data['precio']
-        if precio <= 0:
-            raise forms.ValidationError('El precio debe ser mayor a 0.')
-        return precio
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        actuales = {}
+        if self.instance and self.instance.pk:
+            actuales = {
+                (p.convenio, p.horario_habil): p.precio
+                for p in self.instance.precios.all()
+            }
+        for campo, convenio, habil, etiqueta in PRECIOS_ESTUDIO:
+            self.fields[campo] = forms.DecimalField(
+                label=f'Precio {etiqueta}', max_digits=8, decimal_places=2, min_value=0,
+                initial=actuales.get((convenio, habil), 0),
+            )
 
     def clean_duracion_minutos(self):
         duracion = self.cleaned_data['duracion_minutos']
         if duracion <= 0:
             raise forms.ValidationError('La duración debe ser mayor a 0 minutos.')
         return duracion
+
+    def save(self, commit=True):
+        tipo_estudio = super().save(commit=commit)
+
+        def guardar_precios():
+            from .models import PrecioEstudio
+            for campo, convenio, habil, _ in PRECIOS_ESTUDIO:
+                PrecioEstudio.objects.update_or_create(
+                    tipo_estudio=tipo_estudio, convenio=convenio, horario_habil=habil,
+                    defaults={'precio': self.cleaned_data[campo]},
+                )
+
+        if commit:
+            guardar_precios()
+        else:
+            self._guardar_precios = guardar_precios
+        return tipo_estudio
 
 
 class GenerarOrdenForm(forms.Form):
