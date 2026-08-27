@@ -1,5 +1,5 @@
 from django import forms
-from django.contrib.auth.forms import PasswordChangeForm, UserCreationForm
+from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm, UserCreationForm
 
 from pacientes.models import TipoEstudio
 
@@ -7,6 +7,25 @@ from .models import Usuario
 
 # Longitud mínima de contraseña en el cambio de contraseña del propio perfil.
 PASSWORD_MIN_LEN = 10
+
+
+class LoginForm(AuthenticationForm):
+    username = forms.CharField(
+        label='Usuario',
+        widget=forms.TextInput(attrs={
+            'class': 'login-input',
+            'placeholder': 'Usuario',
+            'autofocus': True,
+        }),
+    )
+    password = forms.CharField(
+        label='Contraseña',
+        widget=forms.PasswordInput(attrs={
+            'class': 'login-input',
+            'placeholder': 'Contraseña',
+        }),
+    )
+
 
 ROLES_CON_COMISION = (
     Usuario.ROL_TECNICO_IMAGENES,
