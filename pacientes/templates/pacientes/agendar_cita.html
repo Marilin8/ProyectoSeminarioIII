@@ -215,6 +215,15 @@
                 ayudaIncompleto.style.display = 'block';
             }
 
+            function bloquearCampo(elemento, si) {
+                if (elemento.tagName === 'SELECT') {
+                    elemento.disabled = si;
+                } else {
+                    elemento.readOnly = si;
+                }
+                elemento.style.background = si ? '#f1f5f9' : '';
+            }
+
             function buscarPaciente() {
                 var dpi = sanearDpi();
                 if (dpi.length !== 13 || dpi === ultimoDpiBuscado) {
@@ -232,6 +241,10 @@
                             var elemento = document.getElementById('id_' + nombreCampo);
                             if (elemento) {
                                 elemento.value = datos[nombreCampo];
+                                // Un dato que el paciente ya tiene guardado no se
+                                // puede modificar al agendar; solo se completan los
+                                // que están vacíos.
+                                bloquearCampo(elemento, !!datos[nombreCampo]);
                             }
                         });
                         aviso.style.display = 'block';
@@ -265,6 +278,7 @@
                     var elemento = document.getElementById('id_' + nombreCampo);
                     if (elemento) {
                         elemento.value = '';
+                        bloquearCampo(elemento, false);
                     }
                 });
                 aviso.style.display = 'none';

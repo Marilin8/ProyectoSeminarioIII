@@ -1,4 +1,5 @@
 import datetime
+import uuid
 from decimal import Decimal
 
 from django.conf import settings
@@ -367,6 +368,18 @@ class OrdenTrabajo(models.Model):
     # manualmente desde "Estudios realizados" (botón "Enviar estudio").
     # Este campo queda null hasta que efectivamente se envía.
     resultados_enviados_en = models.DateTimeField(null=True, blank=True)
+
+    # Token opaco para el visor web público del estudio (se manda en el
+    # correo al paciente). Se genera la primera vez que se envían los
+    # resultados; queda null hasta entonces. No caduca. El acceso al visor
+    # pide además los últimos 4 dígitos del DPI del paciente.
+    token_publico = models.UUIDField(null=True, blank=True, unique=True, editable=False)
+
+    def asegurar_token_publico(self):
+        if not self.token_publico:
+            self.token_publico = uuid.uuid4()
+            self.save(update_fields=['token_publico'])
+        return self.token_publico
 
     @property
     def tiene_informe(self):

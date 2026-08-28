@@ -42,6 +42,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django_otp',
+    'django_otp.plugins.otp_totp',
     'accounts',
     'pacientes',
 ]
@@ -52,10 +54,15 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django_otp.middleware.OTPMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'pacientes.middleware.AutoMarcarAusenteMiddleware',
 ]
+
+# Autenticación en dos pasos (django-otp TOTP). El emisor es lo que muestra
+# la app de autenticación (Google Authenticator, Authy, etc.).
+OTP_TOTP_ISSUER = 'Clínica de Imágenes'
 
 ROOT_URLCONF = 'clinica.urls'
 
@@ -164,6 +171,11 @@ EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = (
     formataddr(('Clínica de Imágenes', EMAIL_HOST_USER)) if EMAIL_HOST_USER else 'webmaster@localhost'
 )
+
+# Base absoluta para armar el link del visor web del estudio que se manda
+# en el correo al paciente (el request no siempre está disponible al enviar).
+# Por ahora local; en producción se pone el dominio real en el .env.
+VISOR_BASE_URL = config('VISOR_BASE_URL', default='http://localhost:8001').rstrip('/')
 
 # El técnico sube la carpeta completa de un estudio DICOM (adjuntar_imagenes),
 # que puede traer varios cientos de archivos (una serie de TAC/resonancia).

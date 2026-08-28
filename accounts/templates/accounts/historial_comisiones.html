@@ -1,0 +1,75 @@
+{% extends 'base.html' %}
+
+{% block title %}Historial de comisiones - Clínica de Imágenes{% endblock %}
+{% block page_title %}Historial de comisiones{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <form method="get" class="card mb-2" style="padding:0.85rem 1rem;display:flex;gap:0.6rem;align-items:flex-end;flex-wrap:wrap;">
+        <div style="display:flex;flex-direction:column;gap:0.2rem;">
+            <label for="q" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Usuario</label>
+            <input type="text" name="q" id="q" value="{{ busqueda }}" placeholder="Nombre o usuario" style="min-width:14rem;">
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">
+            <svg width="14" height="14"><use href="#i-search"/></svg> Buscar
+        </button>
+        {% if busqueda %}<a class="btn btn-outline btn-sm" href="{% url 'historial_comisiones' %}">Limpiar</a>{% endif %}
+    </form>
+
+    <div class="card">
+        <div class="card-body" style="padding:0;overflow-x:auto;">
+            {% if registros %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Usuario</th>
+                            <th>Convenio</th>
+                            <th>Antes</th>
+                            <th>Después</th>
+                            <th>Modificado por</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in registros %}
+                            <tr>
+                                <td>{{ r.creado_en|date:'d/m/Y H:i' }}</td>
+                                <td>{{ r.usuario.get_full_name|default:r.usuario.username }}</td>
+                                <td><span class="badge badge-info">{{ r.campo_etiqueta }}</span></td>
+                                <td>{{ r.valor_anterior }}%</td>
+                                <td class="text-bold">{{ r.valor_nuevo }}%</td>
+                                <td>{{ r.modificado_por.get_full_name|default:r.modificado_por.username }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <p class="text-muted text-center" style="padding:2rem 0;">
+                    {% if busqueda %}Sin cambios de comisión para «{{ busqueda }}».
+                    {% else %}Todavía no se registró ningún cambio de comisión.{% endif %}
+                </p>
+            {% endif %}
+        </div>
+        {% if pagina.paginator.num_pages > 1 %}
+            <div class="flex-between" style="padding:0.75rem 1rem;border-top:1px solid var(--border-light);font-size:0.82rem;">
+                <span class="text-muted">{{ pagina.start_index }}–{{ pagina.end_index }} de {{ pagina.paginator.count }}</span>
+                <span class="flex gap-1" style="align-items:center;">
+                    {% if pagina.has_previous %}
+                        <a class="btn btn-outline btn-sm" href="?{% if busqueda %}q={{ busqueda }}&{% endif %}page={{ pagina.previous_page_number }}">Anterior</a>
+                    {% endif %}
+                    <span class="text-muted">Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+                    {% if pagina.has_next %}
+                        <a class="btn btn-outline btn-sm" href="?{% if busqueda %}q={{ busqueda }}&{% endif %}page={{ pagina.next_page_number }}">Siguiente</a>
+                    {% endif %}
+                </span>
+            </div>
+        {% endif %}
+    </div>
+{% endblock %}

@@ -1,3 +1,5 @@
+import base64
+import binascii
 import datetime
 import os
 import zipfile
@@ -8,7 +10,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.files.base import ContentFile
 from django.db.models import Q
-from django.http import Http404, HttpResponse, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
@@ -222,14 +224,14 @@ CAMPOS_DATOS_PACIENTE = ('nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fe
 
 
 def obtener_o_actualizar_paciente(cd):
-    """Reutiliza el paciente si el DPI ya existe (evita duplicar el registro)
-    y sincroniza sus datos con lo capturado en el formulario, por si el
-    recepcionista corrigió algo (ej. un teléfono desactualizado).
+    """Reutiliza el paciente si el DPI ya existe (evita duplicar el registro).
 
-    El carné de afiliación IGSS, el sexo, el teléfono y la fecha de
-    nacimiento son opcionales (ej. registro apurado en una emergencia) y se
-    identifican siempre por el DPI del paciente: si vienen vacíos no se
-    borra el valor que ya tuviera registrado de una visita anterior."""
+    Para un paciente que YA está registrado, la pantalla de agendar solo
+    puede COMPLETAR datos que estén vacíos (sexo, teléfono, fecha de
+    nacimiento, correo, carné IGSS) — nunca sobrescribe un dato ya guardado,
+    aunque el recepcionista lo edite en el formulario. Las correcciones de
+    datos existentes se hacen desde la pantalla dedicada de "Completar datos
+    del paciente" (o el admin), no al agendar una cita."""
     carnet_igss = cd.get('carnet_igss') or None
     paciente, creado = Paciente.objects.get_or_create(
         dpi=cd['dpi'],
@@ -239,13 +241,11 @@ def obtener_o_actualizar_paciente(cd):
         cambiados = []
         for campo in CAMPOS_DATOS_PACIENTE:
             valor_nuevo = cd[campo]
-            si_opcional_y_vacio = campo in Paciente.CAMPOS_OPCIONALES and not valor_nuevo
-            if si_opcional_y_vacio:
-                continue
-            if getattr(paciente, campo) != valor_nuevo:
+            # Solo se rellena si el paciente NO tiene ya ese dato guardado.
+            if valor_nuevo and not getattr(paciente, campo):
                 setattr(paciente, campo, valor_nuevo)
                 cambiados.append(campo)
-        if carnet_igss and paciente.carnet_igss != carnet_igss:
+        if carnet_igss and not paciente.carnet_igss:
             paciente.carnet_igss = carnet_igss
             cambiados.append('carnet_igss')
         if cambiados:
@@ -2072,4 +2072,177 @@ def descargar_reporte_xlsx(request, convenio, fecha):
         contenido, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
     respuesta['Content-Disposition'] = f'attachment; filename="reporte_{convenio}_{fecha_valor}.xlsx"'
+    return respuesta
+
+
+# ---------------------------------------------------------------------------
+# Visor web público del estudio
+#
+# El correo de resultados manda un link estilo PACS:
+#   /visor/?studyId=<id de la orden>&tab=images&ac=<token en base64>
+#
+#   - studyId: identifica el estudio (no es secreto)
+#   - ac: token de acceso (UUID en base64; sin esto no abre)
+#
+# Para abrirlo el paciente ingresa además los últimos 4 dígitos de su DPI;
+# tras eso queda autorizado en la sesión y puede ver las imágenes que la
+# radióloga dejó seleccionadas y descargar el informe. No requiere login.
+# ---------------------------------------------------------------------------
+
+VISOR_MAX_INTENTOS = 5
+
+
+def _ac_a_token(ac):
+    """Decodifica el parámetro ac (base64 url-safe, sin padding) al token."""
+    try:
+        relleno = '=' * (-len(ac) % 4)
+        return base64.urlsafe_b64decode(ac + relleno).decode('ascii')
+    except (ValueError, binascii.Error, UnicodeDecodeError):
+        return None
+
+
+def _token_a_ac(token):
+    return base64.urlsafe_b64encode(str(token).encode('ascii')).decode('ascii').rstrip('=')
+
+
+def _visor_orden_desde_request(request):
+    study_id = request.GET.get('studyId')
+    token = _ac_a_token(request.GET.get('ac') or '')
+    if not (study_id or '').isdigit() or not token:
+        raise Http404
+    orden = get_object_or_404(
+        OrdenTrabajo.objects.select_related('cita__paciente', 'cita__tipo_estudio'),
+        id=study_id, token_publico=token,
+    )
+    if not orden.resultados_enviados_en:
+        raise Http404
+    return orden
+
+
+def visor_estudio(request):
+    orden = _visor_orden_desde_request(request)
+    paciente = orden.cita.paciente
+    clave_ok = f'visor_ok_{orden.id}'
+    clave_intentos = f'visor_intentos_{orden.id}'
+    qs = request.META.get('QUERY_STRING', '')
+
+    if request.session.get(clave_ok) is not True:
+        intentos = request.session.get(clave_intentos, 0)
+        contexto = {'paciente': paciente, 'query_string': qs}
+
+        if request.method == 'POST':
+            if intentos >= VISOR_MAX_INTENTOS:
+                contexto['bloqueado'] = True
+                return render(request, 'pacientes/visor_gate.html', contexto)
+            ultimos = (request.POST.get('dpi_ultimos') or '').strip()
+            if ultimos and ultimos == (paciente.dpi or '')[-4:]:
+                request.session[clave_ok] = True
+                request.session.pop(clave_intentos, None)
+                return redirect(f'{reverse("visor_estudio")}?{qs}')
+            request.session[clave_intentos] = intentos + 1
+            contexto['error'] = 'Los 4 dígitos no coinciden con el DPI registrado.'
+            contexto['intentos_restantes'] = VISOR_MAX_INTENTOS - (intentos + 1)
+            return render(request, 'pacientes/visor_gate.html', contexto)
+
+        contexto['bloqueado'] = intentos >= VISOR_MAX_INTENTOS
+        return render(request, 'pacientes/visor_gate.html', contexto)
+
+    imagenes = list(
+        orden.imagenes.filter(seleccionada=True).exclude(archivo='').order_by('subida_en')
+    )
+    return render(request, 'pacientes/visor_estudio.html', {
+        'orden': orden,
+        'cita': orden.cita,
+        'paciente': paciente,
+        'imagenes': imagenes,
+        'tab': 'report' if request.GET.get('tab') == 'report' else 'images',
+        'tiene_pdf': bool(orden.informe_archivo),
+        'tiene_dicom': any(img.archivo_original for img in imagenes),
+        'edad': paciente.edad_en(orden.cita.fecha),
+    })
+
+
+def _visor_orden_autorizada(request, orden_id):
+    if request.session.get(f'visor_ok_{orden_id}') is not True:
+        raise Http404
+    return get_object_or_404(
+        OrdenTrabajo, id=orden_id, resultados_enviados_en__isnull=False,
+    )
+
+
+def visor_imagen(request, orden_id, imagen_id):
+    orden = _visor_orden_autorizada(request, orden_id)
+    imagen = get_object_or_404(
+        orden.imagenes.filter(seleccionada=True).exclude(archivo=''), id=imagen_id,
+    )
+    descargar = request.GET.get('descargar') == '1'
+    return FileResponse(
+        imagen.archivo.open('rb'),
+        as_attachment=descargar,
+        filename=(
+            f'{orden.cita.paciente.apellido}_{orden.cita.fecha}_{imagen_id}.jpg'
+            if descargar else None
+        ),
+    )
+
+
+def visor_jpg(request, orden_id):
+    """Zip con las imágenes JPG seleccionadas, para descargar desde el visor
+    (botón "Descargar JPG")."""
+    orden = _visor_orden_autorizada(request, orden_id)
+    imagenes = list(orden.imagenes.filter(seleccionada=True).exclude(archivo=''))
+    if not imagenes:
+        raise Http404
+
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for n, imagen in enumerate(imagenes, start=1):
+            with imagen.archivo.open('rb') as fh:
+                zf.writestr(f'imagen_{n:02d}.jpg', fh.read())
+    buffer.seek(0)
+    respuesta = HttpResponse(buffer.getvalue(), content_type='application/zip')
+    respuesta['Content-Disposition'] = (
+        f'attachment; filename="imagenes_{orden.cita.paciente.dpi}.zip"'
+    )
+    return respuesta
+
+
+def visor_informe_pdf(request, orden_id):
+    orden = _visor_orden_autorizada(request, orden_id)
+    if not orden.informe_archivo:
+        raise Http404
+    return FileResponse(
+        orden.informe_archivo.open('rb'),
+        content_type='application/pdf',
+        filename=f'informe_{orden.cita.paciente.apellido}_{orden.cita.fecha}.pdf',
+    )
+
+
+def visor_dicom(request, orden_id):
+    """Zip con los DICOM originales de las imágenes seleccionadas, para que
+    el paciente los baje desde el visor (botón "Descargar DICOM")."""
+    orden = _visor_orden_autorizada(request, orden_id)
+    imagenes = [
+        img for img in orden.imagenes.filter(seleccionada=True) if img.archivo_original
+    ]
+    if not imagenes:
+        raise Http404
+
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        usados = set()
+        for imagen in imagenes:
+            nombre = os.path.basename(imagen.archivo_original.name)
+            base, ext = os.path.splitext(nombre)
+            candidato, i = nombre, 1
+            while candidato in usados:
+                candidato, i = f'{base}_{i}{ext}', i + 1
+            usados.add(candidato)
+            with imagen.archivo_original.open('rb') as fh:
+                zf.writestr(candidato, fh.read())
+    buffer.seek(0)
+    respuesta = HttpResponse(buffer.getvalue(), content_type='application/zip')
+    respuesta['Content-Disposition'] = (
+        f'attachment; filename="estudio_{orden.cita.paciente.dpi}.zip"'
+    )
     return respuesta

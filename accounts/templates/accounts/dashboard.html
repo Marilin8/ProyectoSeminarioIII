@@ -7,39 +7,76 @@
     {% include 'includes/notificaciones.html' %}
 {% endblock %}
 
+{% block extra_css %}
+<style>
+    .tiles {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+        gap: 0.85rem;
+        margin-bottom: 1.5rem;
+    }
+    .tile {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        min-width: 0;
+        height: 110px;
+        padding: 1rem 0.75rem;
+        border-radius: var(--radius-lg);
+        text-decoration: none;
+        text-align: center;
+        font-size: 0.85rem;
+        font-weight: 600;
+        line-height: 1.25;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        background: var(--primary);
+        color: #fff;
+        transition: background var(--transition), transform 0.1s;
+    }
+    .tile:hover { background: var(--primary-dark); }
+    .tile:active { transform: scale(0.98); }
+    .tile.tile-accion { background: var(--success); }
+    .tile.tile-accion:hover { background: #15803d; }
+    .tile svg { width: 26px; height: 26px; flex-shrink: 0; }
+</style>
+{% endblock %}
+
 {% block content %}
 
 <p class="text-muted text-sm mb-2">{{ user.get_rol_display }}</p>
 
 <div class="section-title">Acciones principales</div>
-<div class="grid-4 mb-3">
+<div class="tiles">
     {% for pantalla in pantallas %}
         {% if pantalla.url_name != 'ordenes_pendientes' and pantalla.url_name != 'citas_procesadas' %}
             {% if pantalla.clave %}
-                <a href="{% url 'pantalla_placeholder' clave=pantalla.clave %}" class="btn btn-primary" style="flex-direction:column;min-height:90px;padding:1.25rem 1rem;font-size:0.85rem;font-weight:600;text-align:center;">
-                    <svg width="28" height="28"><use href="#i-grid"/></svg>
-                    {{ pantalla.nombre }}
+                <a href="{% url 'pantalla_placeholder' clave=pantalla.clave %}" class="tile">
+                    <svg><use href="#i-grid"/></svg>
+                    <span>{{ pantalla.nombre }}</span>
                 </a>
             {% else %}
-                <a href="{% url pantalla.url_name %}" class="btn btn-primary" style="flex-direction:column;min-height:90px;padding:1.25rem 1rem;font-size:0.85rem;font-weight:600;text-align:center;">
-                    <svg width="28" height="28"><use href="#i-grid"/></svg>
-                    {{ pantalla.nombre }}
+                <a href="{% url pantalla.url_name %}" class="tile">
+                    <svg><use href="#i-grid"/></svg>
+                    <span>{{ pantalla.nombre }}</span>
                 </a>
             {% endif %}
         {% endif %}
     {% endfor %}
 
     {% if user.rol == 'tecnico_imagenes' %}
-        <a href="{% url 'ordenes_pendientes' %}" class="btn btn-success" style="flex-direction:column;min-height:90px;padding:1.25rem 1rem;font-size:0.85rem;font-weight:600;text-align:center;">
-            <svg width="28" height="28"><use href="#i-camera"/></svg>
-            Procesar Orden / Cargar Captura
+        <a href="{% url 'ordenes_pendientes' %}" class="tile tile-accion">
+            <svg><use href="#i-camera"/></svg>
+            <span>Procesar orden / cargar captura</span>
         </a>
     {% endif %}
 
     {% if user.rol == 'medico_radiologo' %}
-        <a href="{% url 'citas_procesadas' %}" class="btn btn-success" style="flex-direction:column;min-height:90px;padding:1.25rem 1rem;font-size:0.85rem;font-weight:600;text-align:center;">
-            <svg width="28" height="28"><use href="#i-file-medical"/></svg>
-            Estudios
+        <a href="{% url 'citas_procesadas' %}" class="tile tile-accion">
+            <svg><use href="#i-file-medical"/></svg>
+            <span>Estudios</span>
         </a>
     {% endif %}
 </div>

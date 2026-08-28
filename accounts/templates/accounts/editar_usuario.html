@@ -155,4 +155,26 @@
             </form>
         </div>
     </div>
+
+    {% if historial_comisiones %}
+        <div class="card" style="max-width:640px;margin-top:1.25rem;">
+            <div class="card-header">Últimos cambios de comisión</div>
+            <div class="card-body" style="padding:0;">
+                <table>
+                    <thead><tr><th>Fecha</th><th>Convenio</th><th>Antes</th><th>Después</th><th>Por</th></tr></thead>
+                    <tbody>
+                        {% for r in historial_comisiones %}
+                            <tr>
+                                <td>{{ r.creado_en|date:'d/m/y H:i' }}</td>
+                                <td>{{ r.campo_etiqueta }}</td>
+                                <td>{{ r.valor_anterior }}%</td>
+                                <td class="text-bold">{{ r.valor_nuevo }}%</td>
+                                <td>{{ r.modificado_por.username }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endif %}
 {% endblock %}

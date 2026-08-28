@@ -1,18 +1,31 @@
+import base64
 import datetime
+import io
 
 from django.contrib import messages
+from django.contrib.auth import login as auth_login
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.paginator import Paginator
+from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.http import urlencode
 from django.views.decorators.http import require_POST
+from django_otp.plugins.otp_totp.models import TOTPDevice
 
-from .forms import CambiarContrasenaForm, CrearUsuarioForm, EditarUsuarioForm, PerfilForm
-from .models import Bitacora, Usuario
+import qrcode
+
+from .forms import (
+    CambiarContrasenaForm,
+    CrearUsuarioForm,
+    EditarUsuarioForm,
+    LoginForm,
+    PerfilForm,
+)
+from .models import Bitacora, HistorialComision, Usuario
 from .pantallas import buscar_pantalla, pantallas_de
 
 
@@ -37,6 +50,128 @@ _URL_LISTA_POR_ROL = {
 
 def _url_lista_para(usuario):
     return _URL_LISTA_POR_ROL.get(usuario.rol, 'dashboard')
+
+
+# ---------------------------------------------------------------------------
+# Inicio de sesión con verificación en dos pasos (MFA / TOTP)
+# ---------------------------------------------------------------------------
+
+def _dispositivo_totp(user):
+    return TOTPDevice.objects.filter(user=user, confirmed=True).first()
+
+
+def login(request):
+    """Primer paso: usuario y contraseña. Si el usuario tiene MFA activado,
+    manda al segundo paso; si no, entra directo."""
+    if request.user.is_authenticated:
+        return redirect('dashboard')
+
+    form = LoginForm(request, data=request.POST or None)
+    if request.method == 'POST' and form.is_valid():
+        user = form.get_user()
+        if _dispositivo_totp(user):
+            request.session['mfa_user_id'] = user.pk
+            return redirect('login_otp')
+        auth_login(request, user)
+        return redirect(request.GET.get('next') or 'dashboard')
+
+    return render(request, 'registration/login.html', {'form': form})
+
+
+def login_otp(request):
+    """Segundo paso: código de 6 dígitos de la app de autenticación. Solo
+    llega acá quien ya pasó usuario+contraseña en `login`."""
+    if request.user.is_authenticated:
+        return redirect('dashboard')
+
+    user_id = request.session.get('mfa_user_id')
+    if not user_id:
+        messages.error(request, 'Primero ingresá tu usuario y contraseña.')
+        return redirect('login')
+
+    user = get_object_or_404(Usuario, pk=user_id)
+    if request.method == 'POST':
+        codigo = (request.POST.get('codigo') or '').strip()
+        device = _dispositivo_totp(user)
+        if device is not None and device.verify_token(codigo):
+            request.session.pop('mfa_user_id', None)
+            auth_login(request, user)
+            return redirect('dashboard')
+        messages.error(request, 'El código no es válido o ya expiró.')
+
+    return render(request, 'accounts/login_otp.html', {'usuario_login': user})
+
+
+@login_required
+def configurar_mfa(request):
+    """El usuario activa o desactiva la verificación en dos pasos. Muestra el
+    QR para vincular la app y pide un primer código para confirmar."""
+    device = TOTPDevice.objects.filter(user=request.user).first()
+
+    if request.method == 'POST':
+        accion = request.POST.get('accion')
+
+        if accion == 'desactivar' and device is not None:
+            device.delete()
+            messages.success(request, 'Verificación en dos pasos desactivada.')
+            return redirect('configurar_mfa')
+
+        if accion == 'regenerar' and device is not None:
+            device.delete()
+            device = None
+
+        if accion == 'verificar':
+            codigo = (request.POST.get('codigo') or '').strip()
+            if device is not None and device.verify_token(codigo):
+                if not device.confirmed:
+                    device.confirmed = True
+                    device.save(update_fields=['confirmed'])
+                Bitacora.registrar(
+                    request=request, usuario=request.user,
+                    accion=Bitacora.ACCION_EDITAR_USUARIO,
+                    descripcion=f'"{request.user.username}" activó la verificación en dos pasos.',
+                )
+                messages.success(
+                    request,
+                    'Verificación en dos pasos activada. Desde ahora, cada inicio de '
+                    'sesión va a pedir un código de la app.',
+                )
+                return redirect('configurar_mfa')
+            messages.error(
+                request,
+                'El código no coincide. Revisá la hora de tu teléfono e intentá de nuevo.',
+            )
+            return redirect('configurar_mfa')
+
+    if device is None:
+        device = TOTPDevice.objects.create(user=request.user, confirmed=False)
+
+    return render(request, 'accounts/configurar_mfa.html', {
+        'confirmado': device.confirmed,
+        'qr_data_uri': None if device.confirmed else _qr_data_uri(device),
+        'clave_manual': None if device.confirmed else _clave_manual(device),
+    })
+
+
+def _qr_data_uri(device):
+    """Imagen QR (data URI PNG) con el enlace otpauth:// del dispositivo."""
+    try:
+        buffer = io.BytesIO()
+        qrcode.make(device.config_url).save(buffer, format='PNG')
+        return 'data:image/png;base64,' + base64.b64encode(buffer.getvalue()).decode('ascii')
+    except Exception:
+        return None
+
+
+def _clave_manual(device):
+    """La clave base32 en grupos de 4, para escribirla a mano si no se puede
+    escanear el QR."""
+    try:
+        import re
+        clave = re.search(r'secret=([A-Z2-7]+)', device.config_url).group(1)
+        return ' '.join(clave[i:i + 4] for i in range(0, len(clave), 4))
+    except Exception:
+        return None
 
 
 @login_required
@@ -80,6 +215,7 @@ def mi_perfil(request):
     return render(request, 'accounts/mi_perfil.html', {
         'perfil_form': perfil_form,
         'password_form': password_form,
+        'mfa_activo': _dispositivo_totp(request.user) is not None,
     })
 
 
@@ -138,20 +274,26 @@ def lista_usuarios(request, rol):
 def editar_usuario(request, usuario_id):
     usuario = get_object_or_404(Usuario, id=usuario_id)
     if request.method == 'POST':
+        # Se leen los % de comisión ANTES de validar: form.is_valid() muta la
+        # instancia con los datos nuevos.
+        comisiones_antes = {
+            campo: getattr(usuario, campo) for campo in HistorialComision.CAMPOS_COMISION
+        }
         form = EditarUsuarioForm(request.POST, instance=usuario)
         if form.is_valid():
-            form.save()
+            editado = form.save()
             Bitacora.registrar(
                 request=request,
                 usuario=request.user,
                 accion=Bitacora.ACCION_EDITAR_USUARIO,
                 descripcion=(
-                    f'Editó el usuario "{usuario.username}" '
-                    f'(rol: {usuario.get_rol_display()}).'
+                    f'Editó el usuario "{editado.username}" '
+                    f'(rol: {editado.get_rol_display()}).'
                 ),
             )
-            messages.success(request, f'Usuario "{usuario.username}" actualizado correctamente.')
-            return redirect(_url_lista_para(usuario))
+            _auditar_cambios_comision(request, editado, comisiones_antes)
+            messages.success(request, f'Usuario "{editado.username}" actualizado correctamente.')
+            return redirect(_url_lista_para(editado))
     else:
         form = EditarUsuarioForm(instance=usuario)
 
@@ -162,7 +304,59 @@ def editar_usuario(request, usuario_id):
     }
     if usuario.rol == Usuario.ROL_MEDICO_RADIOLOGO:
         contexto['grupos_estudios'] = _grupos_estudios_para(request, usuario)
+    contexto['historial_comisiones'] = usuario.historial_comisiones.select_related(
+        'modificado_por'
+    )[:10]
     return render(request, 'accounts/editar_usuario.html', contexto)
+
+
+def _auditar_cambios_comision(request, usuario, comisiones_antes):
+    """Registra en HistorialComision + bitácora cada % de comisión que cambió."""
+    cambiados = []
+    for campo in HistorialComision.CAMPOS_COMISION:
+        antes, ahora = comisiones_antes[campo], getattr(usuario, campo)
+        if antes != ahora:
+            HistorialComision.objects.create(
+                usuario=usuario, campo=campo,
+                valor_anterior=antes, valor_nuevo=ahora,
+                modificado_por=request.user,
+            )
+            cambiados.append(campo)
+    if cambiados:
+        detalle = ', '.join(
+            f'{HistorialComision.ETIQUETAS_CAMPOS[c]}: '
+            f'{comisiones_antes[c]}% → {getattr(usuario, c)}%'
+            for c in cambiados
+        )
+        Bitacora.registrar(
+            request=request, usuario=request.user,
+            accion=Bitacora.ACCION_EDITAR_COMISION,
+            descripcion=f'Cambió comisiones de "{usuario.username}": {detalle}',
+        )
+
+
+@login_required
+@user_passes_test(es_administrador)
+def historial_comisiones(request):
+    """Auditoría de los cambios de % de comisión: fecha, de cuánto a cuánto,
+    y qué administrador lo hizo. Filtro por usuario."""
+    busqueda = (request.GET.get('q') or '').strip()
+    registros = (
+        HistorialComision.objects.select_related('usuario', 'modificado_por')
+        .order_by('-creado_en')
+    )
+    if busqueda:
+        registros = registros.filter(
+            Q(usuario__username__icontains=busqueda)
+            | Q(usuario__first_name__icontains=busqueda)
+            | Q(usuario__last_name__icontains=busqueda)
+        )
+    pagina = Paginator(registros, 25).get_page(request.GET.get('page'))
+    return render(request, 'accounts/historial_comisiones.html', {
+        'pagina': pagina,
+        'registros': pagina,
+        'busqueda': busqueda,
+    })
 
 
 def _grupos_estudios_para(request, usuario):

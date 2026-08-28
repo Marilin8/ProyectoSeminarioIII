@@ -68,6 +68,7 @@ class Bitacora(models.Model):
     ACCION_CREAR_USUARIO = 'crear_usuario'
     ACCION_EDITAR_USUARIO = 'editar_usuario'
     ACCION_CAMBIAR_ESTADO_USUARIO = 'cambiar_estado_usuario'
+    ACCION_EDITAR_COMISION = 'editar_comision'
     ACCION_CREAR_ESTUDIO = 'crear_estudio'
     ACCION_EDITAR_ESTUDIO = 'editar_estudio'
     ACCION_SOLICITAR_CITA = 'solicitar_cita'
@@ -91,6 +92,7 @@ class Bitacora(models.Model):
         (ACCION_CREAR_USUARIO, 'Creación de usuario'),
         (ACCION_EDITAR_USUARIO, 'Edición de usuario'),
         (ACCION_CAMBIAR_ESTADO_USUARIO, 'Cambio de estado de usuario (suspensión/reactivación)'),
+        (ACCION_EDITAR_COMISION, 'Cambio de comisión de un usuario'),
         (ACCION_CREAR_ESTUDIO, 'Creación de estudio'),
         (ACCION_EDITAR_ESTUDIO, 'Edición de estudio'),
         (ACCION_SOLICITAR_CITA, 'Solicitud de cita'),
@@ -139,3 +141,47 @@ class Bitacora(models.Model):
             descripcion=descripcion,
             ip=ip,
         )
+
+
+class HistorialComision(models.Model):
+    """Auditoría de los cambios de % de comisión de un usuario (técnico,
+    radiólogo, médico remitente): guarda el valor anterior y el nuevo de
+    cada campo modificado, con la fecha y el administrador que lo hizo."""
+
+    CAMPOS_COMISION = ('porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss')
+
+    ETIQUETAS_CAMPOS = {
+        'porcentaje_coex': 'COEX',
+        'porcentaje_privado': 'Privado',
+        'porcentaje_emergencia_igss': 'Emergencia IGSS',
+    }
+
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='historial_comisiones',
+    )
+    campo = models.CharField(max_length=30, choices=[(c, c) for c in CAMPOS_COMISION])
+    valor_anterior = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    valor_nuevo = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    modificado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='cambios_comision_realizados',
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'historial_comisiones'
+        verbose_name = 'cambio de comisión'
+        verbose_name_plural = 'historial de comisiones'
+        ordering = ['-creado_en']
+
+    def __str__(self):
+        etiqueta = self.ETIQUETAS_CAMPOS.get(self.campo, self.campo)
+        return (
+            f'{self.usuario} · {etiqueta}: {self.valor_anterior}% -> '
+            f'{self.valor_nuevo}% ({self.modificado_por})'
+        )
+
+    @property
+    def campo_etiqueta(self):
+        return self.ETIQUETAS_CAMPOS.get(self.campo, self.campo)

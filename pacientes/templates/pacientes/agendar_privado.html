@@ -103,6 +103,12 @@
             var timer = null;
             var ultimo = '';
 
+            function bloquear(el, si) {
+                if (el.tagName === 'SELECT') { el.disabled = si; }
+                else { el.readOnly = si; }
+                el.style.background = si ? '#f1f5f9' : '';
+            }
+
             function buscar() {
                 var valor = dpi.value.trim();
                 if (valor.length !== 13 || valor === ultimo) return;
@@ -113,7 +119,11 @@
                         if (!d.encontrado) { aviso.style.display = 'none'; return; }
                         campos.forEach(function (c) {
                             var el = document.getElementById('id_' + c);
-                            if (el) el.value = d[c] || '';
+                            if (!el) return;
+                            el.value = d[c] || '';
+                            // Los datos que el paciente YA tiene guardados no se
+                            // pueden cambiar acá; solo se pueden completar los vacíos.
+                            bloquear(el, !!d[c]);
                         });
                         aviso.style.display = 'block';
                     });
@@ -127,7 +137,10 @@
             dpi.addEventListener('blur', buscar);
             document.getElementById('btn-buscar-otro').addEventListener('click', function (e) {
                 e.preventDefault();
-                campos.forEach(function (c) { var el = document.getElementById('id_' + c); if (el) el.value = ''; });
+                campos.forEach(function (c) {
+                    var el = document.getElementById('id_' + c);
+                    if (el) { el.value = ''; bloquear(el, false); }
+                });
                 aviso.style.display = 'none';
                 ultimo = '';
                 dpi.focus();

@@ -1,3 +1,4 @@
+import base64
 import datetime
 
 from django.contrib.auth import get_user_model
@@ -110,6 +111,69 @@ class FlujoPrivadoTests(TestCase):
         cita.refresh_from_db()
         self.assertEqual(cita.estado, Cita.ESTADO_EN_PROCESO)
         self.assertTrue(OrdenTrabajo.objects.filter(cita=cita).exists())
+
+
+class VisorEstudioTests(TestCase):
+    """Visor web público del estudio: link estilo PACS
+    (/visor/?studyId=<id>&ac=<token base64>) + gate de últimos 4 dígitos del
+    DPI + imágenes servidas solo con sesión autorizada."""
+
+    def setUp(self):
+        self.recepcionista = crear_usuario('recep_visor', rol=Usuario.ROL_RECEPCIONISTA)
+        self.tecnico = crear_usuario('tec_visor', rol=Usuario.ROL_TECNICO_IMAGENES)
+        self.paciente = crear_paciente(dpi='1122334455667', correo='p@correo.com')
+        self.estudio = TipoEstudio.objects.create(nombre='Radiografía de tórax visor')
+        self.cita = crear_cita(
+            self.recepcionista, paciente=self.paciente, tipo_estudio=self.estudio,
+            estado=Cita.ESTADO_PROCESADA,
+        )
+        self.orden = OrdenTrabajo.objects.create(
+            cita=self.cita, motivo='x', creada_por=self.recepcionista,
+            informe_texto='Sin hallazgos.', resultados_enviados_en=timezone.now(),
+        )
+        self.imagen = ImagenEstudio.objects.create(
+            orden=self.orden, subida_por=self.tecnico, seleccionada=True,
+            archivo=SimpleUploadedFile('img.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+        )
+        token = self.orden.asegurar_token_publico()
+        ac = base64.urlsafe_b64encode(str(token).encode()).decode().rstrip('=')
+        self.url = f"{reverse('visor_estudio')}?studyId={self.orden.id}&tab=images&ac={ac}"
+        self.url_img = reverse('visor_imagen', args=[self.orden.id, self.imagen.id])
+
+    def test_sin_dpi_muestra_el_gate(self):
+        respuesta = self.client.get(self.url)
+        self.assertContains(respuesta, 'últimos 4')
+
+    def test_link_sin_ac_valido_da_404(self):
+        respuesta = self.client.get(f"{reverse('visor_estudio')}?studyId={self.orden.id}&ac=basura")
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_dpi_incorrecto_no_autoriza(self):
+        respuesta = self.client.post(self.url, {'dpi_ultimos': '0000'})
+        self.assertContains(respuesta, 'no coinciden')
+        self.assertNotContains(respuesta, self.estudio.nombre)
+
+    def test_dpi_correcto_muestra_estudio_e_imagenes(self):
+        self.client.post(self.url, {'dpi_ultimos': '5667'})
+        respuesta = self.client.get(self.url)
+        self.assertContains(respuesta, self.estudio.nombre)
+        self.assertContains(respuesta, self.url_img)
+        self.assertEqual(self.client.get(self.url_img).status_code, 200)
+
+    def test_imagen_sin_sesion_autorizada_da_404(self):
+        self.assertEqual(self.client.get(self.url_img).status_code, 404)
+
+    def test_orden_sin_resultados_enviados_no_es_accesible(self):
+        self.orden.resultados_enviados_en = None
+        self.orden.save(update_fields=['resultados_enviados_en'])
+        self.assertEqual(self.client.get(self.url).status_code, 404)
+
+    def test_se_bloquea_tras_varios_intentos(self):
+        for _ in range(5):
+            self.client.post(self.url, {'dpi_ultimos': '9999'})
+        respuesta = self.client.post(self.url, {'dpi_ultimos': '5667'})
+        self.assertContains(respuesta, 'Demasiados intentos')
+        self.assertNotContains(respuesta, self.estudio.nombre)
 
 
 class PacienteModelTests(TestCase):
@@ -375,14 +439,21 @@ class RegistrarTicketEmergenciaViewTests(TestCase):
         ticket = Ticket.objects.get()
         self.assertEqual(ticket.paciente_id, paciente_existente.id)
 
-    def test_registrar_ticket_sincroniza_datos_del_paciente_existente(self):
-        crear_paciente(dpi='6666666666666', nombre='Nombre Viejo', telefono='00000000')
+    def test_registrar_ticket_no_pisa_datos_ya_guardados_pero_completa_los_vacios(self):
+        crear_paciente(
+            dpi='6666666666666', nombre='Nombre Viejo', telefono='00000000',
+            sexo='', fecha_nacimiento=None,
+        )
 
         self.client.post(reverse('registrar_ticket_emergencia'), self.datos_formulario)
 
         paciente = Paciente.objects.get(dpi='6666666666666')
-        self.assertEqual(paciente.nombre, 'Carlos')
-        self.assertEqual(paciente.telefono, '55551234')
+        # Lo que ya estaba guardado NO se cambia, aunque el form traiga otra cosa.
+        self.assertEqual(paciente.nombre, 'Nombre Viejo')
+        self.assertEqual(paciente.telefono, '00000000')
+        # Lo que estaba vacío SÍ se completa.
+        self.assertEqual(paciente.sexo, Paciente.SEXO_MASCULINO)
+        self.assertEqual(paciente.fecha_nacimiento, datetime.date(1985, 3, 10))
 
     def test_usuario_no_recepcionista_no_puede_acceder(self):
         otro_usuario = crear_usuario('tecnico_no_autorizado', rol=Usuario.ROL_TECNICO_IMAGENES)
@@ -470,14 +541,21 @@ class AgendarCitaViewTests(TestCase):
         cita = Cita.objects.get(paciente__dpi='2020202020202')
         self.assertEqual(cita.paciente_id, paciente_existente.id)
 
-    def test_agendar_cita_sincroniza_datos_del_paciente_existente(self):
-        crear_paciente(dpi='2020202020202', nombre='Nombre Viejo', telefono='00000000')
+    def test_agendar_cita_no_pisa_datos_ya_guardados_pero_completa_los_vacios(self):
+        crear_paciente(
+            dpi='2020202020202', nombre='Nombre Viejo', telefono='00000000',
+            sexo='', fecha_nacimiento=None, correo=None,
+        )
 
         self.client.post(self._url(), self.datos_formulario)
 
         paciente = Paciente.objects.get(dpi='2020202020202')
-        self.assertEqual(paciente.nombre, 'Luis')
-        self.assertEqual(paciente.telefono, '55599999')
+        # Datos ya guardados: intactos.
+        self.assertEqual(paciente.nombre, 'Nombre Viejo')
+        self.assertEqual(paciente.telefono, '00000000')
+        # Datos que estaban vacíos: se completan desde el formulario.
+        self.assertEqual(paciente.sexo, Paciente.SEXO_MASCULINO)
+        self.assertEqual(paciente.correo, 'luis.marroquin@correo.com')
 
 
 class PantallaTurnosEmergenciaViewTests(TestCase):

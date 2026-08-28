@@ -7,6 +7,18 @@ urlpatterns = [
     path('estudios/nuevo/', views.crear_estudio, name='crear_estudio'),
     path('estudios/', views.lista_estudios, name='lista_estudios'),
     path('estudios/<int:estudio_id>/editar/', views.editar_estudio, name='editar_estudio'),
+    # Visor web público del estudio (link estilo PACS que se manda por correo:
+    # /visor/?studyId=<id>&tab=images&ac=<token base64>).
+    path('visor/', views.visor_estudio, name='visor_estudio'),
+    path(
+        'visor/<int:orden_id>/imagen/<int:imagen_id>/',
+        views.visor_imagen,
+        name='visor_imagen',
+    ),
+    path('visor/<int:orden_id>/informe.pdf', views.visor_informe_pdf, name='visor_informe_pdf'),
+    path('visor/<int:orden_id>/dicom.zip', views.visor_dicom, name='visor_dicom'),
+    path('visor/<int:orden_id>/imagenes.zip', views.visor_jpg, name='visor_jpg'),
+
     path('pacientes/buscar-por-dpi/', views.buscar_paciente_por_dpi, name='buscar_paciente_por_dpi'),
     path(
         'pacientes/completar-datos/<int:paciente_id>/',

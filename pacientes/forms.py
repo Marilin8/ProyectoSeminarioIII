@@ -4,6 +4,7 @@ from django import forms
 from django.utils import timezone
 
 from accounts.models import Usuario
+from clinica.validators import validar_dominio_correo
 
 from .models import Cita, Paciente, Ticket, TipoEstudio
 
@@ -162,7 +163,9 @@ class AgendarCitaForm(forms.Form):
         return apellido
 
     def clean_correo(self):
-        return self.cleaned_data['correo'].strip().lower()
+        correo = self.cleaned_data['correo'].strip().lower()
+        validar_dominio_correo(correo)
+        return correo
 
     def clean_fecha_nacimiento(self):
         fecha = self.cleaned_data['fecha_nacimiento']
@@ -283,7 +286,9 @@ class AgendarCitaPrivadoForm(forms.Form):
         return apellido
 
     def clean_correo(self):
-        return (self.cleaned_data['correo'] or '').strip().lower()
+        correo = (self.cleaned_data['correo'] or '').strip().lower()
+        validar_dominio_correo(correo)
+        return correo
 
     def clean_fecha_nacimiento(self):
         fecha = self.cleaned_data['fecha_nacimiento']
@@ -378,7 +383,9 @@ class RegistrarTicketForm(forms.Form):
         return apellido
 
     def clean_correo(self):
-        return self.cleaned_data['correo'].strip().lower()
+        correo = self.cleaned_data['correo'].strip().lower()
+        validar_dominio_correo(correo)
+        return correo
 
     def clean_fecha_nacimiento(self):
         fecha = self.cleaned_data['fecha_nacimiento']
@@ -427,7 +434,9 @@ class IngresarCorreoEnvioForm(forms.Form):
     )
 
     def clean_correo(self):
-        return self.cleaned_data['correo'].strip().lower()
+        correo = self.cleaned_data['correo'].strip().lower()
+        validar_dominio_correo(correo)
+        return correo
 
 
 class ProcesarTicketForm(forms.Form):
