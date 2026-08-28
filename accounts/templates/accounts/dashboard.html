@@ -1,0 +1,118 @@
+{% extends 'base.html' %}
+
+{% block title %}Panel — Clínica de Imágenes{% endblock %}
+{% block page_title %}Bienvenido, {{ user.get_full_name|default:user.username }}{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .tiles {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+        gap: 0.85rem;
+        margin-bottom: 1.5rem;
+    }
+    .tile {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        min-width: 0;
+        height: 110px;
+        padding: 1rem 0.75rem;
+        border-radius: var(--radius-lg);
+        text-decoration: none;
+        text-align: center;
+        font-size: 0.85rem;
+        font-weight: 600;
+        line-height: 1.25;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        background: var(--primary);
+        color: #fff;
+        transition: background var(--transition), transform 0.1s;
+    }
+    .tile:hover { background: var(--primary-dark); }
+    .tile:active { transform: scale(0.98); }
+    .tile.tile-accion { background: var(--success); }
+    .tile.tile-accion:hover { background: #15803d; }
+    .tile svg { width: 26px; height: 26px; flex-shrink: 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<p class="text-muted text-sm mb-2">{{ user.get_rol_display }}</p>
+
+<div class="section-title">Acciones principales</div>
+<div class="tiles">
+    {% for pantalla in pantallas %}
+        {% if pantalla.url_name != 'ordenes_pendientes' and pantalla.url_name != 'citas_procesadas' %}
+            {% if pantalla.clave %}
+                <a href="{% url 'pantalla_placeholder' clave=pantalla.clave %}" class="tile">
+                    <svg><use href="#i-grid"/></svg>
+                    <span>{{ pantalla.nombre }}</span>
+                </a>
+            {% else %}
+                <a href="{% url pantalla.url_name %}" class="tile">
+                    <svg><use href="#i-grid"/></svg>
+                    <span>{{ pantalla.nombre }}</span>
+                </a>
+            {% endif %}
+        {% endif %}
+    {% endfor %}
+
+    {% if user.rol == 'tecnico_imagenes' %}
+        <a href="{% url 'ordenes_pendientes' %}" class="tile tile-accion">
+            <svg><use href="#i-camera"/></svg>
+            <span>Procesar orden / cargar captura</span>
+        </a>
+    {% endif %}
+
+    {% if user.rol == 'medico_radiologo' %}
+        <a href="{% url 'citas_procesadas' %}" class="tile tile-accion">
+            <svg><use href="#i-file-medical"/></svg>
+            <span>Estudios</span>
+        </a>
+    {% endif %}
+</div>
+
+{% if ordenes %}
+<div class="card mt-2">
+    <div class="card-header">Dictámenes e Informes Radiológicos</div>
+    <div class="card-body" style="padding: 0;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Paciente</th>
+                    <th>Estudio</th>
+                    <th>Fecha</th>
+                    <th>Dictamen / Informe</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for orden in ordenes %}
+                <tr>
+                    <td>{{ orden.cita.paciente.nombre }} {{ orden.cita.paciente.apellido }}</td>
+                    <td>{{ orden.cita.tipo_estudio.nombre }}</td>
+                    <td>{{ orden.informe_creado_en|date:"d/m/Y H:i"|default:"-" }}</td>
+                    <td>
+                        {% if orden.informe_archivo %}
+                            <a href="{{ orden.informe_archivo.url }}" target="_blank" class="btn btn-outline btn-sm">PDF</a>
+                        {% endif %}
+                        {% if not orden.informe_archivo and not orden.informe_texto %}
+                            <span class="badge badge-warning">Pendiente</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,104 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ cita.paciente.nombre }} {{ cita.paciente.apellido }} - {{ cita.tipo_estudio.nombre }}{% endblock %}
+{% block page_title %}Estudio realizado{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .imagenes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+        .imagenes a {
+            display: block;
+            width: 110px;
+            font-size: 0.75rem;
+            color: var(--primary);
+            text-align: center;
+            text-decoration: none;
+        }
+        .imagenes img {
+            width: 110px;
+            height: 110px;
+            object-fit: cover;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            display: block;
+            margin-bottom: 0.25rem;
+        }
+        .informe-texto {
+            font-size: 0.9rem;
+            color: var(--text);
+            background: var(--info-light);
+            border-left: 3px solid var(--primary);
+            padding: 0.6rem 0.85rem;
+            white-space: pre-line;
+            border-radius: 4px;
+            margin-bottom: 0.75rem;
+        }
+        .vacio {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+    </style>
+{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{{ volver_url }}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver a los estudios del paciente
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="card">
+        <div class="card-body">
+            <div class="resumen">
+                <strong>{{ cita.paciente.nombre }} {{ cita.paciente.apellido }}</strong> ({{ cita.paciente.dpi }})<br>
+                {% if edad is not None %}{{ edad }} años{% else %}Edad no registrada{% endif %}, {{ cita.paciente.get_sexo_display }}<br>
+                Estudio: {{ cita.tipo_estudio.nombre }} — {{ cita.fecha }} {{ cita.hora|time:'H:i' }}
+                — {{ cita.get_convenio_display }}<br>
+                Motivo: {{ orden.motivo }}
+            </div>
+
+            <div class="section-title">Imágenes del estudio</div>
+            {% if orden.imagenes.all %}
+                <div class="imagenes">
+                    {% for img in orden.imagenes.all %}
+                        <a href="{{ img.archivo.url }}" target="_blank">
+                            {% if img.archivo.name|lower|slice:"-4:" == '.dcm' %}
+                                <span style="display:flex;align-items:center;justify-content:center;width:110px;height:110px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:1.8rem;color:var(--text-muted);">&#128196;</span>
+                                <svg width="14" height="14"><use href="#i-image"/></svg>
+                                {{ img.archivo.name }}
+                            {% else %}
+                                <img src="{{ img.archivo.url }}" alt="Imagen del estudio">
+                                <svg width="14" height="14"><use href="#i-image"/></svg>
+                                Ver completa
+                            {% endif %}
+                        </a>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="vacio">Este estudio no tiene imágenes adjuntas.</p>
+            {% endif %}
+
+            <div class="section-title">Informe</div>
+            {% if orden.informe_texto %}
+                <div class="informe-texto">{{ orden.informe_texto }}</div>
+            {% endif %}
+            {% if orden.informe_archivo %}
+                <p>
+                    <a class="btn btn-primary" href="{{ orden.informe_archivo.url }}" target="_blank">
+                        <svg width="14" height="14"><use href="#i-file-medical"/></svg>
+                        Ver informe (archivo)
+                    </a>
+                </p>
+            {% endif %}
+            {% if not orden.informe_texto and not orden.informe_archivo %}
+                <p class="vacio">Este estudio no tiene informe adjunto.</p>
+            {% endif %}
+        </div>
+    </div>
+{% endblock %}

@@ -1,0 +1,18 @@
+venv/
+.venv-ci/
+__pycache__/
+*.pyc
+.env
+db.sqlite3
+*.log
+
+# Artefactos de pruebas
+media_test/
+media/
+reports/
+.coverage
+.pytest_cache/
+flake8-report.txt
+
+# Config local del agente (Claude Code) - no es parte del proyecto
+.claude/

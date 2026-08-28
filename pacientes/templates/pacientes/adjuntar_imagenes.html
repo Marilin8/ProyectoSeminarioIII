@@ -1,0 +1,221 @@
+{% extends 'base.html' %}
+
+{% block title %}Cargar imágenes - Clínica de Imágenes{% endblock %}
+{% block page_title %}Cargar imágenes del estudio{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius-lg); padding: 2rem; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s; margin: 1rem 0; }
+        .upload-zone:hover, .upload-zone.dragover { border-color: var(--primary); background: var(--info-light); }
+        .upload-zone p { margin: 0.5rem 0; color: var(--text-muted); font-size: 0.85rem; }
+        .upload-zone .icon { font-size: 2rem; color: var(--text-muted); }
+        .upload-zone input[type="file"] { display: none; }
+        .file-count { display: inline-block; background: var(--primary); color: white; border-radius: 10px; padding: 0.1rem 0.5rem; font-size: 0.75rem; font-weight: bold; margin-left: 0.5rem; }
+        .imagenes-previas { font-size: 0.8rem; color: var(--text); margin: 1rem 0; }
+        .imagenes-previas li { margin-bottom: 0.25rem; }
+        .progreso { margin-top: 1.25rem; display: none; }
+        .progreso-texto { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text); margin-bottom: 0.4rem; }
+        .progreso-barra-fondo { width: 100%; height: 24px; background: var(--border-light); border-radius: 12px; overflow: hidden; }
+        .progreso-barra-relleno { height: 100%; width: 0%; background: linear-gradient(90deg, var(--primary), var(--primary-light)); border-radius: 12px; transition: width 0.2s ease; }
+        .progreso-detalle { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.4rem; }
+        .progreso-error { font-size: 0.8rem; color: var(--danger); margin-top: 0.6rem; }
+    </style>
+{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a href="{{ volver_url }}" class="btn btn-outline btn-sm">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg> Volver
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="card" style="padding:2rem;max-width:700px;margin:0 auto;">
+        <div class="resumen">
+            <strong>{{ cita.paciente.nombre }} {{ cita.paciente.apellido }}</strong> ({{ cita.paciente.dpi }})<br>
+            {% if edad is not None %}{{ edad }} años{% else %}Edad no registrada{% endif %}, {{ cita.paciente.get_sexo_display }}<br>
+            Estudio: {{ cita.tipo_estudio.nombre }} — {{ cita.fecha }} {{ cita.hora|time:'H:i' }}
+        </div>
+
+        {% if orden.imagenes.all %}
+            <ul class="imagenes-previas">
+                {% for img in orden.imagenes.all %}
+                    <li>Ya subida: <a href="{{ img.archivo.url }}" target="_blank">{{ img.archivo.name }}</a></li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        <form method="post" enctype="multipart/form-data" id="form-imagenes">
+            {% csrf_token %}
+            {{ form.non_field_errors }}
+            <label for="id_imagenes">{{ form.imagenes.label }}</label>
+            <div class="upload-zone" id="upload-zone">
+                <div class="icon">&#128193;</div>
+                <p><strong>Haz clic aquí</strong> o seleccioná la carpeta del estudio</p>
+                <p>{{ form.imagenes.help_text }}</p>
+                <input type="file" id="id_imagenes" name="imagenes" webkitdirectory directory multiple>
+                <button type="button" class="btn btn-primary" id="btn-seleccionar">
+                    <svg width="14" height="14"><use href="#i-folder"/></svg> Seleccionar carpeta
+                </button>
+                <span id="file-count-badge"></span>
+            </div>
+            {{ form.imagenes.errors }}
+
+            <div class="progreso" id="progreso">
+                <div class="progreso-texto">
+                    <span id="progreso-etiqueta">Procesando archivos…</span>
+                    <span id="progreso-porcentaje">0%</span>
+                </div>
+                <div class="progreso-barra-fondo">
+                    <div class="progreso-barra-relleno" id="progreso-relleno"></div>
+                </div>
+                <div class="progreso-detalle" id="progreso-detalle"></div>
+                <div class="progreso-error" id="progreso-error" style="display:none;"></div>
+            </div>
+
+            <button type="submit" class="btn btn-success btn-block btn-lg mt-2" id="btn-adjuntar" disabled>
+                <svg width="14" height="14"><use href="#i-upload"/></svg> Adjuntar y enviar a radióloga
+            </button>
+        </form>
+
+        <div class="flex gap-1 mt-2">
+            <a href="{{ volver_url }}" class="btn btn-outline" style="flex:1;text-align:center;">Cancelar</a>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            var zone = document.getElementById('upload-zone');
+            var input = document.getElementById('id_imagenes');
+            var btnSeleccionar = document.getElementById('btn-seleccionar');
+            var badge = document.getElementById('file-count-badge');
+            var form = document.getElementById('form-imagenes');
+            var boton = document.getElementById('btn-adjuntar');
+            var progreso = document.getElementById('progreso');
+            var relleno = document.getElementById('progreso-relleno');
+            var porcentajeTexto = document.getElementById('progreso-porcentaje');
+            var etiquetaTexto = document.getElementById('progreso-etiqueta');
+            var detalleTexto = document.getElementById('progreso-detalle');
+            var errorTexto = document.getElementById('progreso-error');
+
+            if (!form || !input || !boton || !progreso) {
+                return;
+            }
+
+            btnSeleccionar.addEventListener('click', function (e) {
+                e.stopPropagation();
+                input.click();
+            });
+            zone.addEventListener('click', function () { input.click(); });
+
+            input.addEventListener('change', function () {
+                var count = input.files.length;
+                if (count > 0) {
+                    badge.innerHTML = '<span class="file-count">' + count + ' archivos</span>';
+                    boton.disabled = false;
+                } else {
+                    badge.innerHTML = '';
+                    boton.disabled = true;
+                }
+            });
+
+            // Nombres de archivo que no son parte del estudio (los suele
+            // agregar el propio sistema operativo al exportar la carpeta).
+            var IGNORADOS = ['.ds_store', 'thumbs.db', 'desktop.ini'];
+            var TAMANO_TANDA = 15;
+            var urlLote = '{% url "adjuntar_imagenes_lote" orden.id %}';
+            var urlFinalizar = '{% url "adjuntar_imagenes_finalizar" orden.id %}';
+            var csrfToken = form.querySelector('[name=csrfmiddlewaretoken]').value;
+
+            function esArchivoUtil(archivo) {
+                var nombre = archivo.name.toLowerCase();
+                if (nombre.charAt(0) === '.') {
+                    return false;
+                }
+                return IGNORADOS.indexOf(nombre) === -1;
+            }
+
+            function actualizarBarra(procesados, total) {
+                var porcentaje = total > 0 ? Math.round((procesados / total) * 100) : 0;
+                relleno.style.width = porcentaje + '%';
+                porcentajeTexto.textContent = porcentaje + '%';
+                detalleTexto.textContent = procesados + ' de ' + total + ' archivos procesados';
+            }
+
+            function subirTanda(archivos) {
+                var datos = new FormData();
+                datos.append('csrfmiddlewaretoken', csrfToken);
+                archivos.forEach(function (archivo) {
+                    datos.append('imagenes', archivo, archivo.name);
+                });
+                return fetch(urlLote, { method: 'POST', body: datos, credentials: 'same-origin' })
+                    .then(function (respuesta) {
+                        if (!respuesta.ok) {
+                            throw new Error('Fallo al subir un grupo de archivos (HTTP ' + respuesta.status + ').');
+                        }
+                        return respuesta.json();
+                    });
+            }
+
+            function finalizar() {
+                var datos = new FormData();
+                datos.append('csrfmiddlewaretoken', csrfToken);
+                return fetch(urlFinalizar, { method: 'POST', body: datos, credentials: 'same-origin' })
+                    .then(function (respuesta) { return respuesta.json().then(function (json) {
+                        return { status: respuesta.status, json: json };
+                    }); });
+            }
+
+            async function procesarCarga(archivos) {
+                var total = archivos.length;
+                var procesados = 0;
+                var guardadas = 0;
+                actualizarBarra(0, total);
+
+                for (var i = 0; i < archivos.length; i += TAMANO_TANDA) {
+                    var tanda = archivos.slice(i, i + TAMANO_TANDA);
+                    var resultado = await subirTanda(tanda);
+                    guardadas += resultado.guardadas || 0;
+                    procesados += tanda.length;
+                    actualizarBarra(procesados, total);
+                }
+
+                etiquetaTexto.textContent = 'Finalizando…';
+                var respuestaFinal = await finalizar();
+                if (!respuestaFinal.json.ok) {
+                    throw new Error(respuestaFinal.json.error || 'No se pudo completar la carga.');
+                }
+                etiquetaTexto.textContent = 'Listo — ' + guardadas + ' imagen(es) guardada(s)';
+                window.location.href = respuestaFinal.json.redirect_url;
+            }
+
+            form.addEventListener('submit', function (evento) {
+                evento.preventDefault();
+
+                var todosLosArchivos = Array.prototype.slice.call(input.files);
+                var archivosUtiles = todosLosArchivos.filter(esArchivoUtil);
+
+                if (archivosUtiles.length === 0) {
+                    errorTexto.textContent = 'No se seleccionó ningún archivo válido.';
+                    errorTexto.style.display = 'block';
+                    return;
+                }
+
+                errorTexto.style.display = 'none';
+                boton.disabled = true;
+                boton.innerHTML = '<svg width="14" height="14"><use href="#i-upload"/></svg> Procesando…';
+                input.disabled = true;
+                progreso.style.display = 'block';
+
+                procesarCarga(archivosUtiles).catch(function (error) {
+                    errorTexto.textContent = error.message || 'Ocurrió un error al subir los archivos.';
+                    errorTexto.style.display = 'block';
+                    etiquetaTexto.textContent = 'Se detuvo por un error';
+                    boton.disabled = false;
+                    boton.innerHTML = '<svg width="14" height="14"><use href="#i-upload"/></svg> Reintentar';
+                    input.disabled = false;
+                });
+            });
+        });
+    </script>
+{% endblock %}

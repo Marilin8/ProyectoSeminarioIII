@@ -1,0 +1,180 @@
+{% extends 'base.html' %}
+
+{% block title %}Editar usuario - Clínica de Imágenes{% endblock %}
+{% block page_title %}Editar usuario — {{ usuario_editado.username }}{% endblock %}
+{% block nav_usuarios %}active{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url volver_url %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al listado
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="card" style="max-width: 640px;">
+        <div class="card-header">
+            <svg width="14" height="14"><use href="#i-user"/></svg>
+            {{ usuario_editado.username }} · {{ usuario_editado.get_rol_display }}
+        </div>
+        <div class="card-body" style="padding: 1.5rem 2rem;">
+            <form method="post">
+                {% csrf_token %}
+                {{ form.non_field_errors }}
+
+                <label for="{{ form.first_name.id_for_label }}">Nombres</label>
+                {{ form.first_name }}
+                {{ form.first_name.errors }}
+
+                <label for="{{ form.last_name.id_for_label }}">Apellidos</label>
+                {{ form.last_name }}
+                {{ form.last_name.errors }}
+
+                <label for="{{ form.email.id_for_label }}">Correo</label>
+                {{ form.email }}
+                {{ form.email.errors }}
+
+                <label for="{{ form.rol.id_for_label }}">Rol</label>
+                {{ form.rol }}
+                {{ form.rol.errors }}
+
+                <p class="form-help mt-1">
+                    Los porcentajes de comisión solo aplican a técnicos de imágenes,
+                    médicos radiólogos y médicos remitentes. Para otros roles se guardan en 0.
+                </p>
+
+                <div class="form-row">
+                    <div>
+                        <label for="{{ form.porcentaje_coex.id_for_label }}">% comisión COEX</label>
+                        {{ form.porcentaje_coex }}
+                        {{ form.porcentaje_coex.errors }}
+                    </div>
+                    <div>
+                        <label for="{{ form.porcentaje_privado.id_for_label }}">% comisión Privado</label>
+                        {{ form.porcentaje_privado }}
+                        {{ form.porcentaje_privado.errors }}
+                    </div>
+                    <div>
+                        <label for="{{ form.porcentaje_emergencia_igss.id_for_label }}">% comisión Emerg. IGSS</label>
+                        {{ form.porcentaje_emergencia_igss }}
+                        {{ form.porcentaje_emergencia_igss.errors }}
+                    </div>
+                </div>
+
+                {% if usuario_editado.rol == 'medico_radiologo' %}
+                    <label style="margin-top:1.25rem;">{{ form.tipos_estudio.label }}</label>
+                    <p class="form-help" style="margin-top:0;">{{ form.tipos_estudio.help_text }}</p>
+
+                    <div class="asignacion-estudios" id="asignacion-estudios">
+                        <div class="flex-between" style="margin-bottom:0.5rem;">
+                            <label style="margin:0;display:flex;align-items:center;gap:0.4rem;font-weight:600;">
+                                <input type="checkbox" data-marcar="todos">
+                                Todos los estudios
+                            </label>
+                            <span class="text-xs text-muted" id="asignacion-contador"></span>
+                        </div>
+
+                        {% for grupo in grupos_estudios %}
+                            <fieldset class="grupo-estudios" data-grupo="{{ grupo.slug }}"
+                                      style="border:1px solid var(--border);border-radius:var(--radius);padding:0.5rem 0.85rem;margin-bottom:0.6rem;">
+                                <legend style="padding:0 0.4rem;font-size:0.8rem;font-weight:600;">
+                                    <label style="margin:0;display:flex;align-items:center;gap:0.4rem;">
+                                        <input type="checkbox" data-marcar="grupo">
+                                        {{ grupo.etiqueta }}
+                                        <span class="badge badge-muted grupo-badge">{{ grupo.marcados }}/{{ grupo.total }}</span>
+                                    </label>
+                                </legend>
+                                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:0.15rem 1rem;">
+                                    {% for estudio in grupo.estudios %}
+                                        <label style="margin:0;display:flex;align-items:center;gap:0.4rem;font-weight:400;">
+                                            <input type="checkbox" name="tipos_estudio" value="{{ estudio.id }}"
+                                                   class="chk-estudio" {% if estudio.marcado %}checked{% endif %}>
+                                            {{ estudio.nombre }}
+                                        </label>
+                                    {% endfor %}
+                                </div>
+                            </fieldset>
+                        {% endfor %}
+                    </div>
+                    {{ form.tipos_estudio.errors }}
+
+                    <script>
+                        (function () {
+                            var raiz = document.getElementById('asignacion-estudios');
+                            if (!raiz) return;
+                            var todos = raiz.querySelector('[data-marcar="todos"]');
+                            var contador = document.getElementById('asignacion-contador');
+
+                            function sync() {
+                                var checks = raiz.querySelectorAll('.chk-estudio');
+                                var marcados = raiz.querySelectorAll('.chk-estudio:checked').length;
+                                contador.textContent = marcados + ' de ' + checks.length + ' seleccionados';
+                                todos.checked = marcados === checks.length && checks.length > 0;
+                                todos.indeterminate = marcados > 0 && marcados < checks.length;
+                                raiz.querySelectorAll('.grupo-estudios').forEach(function (fs) {
+                                    var g = fs.querySelectorAll('.chk-estudio');
+                                    var gm = fs.querySelectorAll('.chk-estudio:checked').length;
+                                    var jefe = fs.querySelector('[data-marcar="grupo"]');
+                                    jefe.checked = gm === g.length && g.length > 0;
+                                    jefe.indeterminate = gm > 0 && gm < g.length;
+                                    var badge = fs.querySelector('.grupo-badge');
+                                    if (badge) badge.textContent = gm + '/' + g.length;
+                                });
+                            }
+
+                            todos.addEventListener('change', function () {
+                                raiz.querySelectorAll('.chk-estudio').forEach(function (c) { c.checked = todos.checked; });
+                                sync();
+                            });
+                            raiz.querySelectorAll('[data-marcar="grupo"]').forEach(function (jefe) {
+                                jefe.addEventListener('change', function () {
+                                    jefe.closest('.grupo-estudios').querySelectorAll('.chk-estudio')
+                                        .forEach(function (c) { c.checked = jefe.checked; });
+                                    sync();
+                                });
+                            });
+                            raiz.querySelectorAll('.chk-estudio').forEach(function (c) {
+                                c.addEventListener('change', sync);
+                            });
+                            sync();
+                        })();
+                    </script>
+                {% endif %}
+
+                <label for="{{ form.is_active.id_for_label }}" style="display:flex;align-items:center;gap:0.5rem;margin-top:1.25rem;">
+                    {{ form.is_active }}
+                    <span>Usuario activo (puede iniciar sesión)</span>
+                </label>
+                {{ form.is_active.errors }}
+
+                <button type="submit" class="btn btn-primary btn-block" style="margin-top: 1.5rem;">
+                    <svg width="14" height="14"><use href="#i-save"/></svg>
+                    Guardar cambios
+                </button>
+            </form>
+        </div>
+    </div>
+
+    {% if historial_comisiones %}
+        <div class="card" style="max-width:640px;margin-top:1.25rem;">
+            <div class="card-header">Últimos cambios de comisión</div>
+            <div class="card-body" style="padding:0;">
+                <table>
+                    <thead><tr><th>Fecha</th><th>Convenio</th><th>Antes</th><th>Después</th><th>Por</th></tr></thead>
+                    <tbody>
+                        {% for r in historial_comisiones %}
+                            <tr>
+                                <td>{{ r.creado_en|date:'d/m/y H:i' }}</td>
+                                <td>{{ r.campo_etiqueta }}</td>
+                                <td>{{ r.valor_anterior }}%</td>
+                                <td class="text-bold">{{ r.valor_nuevo }}%</td>
+                                <td>{{ r.modificado_por.username }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endif %}
+{% endblock %}

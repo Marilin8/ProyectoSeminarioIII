@@ -1,0 +1,179 @@
+{% extends 'base.html' %}
+
+{% block title %}Calendario — {{ convenio_nombre }}{% endblock %}
+{% block page_title %}Calendario — {{ convenio_nombre }}{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .cal-grid {
+            overflow-x: auto;
+        }
+        .cal-table {
+            width: 100%;
+            min-width: 700px;
+            border-collapse: collapse;
+            font-size: 0.82rem;
+        }
+        .cal-table th,
+        .cal-table td {
+            border: 1px solid var(--border-light);
+            padding: 0.5rem;
+            text-align: center;
+        }
+        .cal-table th {
+            background: var(--sidebar-bg);
+            color: white;
+            font-weight: 600;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+        .cal-table td.hora {
+            background: #f8fafc;
+            font-weight: 700;
+            color: #334155;
+            white-space: nowrap;
+        }
+        a.slot {
+            display: block;
+            padding: 0.4rem;
+            border-radius: var(--radius);
+            text-decoration: none;
+            background: #bfdbfe;
+            color: var(--primary-dark);
+            font-weight: 600;
+            font-size: 0.8rem;
+            transition: background var(--transition);
+        }
+        a.slot:hover {
+            background: #93c5fd;
+        }
+        span.pasado {
+            display: block;
+            padding: 0.4rem;
+            border-radius: var(--radius);
+            background: #e2e8f0;
+            color: #94a3b8;
+            font-size: 0.8rem;
+        }
+        a.slot-ocupado {
+            display: block;
+            padding: 0.4rem;
+            border-radius: var(--radius);
+            text-decoration: none;
+            background: var(--danger-light);
+            color: #991b1b;
+            font-weight: 600;
+            font-size: 0.8rem;
+            transition: background var(--transition);
+        }
+        a.slot-ocupado:hover {
+            background: #fca5a5;
+        }
+        a.slot-libre {
+            display: block;
+            padding: 0.4rem;
+            border-radius: var(--radius);
+            text-decoration: none;
+            background: var(--success-light);
+            color: #166534;
+            font-weight: 600;
+            font-size: 0.8rem;
+            transition: background var(--transition);
+        }
+        a.slot-libre:hover {
+            background: #86efac;
+        }
+        .leyenda {
+            margin-top: 1rem;
+            font-size: 0.78rem;
+            color: var(--text-muted);
+        }
+        .leyenda span {
+            display: inline-block;
+            width: 0.7rem;
+            height: 0.7rem;
+            border-radius: 3px;
+            margin-right: 0.3rem;
+            vertical-align: middle;
+        }
+    </style>
+{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    {% if reagendar_cita %}
+        <div class="info-box mb-2">
+            Eligiendo nuevo horario para <strong>{{ reagendar_cita.paciente }}</strong> (cita actual: {{ reagendar_cita.fecha }} {{ reagendar_cita.hora }})
+            <a href="{% url procesar_url_name %}?fecha={{ reagendar_cita.fecha|date:'Y-m-d' }}" class="btn btn-sm btn-danger" style="margin-left: 0.5rem; display: inline-flex;">
+                <svg width="14" height="14"><use href="#i-x"/></svg>
+                Cancelar
+            </a>
+        </div>
+    {% endif %}
+
+    <div class="nav-row mb-2">
+        {% if mostrar_semana_anterior %}
+            <a href="?semana={{ semana_anterior|date:'Y-m-d' }}{% if reagendar_cita %}&reagendar={{ reagendar_cita.id }}{% endif %}">
+                <svg width="14" height="14"><use href="#i-chevron-left"/></svg>
+                Semana anterior
+            </a>
+        {% else %}
+            <span></span>
+        {% endif %}
+        {% if mostrar_semana_siguiente %}
+            <a href="?semana={{ semana_siguiente|date:'Y-m-d' }}{% if reagendar_cita %}&reagendar={{ reagendar_cita.id }}{% endif %}">
+                Semana siguiente
+                <svg width="14" height="14"><use href="#i-chevron-right"/></svg>
+            </a>
+        {% else %}
+            <span></span>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div class="card-body" style="padding: 0; overflow-x: auto;">
+            <table class="cal-table">
+                <tr>
+                    <th>Hora</th>
+                    {% for nombre, dia in dias %}
+                        <th>{{ nombre }}<br>{{ dia|date:'d/m' }}</th>
+                    {% endfor %}
+                </tr>
+                {% for fila in filas %}
+                    <tr>
+                        <td class="hora">{{ fila.hora|time:'H:i' }}</td>
+                        {% for celda in fila.celdas %}
+                            <td>
+                                {% if celda.pasado %}
+                                    <span class="pasado">Pasado</span>
+                                {% elif celda.fuera_rango %}
+                                    <span class="pasado">No disponible</span>
+                                {% elif reagendar_cita %}
+                                    <a class="slot" href="{% url reagendar_url_name cita_id=reagendar_cita.id %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}">{{ celda.cantidad }} cita{{ celda.cantidad|pluralize }}</a>
+                                {% elif celda.ocupado %}
+                                    <a class="slot-ocupado" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}" title="Horario cruzado con una cita de {{ celda.convenios }}.">Ocupado · {{ celda.convenios }}</a>
+                                {% elif celda.asignado %}
+                                    <a class="slot-ocupado" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}" title="Ya hay una cita de {{ celda.convenios }} que inicia aquí.">Ocupado · {{ celda.convenios }}</a>
+                                {% else %}
+                                    <a class="slot-libre" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}">Libre</a>
+                                {% endif %}
+                            </td>
+                        {% endfor %}
+                    </tr>
+                {% endfor %}
+            </table>
+        </div>
+    </div>
+
+    <p class="leyenda">
+        <span style="background:#bfdbfe;"></span> Disponible — el número es solo referencia, no hay límite de cupo
+    </p>
+{% endblock %}

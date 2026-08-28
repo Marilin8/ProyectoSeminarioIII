@@ -1,0 +1,227 @@
+from django.urls import path
+
+from . import views
+from .models import Cita
+
+urlpatterns = [
+    path('estudios/nuevo/', views.crear_estudio, name='crear_estudio'),
+    path('estudios/', views.lista_estudios, name='lista_estudios'),
+    path('estudios/<int:estudio_id>/editar/', views.editar_estudio, name='editar_estudio'),
+    # Visor web público del estudio (link estilo PACS que se manda por correo:
+    # /visor/?studyId=<id>&tab=images&ac=<token base64>).
+    path('visor/', views.visor_estudio, name='visor_estudio'),
+    path(
+        'visor/<int:orden_id>/imagen/<int:imagen_id>/',
+        views.visor_imagen,
+        name='visor_imagen',
+    ),
+    path('visor/<int:orden_id>/informe.pdf', views.visor_informe_pdf, name='visor_informe_pdf'),
+    path('visor/<int:orden_id>/dicom.zip', views.visor_dicom, name='visor_dicom'),
+    path('visor/<int:orden_id>/imagenes.zip', views.visor_jpg, name='visor_jpg'),
+
+    path('pacientes/buscar-por-dpi/', views.buscar_paciente_por_dpi, name='buscar_paciente_por_dpi'),
+    path(
+        'pacientes/completar-datos/<int:paciente_id>/',
+        views.completar_datos_paciente,
+        name='completar_datos_paciente',
+    ),
+    path('estudios/radiologos-por-estudio/', views.radiologos_por_estudio, name='radiologos_por_estudio'),
+    path('pacientes/historial/', views.historial_pacientes, name='historial_pacientes'),
+    path('pacientes/historial/<int:paciente_id>/', views.historial_paciente, name='historial_paciente'),
+    path(
+        'pacientes/historial/estudio/<int:cita_id>/',
+        views.ver_estudio_historial,
+        name='ver_estudio_historial',
+    ),
+    path(
+        'pacientes/historial/estudio/<int:cita_id>/enviar/',
+        views.enviar_estudio,
+        name='enviar_estudio',
+    ),
+    path(
+        'pacientes/historial/estudio/<int:cita_id>/enviar/correo/',
+        views.ingresar_correo_envio,
+        name='ingresar_correo_envio',
+    ),
+    path(
+        'citas/calendario/coex/',
+        views.seleccionar_horario,
+        {'convenio': Cita.CONVENIO_COEX},
+        name='calendario_coex',
+    ),
+    path(
+        'citas/calendario/privado/',
+        views.seleccionar_horario,
+        {'convenio': Cita.CONVENIO_PRIVADO},
+        name='calendario_privado',
+    ),
+    path(
+        'citas/calendario/emergencia-igss/',
+        views.seleccionar_horario,
+        {'convenio': Cita.CONVENIO_EMERGENCIA_IGSS},
+        name='calendario_emergencia_igss',
+    ),
+    path(
+        'citas/agendar/coex/',
+        views.agendar_cita,
+        {'convenio': Cita.CONVENIO_COEX},
+        name='agendar_cita_coex',
+    ),
+    path(
+        'citas/agendar/privado/',
+        views.agendar_cita_privado,
+        name='agendar_cita_privado',
+    ),
+    path(
+        'citas/agendar/emergencia-igss/',
+        views.agendar_cita,
+        {'convenio': Cita.CONVENIO_EMERGENCIA_IGSS},
+        name='agendar_cita_emergencia_igss',
+    ),
+    path(
+        'citas/procesar/coex/',
+        views.procesar_citas,
+        {'convenio': Cita.CONVENIO_COEX},
+        name='procesar_citas_coex',
+    ),
+    path(
+        'citas/procesar/coex/<int:cita_id>/llegada/',
+        views.marcar_llegada,
+        {'convenio': Cita.CONVENIO_COEX},
+        name='marcar_llegada_coex',
+    ),
+    path(
+        'citas/procesar/coex/<int:cita_id>/orden/',
+        views.generar_orden,
+        {'convenio': Cita.CONVENIO_COEX},
+        name='generar_orden_coex',
+    ),
+    path(
+        'citas/procesar/coex/<int:cita_id>/ausente/',
+        views.marcar_ausente,
+        {'convenio': Cita.CONVENIO_COEX},
+        name='marcar_ausente_coex',
+    ),
+    path(
+        'citas/procesar/coex/<int:cita_id>/reagendar/',
+        views.confirmar_reagenda,
+        {'convenio': Cita.CONVENIO_COEX},
+        name='confirmar_reagenda_coex',
+    ),
+    path(
+        'citas/procesar/privado/',
+        views.procesar_citas,
+        {'convenio': Cita.CONVENIO_PRIVADO},
+        name='procesar_citas_privado',
+    ),
+    path(
+        'citas/procesar/privado/<int:cita_id>/llegada/',
+        views.marcar_llegada,
+        {'convenio': Cita.CONVENIO_PRIVADO},
+        name='marcar_llegada_privado',
+    ),
+    path(
+        'citas/procesar/privado/<int:cita_id>/orden/',
+        views.generar_orden,
+        {'convenio': Cita.CONVENIO_PRIVADO},
+        name='generar_orden_privado',
+    ),
+    path(
+        'citas/procesar/privado/<int:cita_id>/ausente/',
+        views.marcar_ausente,
+        {'convenio': Cita.CONVENIO_PRIVADO},
+        name='marcar_ausente_privado',
+    ),
+    path(
+        'citas/procesar/privado/<int:cita_id>/reagendar/',
+        views.confirmar_reagenda,
+        {'convenio': Cita.CONVENIO_PRIVADO},
+        name='confirmar_reagenda_privado',
+    ),
+    path('citas/solicitudes/', views.solicitudes_pendientes, name='solicitudes_pendientes'),
+    path('citas/solicitudes/<int:cita_id>/revisar/', views.revisar_solicitud, name='revisar_solicitud'),
+    path('ordenes/pendientes/', views.ordenes_pendientes, name='ordenes_pendientes'),
+    path('ordenes/pendientes/<int:orden_id>/imagenes/', views.adjuntar_imagenes, name='adjuntar_imagenes'),
+    path(
+        'ordenes/pendientes/<int:orden_id>/imagenes/lote/',
+        views.adjuntar_imagenes_lote,
+        name='adjuntar_imagenes_lote',
+    ),
+    path(
+        'ordenes/pendientes/<int:orden_id>/imagenes/finalizar/',
+        views.adjuntar_imagenes_finalizar,
+        name='adjuntar_imagenes_finalizar',
+    ),
+    path('citas/procesadas/', views.citas_procesadas, name='citas_procesadas'),
+    path('citas/procesadas/<int:cita_id>/informe/', views.adjuntar_informe, name='adjuntar_informe'),
+    path('ordenes/<int:orden_id>/imagenes/ver/', views.ver_imagenes_jpg, name='ver_imagenes_jpg'),
+    path(
+        'ordenes/<int:orden_id>/imagenes/seleccion/',
+        views.guardar_seleccion_imagenes,
+        name='guardar_seleccion_imagenes',
+    ),
+    path(
+        'ordenes/<int:orden_id>/imagenes/descargar-dicom/',
+        views.descargar_dicom_orden,
+        name='descargar_dicom_orden',
+    ),
+    path('emergencia/tickets/nuevo/', views.registrar_ticket_emergencia, name='registrar_ticket_emergencia'),
+    path('emergencia/tickets/', views.pantalla_turnos_emergencia, name='pantalla_turnos_emergencia'),
+    path(
+        'emergencia/tickets/<int:ticket_id>/procesar/',
+        views.procesar_ticket_emergencia,
+        name='procesar_ticket_emergencia',
+    ),
+    path('privado/tickets/nuevo/', views.registrar_ticket_privado, name='registrar_ticket_privado'),
+    path('privado/tickets/', views.pantalla_turnos_privado, name='pantalla_turnos_privado'),
+    path(
+        'privado/tickets/<int:ticket_id>/procesar/',
+        views.procesar_ticket_privado,
+        name='procesar_ticket_privado',
+    ),
+    path('notificaciones/pendientes/', views.notificaciones_pendientes, name='notificaciones_pendientes'),
+    path(
+        'notificaciones/<int:notificacion_id>/marcar-leida/',
+        views.marcar_notificacion_leida,
+        name='marcar_notificacion_leida',
+    ),
+    path(
+        'notificaciones/marcar-todas-leidas/',
+        views.marcar_notificaciones_leidas,
+        name='marcar_notificaciones_leidas',
+    ),
+    path(
+        'reportes/coex/',
+        views.lista_reportes_diarios,
+        {'convenio': Cita.CONVENIO_COEX},
+        name='lista_reportes_diarios_coex',
+    ),
+    path(
+        'reportes/privado/',
+        views.lista_reportes_diarios,
+        {'convenio': Cita.CONVENIO_PRIVADO},
+        name='lista_reportes_diarios_privado',
+    ),
+    path(
+        'reportes/emergencia-igss/',
+        views.lista_reportes_diarios,
+        {'convenio': Cita.CONVENIO_EMERGENCIA_IGSS},
+        name='lista_reportes_diarios_emergencia_igss',
+    ),
+    path('reportes/<str:convenio>/<str:fecha>/', views.ver_reporte_diario, name='ver_reporte_diario'),
+    path(
+        'reportes/<str:convenio>/<str:fecha>/enviar/',
+        views.enviar_reporte_diario,
+        name='enviar_reporte_diario',
+    ),
+    path(
+        'reportes/<str:convenio>/<str:fecha>/pdf/',
+        views.descargar_reporte_pdf,
+        name='descargar_reporte_pdf',
+    ),
+    path(
+        'reportes/<str:convenio>/<str:fecha>/xlsx/',
+        views.descargar_reporte_xlsx,
+        name='descargar_reporte_xlsx',
+    ),
+]

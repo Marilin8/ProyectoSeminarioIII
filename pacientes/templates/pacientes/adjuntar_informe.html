@@ -1,0 +1,177 @@
+{% extends 'base.html' %}
+
+{% block title %}Adjuntar informe — Clínica de Imágenes{% endblock %}
+{% block page_title %}Adjuntar informe{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .acciones-imagenes { display: flex; gap: 0.75rem; margin-bottom: 1.25rem; }
+        .acciones-imagenes a { flex: 1; }
+        .modal-icono {
+            width: 64px; height: 64px; margin: 0 auto 1rem; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            background: var(--info-light); font-size: 1.8rem;
+        }
+        .modal-card.texto-centrado { text-align: center; }
+        .spinner {
+            width: 48px; height: 48px; margin: 0 auto 1.1rem;
+            border: 5px solid var(--info-light); border-top-color: var(--primary);
+            border-radius: 50%; animation: girar 0.85s linear infinite;
+        }
+        @keyframes girar { to { transform: rotate(360deg); } }
+        .pasos-envio { background: #f8fafc; border: 1px solid var(--border-light); border-radius: var(--radius); padding: 0.85rem; text-align: left; margin-top: 1rem; }
+        .paso { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0; color: var(--text); font-size: 0.85rem; }
+        .paso + .paso { border-top: 1px solid var(--border-light); }
+        .paso-icono {
+            width: 22px; height: 22px; min-width: 22px; border-radius: 50%;
+            background: var(--success-light); color: #15803d; display: flex;
+            align-items: center; justify-content: center; font-weight: bold; font-size: 0.75rem;
+        }
+    </style>
+{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{{ volver_url }}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg> Volver al listado
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="card" style="padding:1.5rem;max-width:600px;">
+        <div class="resumen">
+            <strong>{{ cita.paciente.nombre }} {{ cita.paciente.apellido }}</strong> ({{ cita.paciente.dpi }})<br>
+            {% if edad is not None %}{{ edad }} años{% else %}Edad no registrada{% endif %}, {{ cita.paciente.get_sexo_display }}<br>
+            Estudio: {{ cita.tipo_estudio.nombre }} — {{ cita.fecha }} {{ cita.hora|time:'H:i' }}<br>
+            Motivo: {{ orden.motivo }}
+        </div>
+
+        {% if orden.imagenes.all %}
+            <div class="acciones-imagenes">
+                <a class="btn btn-outline" href="{% url 'ver_imagenes_jpg' orden_id=orden.id %}" target="_blank">
+                    <svg width="14" height="14"><use href="#i-image"/></svg> Ver JPG
+                </a>
+                {% if tiene_dicom_original %}
+                    <a class="btn btn-outline" href="{% url 'descargar_dicom_orden' orden_id=orden.id %}">
+                        <svg width="14" height="14"><use href="#i-download"/></svg> Descargar DICOM
+                    </a>
+                {% endif %}
+            </div>
+        {% else %}
+            <div class="alert alert-info">Este estudio no tiene imágenes adjuntas.</div>
+        {% endif %}
+
+        <form method="post" enctype="multipart/form-data" id="form-informe">
+            {% csrf_token %}
+            {{ form.non_field_errors }}
+
+            <label for="{{ form.informe_archivo.id_for_label }}">{{ form.informe_archivo.label }}</label>
+            {{ form.informe_archivo }}
+            <p class="ayuda">Adjuntá el informe en PDF.</p>
+            {{ form.informe_archivo.errors }}
+
+            <button type="submit" class="btn btn-primary btn-block btn-lg mt-2" id="btn-guardar-informe">
+                <svg width="14" height="14"><use href="#i-save"/></svg> Guardar informe
+            </button>
+        </form>
+    </div>
+
+    <div id="modal-confirmacion" class="modal-overlay">
+        <div class="modal-card texto-centrado">
+            <div class="modal-icono">
+                <svg width="26" height="26"><use href="#i-save"/></svg>
+            </div>
+            <h2>Confirmar informe</h2>
+            <p style="color:var(--text-muted);">
+                Se guardará el informe médico y el estudio quedará marcado como procesado.
+                El envío de los resultados al paciente lo hace recepción después, desde
+                "Estudios realizados".
+            </p>
+            <div class="modal-detalle">
+                <strong>Paciente:</strong> {{ cita.paciente.nombre }} {{ cita.paciente.apellido }}<br>
+                <strong>Estudio:</strong> {{ cita.tipo_estudio.nombre }}
+            </div>
+            <p style="font-weight:600;color:var(--text);margin-top:0.75rem;">¿Desea continuar?</p>
+            <div class="modal-botones">
+                <button type="button" class="btn btn-outline" id="btn-cancelar-modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="btn-confirmar-envio">Sí, guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-cargando" class="modal-overlay">
+        <div class="modal-card texto-centrado" style="max-width:420px;">
+            <div class="spinner"></div>
+            <h2>Guardando informe...</h2>
+            <p style="color:var(--text-muted);">Espere un momento. No cierre ni recargue esta página.</p>
+            <div class="pasos-envio">
+                <div class="paso">
+                    <span class="paso-icono">&#10003;</span>
+                    <span>Guardando informe...</span>
+                </div>
+                <div class="paso">
+                    <span class="paso-icono">&#10003;</span>
+                    <span>Marcando estudio como procesado...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            var formulario = document.getElementById('form-informe');
+            var botonPrincipal = document.getElementById('btn-guardar-informe');
+            var modalConfirmacion = document.getElementById('modal-confirmacion');
+            var modalCargando = document.getElementById('modal-cargando');
+            var botonCancelar = document.getElementById('btn-cancelar-modal');
+            var botonConfirmar = document.getElementById('btn-confirmar-envio');
+            var envioConfirmado = false;
+
+            if (!formulario || !botonPrincipal || !modalConfirmacion || !modalCargando ||
+                !botonCancelar || !botonConfirmar) {
+                return;
+            }
+
+            formulario.addEventListener('submit', function (event) {
+                if (!envioConfirmado) {
+                    event.preventDefault();
+                    if (!formulario.reportValidity()) {
+                        return;
+                    }
+                    modalConfirmacion.classList.add('abierto');
+                }
+            });
+
+            botonCancelar.addEventListener('click', function () {
+                modalConfirmacion.classList.remove('abierto');
+            });
+
+            botonConfirmar.addEventListener('click', function () {
+                if (envioConfirmado) {
+                    return;
+                }
+                envioConfirmado = true;
+                botonConfirmar.disabled = true;
+                botonCancelar.disabled = true;
+                modalConfirmacion.classList.remove('abierto');
+                modalCargando.classList.add('abierto');
+                botonPrincipal.disabled = true;
+                botonPrincipal.innerHTML = 'Guardando...';
+                formulario.submit();
+            });
+
+            modalConfirmacion.addEventListener('click', function (event) {
+                if (event.target === modalConfirmacion && !envioConfirmado) {
+                    modalConfirmacion.classList.remove('abierto');
+                }
+            });
+
+            document.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape' && modalConfirmacion.classList.contains('abierto') &&
+                    !envioConfirmado) {
+                    modalConfirmacion.classList.remove('abierto');
+                }
+            });
+        });
+    </script>
+{% endblock %}

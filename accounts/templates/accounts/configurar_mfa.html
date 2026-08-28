@@ -1,0 +1,78 @@
+{% extends 'base.html' %}
+
+{% block title %}Verificación en dos pasos - Clínica de Imágenes{% endblock %}
+{% block page_title %}Verificación en dos pasos{% endblock %}
+{% block nav_perfil %}active{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'mi_perfil' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Mi perfil
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="card" style="max-width:520px;">
+        <div class="card-header">
+            <svg width="14" height="14"><use href="#i-shield"/></svg>
+            Autenticación en dos pasos (MFA)
+        </div>
+        <div class="card-body">
+            {% if confirmado %}
+                <div class="alert alert-success" style="margin-bottom:1rem;">
+                    <strong>Activada.</strong> Cada vez que inicies sesión se te va a pedir un código
+                    de tu app de autenticación.
+                </div>
+                <form method="post" onsubmit="return confirm('¿Desactivar la verificación en dos pasos?');">
+                    {% csrf_token %}
+                    <input type="hidden" name="accion" value="desactivar">
+                    <button type="submit" class="btn btn-danger">
+                        <svg width="14" height="14"><use href="#i-x"/></svg>
+                        Desactivar
+                    </button>
+                </form>
+            {% else %}
+                <ol class="text-sm" style="padding-left:1.2rem;line-height:1.9;margin-bottom:1rem;">
+                    <li>Instalá una app de autenticación (Google Authenticator, Microsoft Authenticator, Authy…).</li>
+                    <li>Escaneá este código QR desde la app:</li>
+                </ol>
+
+                {% if qr_data_uri %}
+                    <div style="text-align:center;margin:0.5rem 0 1rem;">
+                        <img src="{{ qr_data_uri }}" alt="Código QR" width="200" height="200"
+                             style="border:1px solid var(--border);border-radius:var(--radius);">
+                    </div>
+                {% endif %}
+
+                {% if clave_manual %}
+                    <p class="form-help" style="text-align:center;">
+                        ¿No podés escanear? Cargá esta clave a mano:<br>
+                        <code style="font-size:0.9rem;letter-spacing:0.05em;">{{ clave_manual }}</code>
+                    </p>
+                {% endif %}
+
+                <form method="post" style="margin-top:1rem;">
+                    {% csrf_token %}
+                    <input type="hidden" name="accion" value="verificar">
+                    <label for="codigo">3. Ingresá el código de 6 dígitos que muestra la app</label>
+                    <input type="text" name="codigo" id="codigo" inputmode="numeric" pattern="[0-9]{6}"
+                           maxlength="6" autocomplete="one-time-code" required
+                           style="text-align:center;letter-spacing:0.4em;font-size:1.3rem;font-weight:700;">
+                    <button type="submit" class="btn btn-primary btn-block mt-2">
+                        <svg width="14" height="14"><use href="#i-check"/></svg>
+                        Activar verificación en dos pasos
+                    </button>
+                </form>
+
+                <form method="post" style="margin-top:0.5rem;">
+                    {% csrf_token %}
+                    <input type="hidden" name="accion" value="regenerar">
+                    <button type="submit" class="btn btn-outline btn-sm btn-block">
+                        Generar un código QR nuevo
+                    </button>
+                </form>
+            {% endif %}
+        </div>
+    </div>
+{% endblock %}

@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+
+{% block title %}Citas procesadas - Clínica de Imágenes{% endblock %}
+{% block page_title %}Citas procesadas{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .orden { margin-bottom: 1rem; }
+        .orden .titulo { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.5rem; }
+        .orden .titulo strong { color: var(--text); font-size: 1rem; }
+        .orden .datos { font-size: 0.85rem; color: var(--text); margin-bottom: 0.5rem; }
+        .orden .motivo { font-size: 0.85rem; color: var(--text); background: #f8fafc; border-left: 3px solid var(--primary); padding: 0.5rem 0.75rem; margin-bottom: 0.75rem; border-radius: 0 var(--radius) var(--radius) 0; }
+    </style>
+{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg> Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    {% if ordenes %}
+        {% for orden in ordenes %}
+            <div class="card orden">
+                <div class="card-body">
+                    <div class="titulo">
+                        <strong>{{ orden.cita.paciente.nombre }} {{ orden.cita.paciente.apellido }}</strong>
+                        <span class="badge badge-info">{{ orden.cita.get_convenio_display }}</span>
+                    </div>
+                    <div class="datos">
+                        {% if orden.edad_paciente is not None %}{{ orden.edad_paciente }} años{% else %}Edad no registrada{% endif %} —
+                        {{ orden.cita.paciente.get_sexo_display }} —
+                        Estudio: {{ orden.cita.tipo_estudio.nombre }} —
+                        Cita: {{ orden.cita.fecha }} {{ orden.cita.hora|time:'H:i' }}
+                    </div>
+                    <div class="motivo">{{ orden.motivo }}</div>
+                    <a class="btn btn-primary btn-sm" href="{% url 'adjuntar_informe' cita_id=orden.cita.id %}">
+                        <svg width="14" height="14"><use href="#i-edit"/></svg> Adjuntar informe
+                    </a>
+                </div>
+            </div>
+        {% endfor %}
+    {% else %}
+        <div class="empty-state">
+            <div class="icono"><svg width="32" height="32"><use href="#i-clipboard"/></svg></div>
+            No hay citas pendientes de informe por el momento.
+        </div>
+    {% endif %}
+{% endblock %}

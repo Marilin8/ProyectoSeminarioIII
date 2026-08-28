@@ -1,0 +1,458 @@
+{% extends 'base.html' %}
+
+{% block title %}Agendar cita — Clínica de Imágenes{% endblock %}
+{% block page_title %}Agendar cita — {{ convenio_nombre }}{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .horario { background: var(--info-light); border: 1px solid #bfdbfe; border-radius: var(--radius); padding: 0.6rem 0.75rem; font-size: 0.82rem; color: var(--primary-dark); margin-top: 1rem; }
+        .horario a { color: var(--primary); margin-left: 0.5rem; font-weight: 500; }
+        .aviso-paciente { display: none; margin-top: 0.75rem; padding: 0.6rem 0.75rem; border-radius: var(--radius); font-size: 0.82rem; background: var(--success-light); color: #166534; border: 1px solid #bbf7d0; }
+        .aviso-paciente a { color: inherit; font-weight: bold; margin-left: 0.5rem; }
+        .aviso-emergencia { margin-top: 0.75rem; padding: 0.75rem; border-radius: var(--radius); background: var(--warning-light); border: 1px solid #fde047; color: #713f12; font-size: 0.82rem; }
+        .aviso-emergencia label { display: flex; align-items: flex-start; gap: 0.5rem; margin-top: 0.6rem; font-size: 0.82rem; font-weight: 600; color: #713f12; }
+        .aviso-emergencia input[type="checkbox"] { width: auto; margin-top: 0.15rem; }
+        .ayuda-dpi-incompleto { color: var(--danger); }
+        .btn-editar { background: var(--border-light); color: #334155; }
+        .btn-editar:hover { background: var(--border); }
+    </style>
+{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a href="{% url 'dashboard' %}" class="btn btn-outline btn-sm">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg> Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="card" style="padding:1.5rem;max-width:640px;">
+        <form method="post" id="form-agendar-cita">
+            {% csrf_token %}
+            {{ form.non_field_errors }}
+            {% if form.errors %}
+                <div class="aviso-paciente" style="display:block; background:var(--danger-light); color:#991b1b; border:1px solid #fecaca;">
+                    No se pudo enviar la solicitud: revisá los campos marcados en rojo más abajo.
+                </div>
+            {% endif %}
+
+            <h2 style="font-size:0.95rem;color:var(--text);margin:1.5rem 0 0.25rem;border-bottom:1px solid var(--border-light);padding-bottom:0.3rem;font-weight:600;">Paciente</h2>
+
+            <label for="{{ form.dpi.id_for_label }}">DPI</label>
+            {{ form.dpi }}
+            {{ form.dpi.errors }}
+            <p class="ayuda ayuda-dpi-incompleto" id="ayuda-dpi-incompleto" style="display:none;"></p>
+            <div class="aviso-paciente" id="aviso-paciente-existente">
+                Paciente ya registrado — se completaron sus datos automáticamente.
+                <a href="#" id="btn-buscar-otro">No es este paciente</a>
+            </div>
+
+            <label for="{{ form.nombre.id_for_label }}">Nombre</label>
+            {{ form.nombre }}
+            {{ form.nombre.errors }}
+
+            <label for="{{ form.apellido.id_for_label }}">Apellido</label>
+            {{ form.apellido }}
+            {{ form.apellido.errors }}
+
+            <label for="{{ form.sexo.id_for_label }}">Sexo (opcional)</label>
+            {{ form.sexo }}
+            {{ form.sexo.errors }}
+
+            <label for="{{ form.telefono.id_for_label }}">Teléfono (opcional)</label>
+            {{ form.telefono }}
+            {{ form.telefono.errors }}
+
+            <label for="{{ form.correo.id_for_label }}">Correo electrónico</label>
+            {{ form.correo }}
+            {{ form.correo.errors }}
+
+            <label for="{{ form.fecha_nacimiento.id_for_label }}">Fecha de nacimiento (opcional)</label>
+            {{ form.fecha_nacimiento }}
+            {{ form.fecha_nacimiento.errors }}
+            <p class="ayuda">
+                Si falta algún dato, se puede completar después: al final del día se
+                les avisa a las recepcionistas qué pacientes quedaron con datos pendientes.
+            </p>
+
+            <label for="{{ form.carnet_igss.id_for_label }}">
+                Carné de afiliación IGSS{% if requiere_carnet_igss %} (obligatorio){% else %} (opcional){% endif %}
+            </label>
+            {{ form.carnet_igss }}
+            {{ form.carnet_igss.errors }}
+
+            <h2 style="font-size:0.95rem;color:var(--text);margin:1.5rem 0 0.25rem;border-bottom:1px solid var(--border-light);padding-bottom:0.3rem;font-weight:600;">Cita</h2>
+
+            <div class="horario">
+                Horario elegido: <strong>{{ fecha_valor }} — {{ hora_valor }}</strong>
+                <a href="{{ calendario_url }}" id="btn-cambiar-horario">
+                    <svg width="14" height="14"><use href="#i-calendar"/></svg> Cambiar horario
+                </a>
+            </div>
+            {% if hay_conflicto %}
+                <div class="aviso-emergencia">
+                    ⚠️ Este horario ya tiene otra cita asignada — no debería agendarse otra encima.
+                    <label for="{{ form.es_emergencia.id_for_label }}">
+                        {{ form.es_emergencia }}
+                        {{ form.es_emergencia.label }}
+                    </label>
+                    {{ form.es_emergencia.errors }}
+                </div>
+            {% else %}
+                <div style="display:none;">{{ form.es_emergencia }}</div>
+            {% endif %}
+            {{ form.fecha }}
+            {{ form.hora }}
+
+            <label for="{{ form.tipo_estudio.id_for_label }}">Tipo de estudio</label>
+            {{ form.tipo_estudio }}
+            {{ form.tipo_estudio.errors }}
+            <p class="ayuda" id="previa-tipo-estudio" style="display:none;"></p>
+
+            <label for="{{ form.radiologo.id_for_label }}">Radiólogo asignado</label>
+            {{ form.radiologo }}
+            {{ form.radiologo.errors }}
+
+            <label for="{{ form.notas.id_for_label }}">Notas</label>
+            {{ form.notas }}
+            {{ form.notas.errors }}
+
+            <button type="submit" class="btn btn-primary btn-block btn-lg mt-2">
+                <svg width="14" height="14"><use href="#i-check-circle"/></svg> Agendar cita
+            </button>
+        </form>
+    </div>
+
+    <div class="modal-overlay" id="modal-confirmar">
+        <div class="modal-card">
+            <h2>Verificá los datos antes de enviar la solicitud</h2>
+            <dl class="modal-resumen" id="modal-resumen"></dl>
+            <div class="modal-botones">
+                <button type="button" class="btn btn-outline btn-editar" id="btn-editar">
+                    <svg width="14" height="14"><use href="#i-edit"/></svg> Editar
+                </button>
+                <button type="button" class="btn btn-primary btn-confirmar" id="btn-confirmar">
+                    <svg width="14" height="14"><use href="#i-check"/></svg> Confirmar y enviar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        var STORAGE_KEY = 'agendar_cita_draft';
+        var form = document.getElementById('form-agendar-cita');
+        var btnCambiar = document.getElementById('btn-cambiar-horario');
+
+        var campos = ['dpi', 'nombre', 'apellido', 'sexo', 'fecha_nacimiento',
+                       'telefono', 'correo', 'carnet_igss', 'tipo_estudio',
+                       'radiologo', 'notas'];
+
+        function guardarDraft() {
+            var data = {};
+            campos.forEach(function(nombre) {
+                var el = form.querySelector('[name="' + nombre + '"]');
+                if (el) {
+                    if (el.type === 'checkbox') { data[nombre] = el.checked; }
+                    else { data[nombre] = el.value; }
+                }
+            });
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+        }
+
+        function restaurarDraft() {
+            try {
+                var raw = localStorage.getItem(STORAGE_KEY);
+                if (!raw) return;
+                var data = JSON.parse(raw);
+                campos.forEach(function(nombre) {
+                    var el = form.querySelector('[name="' + nombre + '"]');
+                    if (el && data[nombre] !== undefined) {
+                        if (el.type === 'checkbox') { el.checked = data[nombre]; }
+                        else { el.value = data[nombre]; }
+                    }
+                });
+                localStorage.removeItem(STORAGE_KEY);
+            } catch(e) {}
+        }
+
+        if (btnCambiar) { btnCambiar.addEventListener('click', guardarDraft); }
+        restaurarDraft();
+    })();
+
+        // Autocompleta los datos del paciente si el DPI ya está registrado,
+        // para no volver a escribir nombre/apellido/sexo/teléfono/fecha de
+        // nacimiento cada vez.
+        (function () {
+            var dpiInput = document.getElementById('id_dpi');
+            var aviso = document.getElementById('aviso-paciente-existente');
+            var ayudaIncompleto = document.getElementById('ayuda-dpi-incompleto');
+            var camposAutocompletables = [
+                'nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento', 'carnet_igss',
+            ];
+            var temporizadorBusqueda = null;
+            var ultimoDpiBuscado = '';
+
+            // Quita en el momento cualquier caracter que no sea número
+            // (letras, guiones, espacios, etc.), para que sea imposible
+            // escribir algo distinto de dígitos en este campo.
+            function sanearDpi() {
+                var limpio = dpiInput.value.replace(/\D/g, '').slice(0, 13);
+                if (limpio !== dpiInput.value) {
+                    dpiInput.value = limpio;
+                }
+                return limpio;
+            }
+
+            function actualizarAyudaIncompleto(dpi) {
+                if (dpi.length === 0 || dpi.length === 13) {
+                    ayudaIncompleto.style.display = 'none';
+                    return;
+                }
+                var faltan = 13 - dpi.length;
+                ayudaIncompleto.textContent = 'Faltan ' + faltan + ' dígito' + (faltan === 1 ? '' : 's')
+                    + ': el DPI debe tener exactamente 13 números.';
+                ayudaIncompleto.style.display = 'block';
+            }
+
+            function bloquearCampo(elemento, si) {
+                if (elemento.tagName === 'SELECT') {
+                    elemento.disabled = si;
+                } else {
+                    elemento.readOnly = si;
+                }
+                elemento.style.background = si ? '#f1f5f9' : '';
+            }
+
+            function buscarPaciente() {
+                var dpi = sanearDpi();
+                if (dpi.length !== 13 || dpi === ultimoDpiBuscado) {
+                    return;
+                }
+                ultimoDpiBuscado = dpi;
+                fetch('{% url "buscar_paciente_por_dpi" %}?dpi=' + encodeURIComponent(dpi))
+                    .then(function (respuesta) { return respuesta.json(); })
+                    .then(function (datos) {
+                        if (!datos.encontrado) {
+                            aviso.style.display = 'none';
+                            return;
+                        }
+                        camposAutocompletables.forEach(function (nombreCampo) {
+                            var elemento = document.getElementById('id_' + nombreCampo);
+                            if (elemento) {
+                                elemento.value = datos[nombreCampo];
+                                // Un dato que el paciente ya tiene guardado no se
+                                // puede modificar al agendar; solo se completan los
+                                // que están vacíos.
+                                bloquearCampo(elemento, !!datos[nombreCampo]);
+                            }
+                        });
+                        aviso.style.display = 'block';
+                    })
+                    .catch(function () {
+                        // Si falla la búsqueda (red, sesión vencida, etc.) no se
+                        // interrumpe el formulario: el recepcionista puede seguir
+                        // escribiendo los datos a mano.
+                        aviso.style.display = 'none';
+                    });
+            }
+
+            // Busca mientras se escribe (con una pequeña pausa) y también al
+            // salir del campo, para no depender de un solo evento.
+            dpiInput.addEventListener('input', function () {
+                clearTimeout(temporizadorBusqueda);
+                var dpi = sanearDpi();
+                actualizarAyudaIncompleto(dpi);
+                if (dpi.length !== 13) {
+                    aviso.style.display = 'none';
+                    ultimoDpiBuscado = '';
+                    return;
+                }
+                temporizadorBusqueda = setTimeout(buscarPaciente, 300);
+            });
+            dpiInput.addEventListener('blur', buscarPaciente);
+
+            document.getElementById('btn-buscar-otro').addEventListener('click', function (evento) {
+                evento.preventDefault();
+                camposAutocompletables.forEach(function (nombreCampo) {
+                    var elemento = document.getElementById('id_' + nombreCampo);
+                    if (elemento) {
+                        elemento.value = '';
+                        bloquearCampo(elemento, false);
+                    }
+                });
+                aviso.style.display = 'none';
+                ultimoDpiBuscado = '';
+                dpiInput.focus();
+            });
+        })();
+
+        // Filtra el combo de radiólogo según el tipo de estudio elegido:
+        // solo deja elegir entre los radiólogos que realmente lo realizan
+        // (ej. Celeste solo hace Ultrasonido y Rayos X).
+        (function () {
+            var tipoEstudioSelect = document.getElementById('id_tipo_estudio');
+            var radiologoSelect = document.getElementById('id_radiologo');
+
+            function actualizarRadiologos(preservarSeleccion) {
+                var tipoEstudioId = tipoEstudioSelect.value;
+                var seleccionActual = preservarSeleccion ? radiologoSelect.value : '';
+
+                if (!tipoEstudioId) {
+                    radiologoSelect.innerHTML = '<option value="">---------</option>';
+                    return;
+                }
+
+                fetch(
+                    '{% url "radiologos_por_estudio" %}?tipo_estudio=' + encodeURIComponent(tipoEstudioId)
+                )
+                    .then(function (respuesta) { return respuesta.json(); })
+                    .then(function (datos) {
+                        radiologoSelect.innerHTML = '';
+                        if (datos.radiologos.length === 0) {
+                            var vacia = document.createElement('option');
+                            vacia.value = '';
+                            vacia.textContent = 'Ningún radiólogo realiza este estudio';
+                            radiologoSelect.appendChild(vacia);
+                            return;
+                        }
+                        var placeholder = document.createElement('option');
+                        placeholder.value = '';
+                        placeholder.textContent = '---------';
+                        radiologoSelect.appendChild(placeholder);
+                        datos.radiologos.forEach(function (radiologo) {
+                            var opcion = document.createElement('option');
+                            opcion.value = radiologo.id;
+                            opcion.textContent = radiologo.texto;
+                            if (String(radiologo.id) === seleccionActual) {
+                                opcion.selected = true;
+                            }
+                            radiologoSelect.appendChild(opcion);
+                        });
+                    });
+            }
+
+            tipoEstudioSelect.addEventListener('change', function () {
+                actualizarRadiologos(false);
+            });
+
+            // Si el formulario vuelve a mostrarse con errores, conserva el
+            // tipo de estudio y el radiólogo que ya se habían elegido.
+            if (tipoEstudioSelect.value) {
+                actualizarRadiologos(true);
+            }
+        })();
+
+        // Muestra cuánto dura y cuánto cuesta el estudio elegido, para que la
+        // recepcionista sepa de una vez cuánto tiempo va a ocupar en el
+        // calendario (esos datos ya vienen en cada <option> como data-*).
+        (function () {
+            var tipoEstudioSelect = document.getElementById('id_tipo_estudio');
+            var horaInput = document.getElementById('id_hora');
+            var previa = document.getElementById('previa-tipo-estudio');
+
+            // Después de las 18:00, privado y emergencia IGSS cobran tarifa inhábil.
+            var convenioConInhabil = {% if convenio == 'privado' or convenio == 'emergencia_igss' %}true{% else %}false{% endif %};
+
+            function esInhabil() {
+                if (!convenioConInhabil || !horaInput || !horaInput.value) {
+                    return false;
+                }
+                return horaInput.value >= '18:00';
+            }
+
+            function actualizarPrevia() {
+                var opcion = tipoEstudioSelect.options[tipoEstudioSelect.selectedIndex];
+                var duracion = opcion ? opcion.getAttribute('data-duracion') : null;
+                if (!duracion) {
+                    previa.style.display = 'none';
+                    return;
+                }
+                var precio = opcion.getAttribute(
+                    esInhabil() ? 'data-precio-inhabil' : 'data-precio-habil'
+                );
+                var texto = 'Duración estimada: ' + duracion + ' minutos';
+                if (precio) {
+                    texto += ' · Precio: Q' + precio;
+                    if (esInhabil()) {
+                        texto += ' (tarifa inhábil)';
+                    }
+                }
+                previa.textContent = texto;
+                previa.style.display = 'block';
+            }
+
+            tipoEstudioSelect.addEventListener('change', actualizarPrevia);
+            if (horaInput) {
+                horaInput.addEventListener('change', actualizarPrevia);
+            }
+            actualizarPrevia();
+        })();
+
+        (function () {
+            var form = document.getElementById('form-agendar-cita');
+            var modal = document.getElementById('modal-confirmar');
+            var resumen = document.getElementById('modal-resumen');
+
+            var campos = [
+                ['id_dpi', 'DPI'],
+                ['id_nombre', 'Nombre'],
+                ['id_apellido', 'Apellido'],
+                ['id_sexo', 'Sexo'],
+                ['id_telefono', 'Teléfono'],
+                ['id_correo', 'Correo electrónico'],
+                ['id_fecha_nacimiento', 'Fecha de nacimiento'],
+                ['id_carnet_igss', 'Carné de afiliación IGSS'],
+                ['id_fecha', 'Fecha de la cita'],
+                ['id_hora', 'Hora de la cita'],
+                ['id_tipo_estudio', 'Tipo de estudio'],
+                ['id_radiologo', 'Radiólogo asignado'],
+                ['id_notas', 'Notas'],
+                {% if hay_conflicto %}['id_es_emergencia', 'Cita de emergencia (horario ocupado)'],{% endif %}
+            ];
+
+            function enviarFormulario() {
+                if (form.dataset.enviando) return;
+                form.dataset.enviando = '1';
+                form.submit();
+            }
+
+            form.addEventListener('submit', function (evento) {
+                evento.preventDefault();
+                // Refuerzo por si algún campo obligatorio (ej. Carné IGSS en
+                // COEX) quedó vacío: en vez de abrir el modal, el navegador
+                // marca el campo inválido y no se pierde el intento en silencio.
+                if (!form.reportValidity()) {
+                    return;
+                }
+                resumen.innerHTML = '';
+                campos.forEach(function (campo) {
+                    var elemento = document.getElementById(campo[0]);
+                    if (!elemento) {
+                        return;
+                    }
+                    var valor;
+                    if (elemento.tagName === 'SELECT') {
+                        valor = elemento.options[elemento.selectedIndex].text;
+                    } else if (elemento.type === 'checkbox') {
+                        valor = elemento.checked ? 'Sí' : 'No';
+                    } else {
+                        valor = elemento.value;
+                    }
+                    var dt = document.createElement('dt');
+                    dt.textContent = campo[1];
+                    var dd = document.createElement('dd');
+                    dd.textContent = valor || '—';
+                    resumen.appendChild(dt);
+                    resumen.appendChild(dd);
+                });
+                modal.classList.add('abierto');
+            });
+
+            document.getElementById('btn-editar').addEventListener('click', function () {
+                modal.classList.remove('abierto');
+            });
+            document.getElementById('btn-confirmar').addEventListener('click', enviarFormulario);
+        })();
+    </script>
+{% endblock %}

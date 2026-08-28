@@ -1,0 +1,206 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ paciente.nombre }} {{ paciente.apellido }} - Estudios realizados{% endblock %}
+{% block page_title %}Estudios realizados{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'historial_pacientes' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al listado de pacientes
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="resumen">
+        <strong>{{ paciente.nombre }} {{ paciente.apellido }}</strong> (DPI: {{ paciente.dpi }})<br>
+        {% if edad is not None %}{{ edad }} anios{% else %}Edad no registrada{% endif %}, {{ paciente.get_sexo_display }}
+        {% if paciente.telefono %} &mdash; Tel: {{ paciente.telefono }}{% endif %}
+    </div>
+
+    {% if citas %}
+        <div class="card mb-2">
+            <div class="card-body">
+                <div class="flex flex-wrap gap-2" style="align-items:flex-end;">
+                    <div style="flex:1;min-width:140px;">
+                        <label for="filtro-convenio" style="margin-top:0;">Convenio</label>
+                        <select id="filtro-convenio">
+                            <option value="">Todos</option>
+                            <option value="coex">COEX</option>
+                            <option value="privado">Privado</option>
+                            <option value="emergencia_igss">Emergencia IGSS</option>
+                        </select>
+                    </div>
+                    <div style="flex:1;min-width:140px;">
+                        <label for="filtro-fecha" style="margin-top:0;">Fecha</label>
+                        <input type="date" id="filtro-fecha">
+                    </div>
+                    <div style="flex:1;min-width:140px;">
+                        <label for="filtro-estudio" style="margin-top:0;">Estudio</label>
+                        <select id="filtro-estudio">
+                            <option value="">Todos</option>
+                            {% for tipo in tipos_estudio %}
+                                <option value="{{ tipo }}">{{ tipo }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <button type="button" class="btn btn-outline btn-sm" id="btn-limpiar-filtros">
+                        <svg width="14" height="14"><use href="#i-x"/></svg>
+                        Limpiar filtros
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="lista-estudios">
+            {% for cita in citas %}
+                <div class="card mb-1{% if cita.fecha == hoy %} highlight{% endif %}"
+                     style="{% if cita.fecha == hoy %}border-left:4px solid var(--success);{% endif %}"
+                     data-convenio="{{ cita.convenio }}"
+                     data-fecha="{{ cita.fecha|date:'Y-m-d' }}"
+                     data-estudio="{{ cita.tipo_estudio.nombre }}">
+                    <div class="card-body flex-between">
+                        <div>
+                            <span class="text-bold">{{ cita.tipo_estudio.nombre }}</span>
+                            {% if cita.fecha == hoy %}
+                                <span class="badge badge-success" style="margin-left:0.5rem;">HOY</span>
+                            {% endif %}
+                            {% if not cita.orden_trabajo.resultados_enviados_en %}
+                                <span class="badge badge-warning" style="margin-left:0.5rem;">No enviado</span>
+                            {% endif %}
+                            <div class="text-muted text-sm" style="margin-top:0.25rem;">
+                                {{ cita.fecha }} {{ cita.hora|time:'H:i' }} &mdash; {{ cita.get_convenio_display }}
+                            </div>
+                        </div>
+                        <div class="flex gap-1" style="flex-shrink:0;">
+                            <a class="btn btn-outline btn-sm" href="{% url 'ver_estudio_historial' cita_id=cita.id %}">
+                                <svg width="14" height="14"><use href="#i-image"/></svg>
+                                Ver estudio
+                            </a>
+                            <form method="post" action="{% url 'enviar_estudio' cita_id=cita.id %}"
+                                  class="form-enviar-estudio" style="margin:0;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-primary btn-sm"
+                                        data-paciente="{{ paciente.nombre }} {{ paciente.apellido }}"
+                                        data-correo="{{ paciente.correo|default:'No registrado' }}"
+                                        data-estudio="{{ cita.tipo_estudio.nombre }}">
+                                    <svg width="14" height="14"><use href="#i-send"/></svg>
+                                    {% if cita.orden_trabajo.resultados_enviados_en %}Reenviar estudio{% else %}Enviar estudio{% endif %}
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            {% endfor %}
+            <div class="empty-state" id="sin-resultados" hidden>
+                <div class="icono">
+                    <svg width="40" height="40"><use href="#i-file-medical"/></svg>
+                </div>
+                <p>Ningun estudio coincide con los filtros elegidos.</p>
+            </div>
+        </div>
+    {% else %}
+        <div class="card">
+            <div class="empty-state">
+                <div class="icono">
+                    <svg width="40" height="40"><use href="#i-file-medical"/></svg>
+                </div>
+                <p>Este paciente todavia no tiene estudios realizados.</p>
+            </div>
+        </div>
+    {% endif %}
+
+    <div id="modal-confirmar-envio" class="modal-overlay">
+        <div class="modal-card">
+            <h2>Confirmar envío de resultados</h2>
+            <p id="texto-confirmar-envio" style="color:var(--text-muted);"></p>
+            <div class="modal-botones">
+                <button type="button" class="btn btn-outline" id="btn-cancelar-envio">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="btn-confirmar-envio">Sí, enviar</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            var modalEnvio = document.getElementById('modal-confirmar-envio');
+            var textoEnvio = document.getElementById('texto-confirmar-envio');
+            var btnCancelarEnvio = document.getElementById('btn-cancelar-envio');
+            var btnConfirmarEnvio = document.getElementById('btn-confirmar-envio');
+            var formPendiente = null;
+
+            document.querySelectorAll('.form-enviar-estudio').forEach(function (formulario) {
+                formulario.addEventListener('submit', function (evento) {
+                    if (formulario === formPendiente) {
+                        return;
+                    }
+                    evento.preventDefault();
+                    var boton = formulario.querySelector('button[type="submit"]');
+                    textoEnvio.textContent =
+                        'Se enviará el estudio de "' + boton.dataset.estudio + '" a ' +
+                        boton.dataset.paciente + ' (' + boton.dataset.correo + '). ¿Continuar?';
+                    formPendiente = formulario;
+                    modalEnvio.classList.add('abierto');
+                });
+            });
+
+            btnCancelarEnvio.addEventListener('click', function () {
+                modalEnvio.classList.remove('abierto');
+                formPendiente = null;
+            });
+
+            btnConfirmarEnvio.addEventListener('click', function () {
+                modalEnvio.classList.remove('abierto');
+                if (formPendiente) {
+                    formPendiente.submit();
+                }
+            });
+
+            modalEnvio.addEventListener('click', function (evento) {
+                if (evento.target === modalEnvio) {
+                    modalEnvio.classList.remove('abierto');
+                    formPendiente = null;
+                }
+            });
+        })();
+
+        (function () {
+            var filtroConvenio = document.getElementById('filtro-convenio');
+            var filtroFecha = document.getElementById('filtro-fecha');
+            var filtroEstudio = document.getElementById('filtro-estudio');
+            if (!filtroConvenio) {
+                return;
+            }
+            var tarjetas = document.querySelectorAll('#lista-estudios .card');
+            var sinResultados = document.getElementById('sin-resultados');
+
+            function aplicarFiltros() {
+                var convenio = filtroConvenio.value;
+                var fecha = filtroFecha.value;
+                var estudio = filtroEstudio.value;
+                var visibles = 0;
+
+                tarjetas.forEach(function (tarjeta) {
+                    var coincide =
+                        (!convenio || tarjeta.dataset.convenio === convenio)
+                        && (!fecha || tarjeta.dataset.fecha === fecha)
+                        && (!estudio || tarjeta.dataset.estudio === estudio);
+                    tarjeta.hidden = !coincide;
+                    if (coincide) visibles++;
+                });
+
+                sinResultados.hidden = visibles !== 0;
+            }
+
+            filtroConvenio.addEventListener('change', aplicarFiltros);
+            filtroFecha.addEventListener('change', aplicarFiltros);
+            filtroEstudio.addEventListener('change', aplicarFiltros);
+            document.getElementById('btn-limpiar-filtros').addEventListener('click', function () {
+                filtroConvenio.value = '';
+                filtroFecha.value = '';
+                filtroEstudio.value = '';
+                aplicarFiltros();
+            });
+        })();
+    </script>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends 'base.html' %}
+
+{% block title %}Solicitudes Pendientes — Clínica de Imágenes{% endblock %}
+{% block page_title %}Solicitudes de Citas Pendientes{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a href="{% url 'dashboard' %}" class="btn btn-outline btn-sm">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+{% if citas %}
+    <div class="grid" style="grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));">
+        {% for cita in citas %}
+        <div class="card" style="display:flex;flex-direction:column;">
+            <div class="card-body" style="flex:1;display:flex;flex-direction:column;">
+                <div class="flex-between" style="margin-bottom: 0.5rem;">
+                    <strong style="font-size: 0.95rem;">{{ cita.paciente.nombre }} {{ cita.paciente.apellido }}</strong>
+                    <span class="badge badge-info">{{ cita.get_convenio_display }}</span>
+                </div>
+                <p class="text-sm text-muted" style="margin: 0.15rem 0;">
+                    DPI: {{ cita.paciente.dpi }} — {{ cita.paciente.get_sexo_display }} — Tel: {{ cita.paciente.telefono|default:"—" }}
+                </p>
+                <p class="text-sm" style="margin: 0.25rem 0;"><strong>Estudio:</strong> {{ cita.tipo_estudio.nombre }}</p>
+                <div class="info-box">
+                    Solicitado por recepción: <strong>{{ cita.fecha_sugerida }} — {{ cita.hora_sugerida|time:'H:i' }}</strong>
+                </div>
+                {% if cita.notas %}
+                    <p class="text-sm text-muted" style="background: #f8fafc; padding: 0.5rem; border-radius: 6px; margin: 0.5rem 0;">
+                        <em>{{ cita.notas }}</em>
+                    </p>
+                {% endif %}
+                <a href="{% url 'revisar_solicitud' cita_id=cita.id %}" class="btn btn-primary btn-sm mt-1" style="margin-top:auto;">
+                    <svg width="14" height="14"><use href="#i-search"/></svg>
+                    Revisar Solicitud
+                </a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+{% else %}
+    <div class="alert alert-info">No hay solicitudes de citas pendientes de confirmación.</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+
+{% block title %}Reportes diarios {{ convenio_nombre }} - Clínica de Imágenes{% endblock %}
+{% block page_title %}Reportes diarios — {{ convenio_nombre }}{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    {% if reportes %}
+        {% for reporte in reportes %}
+            <div class="card" style="margin-bottom: 0.75rem;">
+                <div class="card-body" style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <span class="text-bold">{{ reporte.fecha }}</span>
+                        <span class="estado estado-{{ reporte.estado }}">{{ reporte.get_estado_display }}</span>
+                    </div>
+                    <a class="btn btn-primary btn-sm" href="{% url 'ver_reporte_diario' convenio reporte.fecha|date:'Y-m-d' %}">
+                        <svg width="14" height="14"><use href="#i-file-text"/></svg>
+                        Ver reporte
+                    </a>
+                </div>
+            </div>
+        {% endfor %}
+    {% else %}
+        <div class="card">
+            <div class="card-body">
+                <p class="text-muted text-center" style="padding: 2rem 0;">
+                    {% if solo_enviados %}
+                        Todavía no hay reportes enviados de {{ convenio_nombre }}.
+                    {% else %}
+                        Todavía no hay reportes de {{ convenio_nombre }}.
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+    {% endif %}
+{% endblock %}

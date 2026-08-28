@@ -1,0 +1,270 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ cita.tipo_estudio.nombre }} — {{ paciente.nombre }} {{ paciente.apellido }}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #0b0f17; --panel: #161b26; --linea: #2a3040;
+            --txt: #e5e9f0; --txt2: #8a93a6; --acento: #3b82f6;
+        }
+        html, body { height: 100%; }
+        body {
+            background: var(--bg); color: var(--txt);
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+
+        .barra {
+            display: flex; align-items: center; gap: 0.75rem;
+            padding: 0.55rem 1rem; background: var(--panel);
+            border-bottom: 1px solid var(--linea); flex-shrink: 0;
+        }
+        .barra .tabs { display: flex; gap: 0.4rem; margin: 0 auto; }
+        .barra .tabs button {
+            background: transparent; border: none; color: var(--txt2);
+            font: inherit; font-weight: 600; padding: 0.4rem 1.1rem;
+            border-radius: 999px; cursor: pointer;
+        }
+        .barra .tabs button.on { background: #fff; color: #0b0f17; }
+        .barra .btn {
+            display: inline-flex; align-items: center; gap: 0.4rem;
+            background: #202634; color: var(--txt); border: 1px solid var(--linea);
+            border-radius: var(--radius, 8px); padding: 0.4rem 0.8rem;
+            font: inherit; font-size: 0.82rem; cursor: pointer; text-decoration: none;
+        }
+        .barra .btn:hover { background: #2a3140; }
+        .barra .btn svg { width: 15px; height: 15px; }
+
+        .paciente {
+            padding: 0.6rem 1rem; background: var(--panel);
+            border-bottom: 1px solid var(--linea); font-size: 0.8rem; flex-shrink: 0;
+        }
+        .paciente .nombre { font-size: 0.95rem; font-weight: 700; }
+        .paciente .meta { color: var(--txt2); margin-top: 0.15rem; line-height: 1.5; }
+
+        .contenido { flex: 1; min-height: 0; position: relative; }
+
+        /* --- Pestaña Imágenes --- */
+        .tab-panel { position: absolute; inset: 0; display: none; flex-direction: column; }
+        .tab-panel.on { display: flex; }
+
+        .lienzo {
+            flex: 1; min-height: 0; background: #000; position: relative;
+            overflow: hidden; display: flex; align-items: center; justify-content: center;
+            touch-action: none;
+        }
+        .lienzo img {
+            max-width: 100%; max-height: 100%; object-fit: contain;
+            transform-origin: center center; transition: transform 0.05s linear;
+            user-select: none; -webkit-user-drag: none;
+        }
+        .lienzo .info {
+            position: absolute; left: 0.75rem; bottom: 0.6rem;
+            font-size: 0.72rem; color: #9aa4b6; pointer-events: none;
+            text-shadow: 0 1px 2px #000;
+        }
+        .lienzo .zoom-lbl {
+            position: absolute; right: 0.75rem; bottom: 0.6rem;
+            font-size: 0.72rem; color: #9aa4b6; text-shadow: 0 1px 2px #000;
+        }
+        .lienzo .flecha {
+            position: absolute; top: 50%; transform: translateY(-50%);
+            color: #fff; font-size: 2.2rem; cursor: pointer; padding: 0 0.9rem;
+            opacity: 0.6; user-select: none;
+        }
+        .lienzo .flecha:hover { opacity: 1; }
+        .lienzo .prev { left: 0; }
+        .lienzo .next { right: 0; }
+
+        .tiras {
+            flex-shrink: 0; display: flex; gap: 0.4rem; padding: 0.5rem 0.75rem;
+            background: var(--panel); border-top: 1px solid var(--linea);
+            overflow-x: auto;
+        }
+        .tiras img {
+            width: 74px; height: 74px; object-fit: cover; border-radius: 6px;
+            border: 2px solid transparent; cursor: pointer; background: #000; flex-shrink: 0;
+        }
+        .tiras img.on { border-color: var(--acento); }
+
+        .herramientas {
+            position: absolute; top: 0.6rem; right: 0.75rem; display: flex; gap: 0.3rem;
+        }
+        .herramientas button {
+            width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--linea);
+            background: #202634cc; color: var(--txt); font-size: 1rem; cursor: pointer;
+        }
+
+        /* --- Pestaña Reporte --- */
+        .tab-panel.reporte { padding: 1.25rem; overflow-y: auto; display: none; }
+        .tab-panel.reporte.on { display: block; }
+        .reporte-caja { max-width: 720px; margin: 0 auto; }
+        .reporte-caja h2 { font-size: 1rem; margin-bottom: 0.75rem; }
+        .reporte-texto {
+            white-space: pre-wrap; font-size: 0.9rem; line-height: 1.6;
+            background: var(--panel); border: 1px solid var(--linea);
+            border-radius: 8px; padding: 1rem;
+        }
+        .vacio { color: var(--txt2); font-size: 0.9rem; text-align: center; padding: 3rem 0; }
+        a.btn-pdf {
+            display: inline-flex; align-items: center; gap: 0.45rem; margin-bottom: 1rem;
+            background: var(--acento); color: #fff; text-decoration: none;
+            padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.88rem;
+        }
+    </style>
+</head>
+<body>
+    {% include 'includes/icons.html' %}
+
+    <div class="barra">
+        <div style="display:flex;gap:0.4rem;">
+            {% if imagenes %}
+                <a class="btn" href="{% url 'visor_jpg' orden_id=orden.id %}">
+                    <svg><use href="#i-download"/></svg> Descargar JPG
+                </a>
+            {% endif %}
+            {% if tiene_dicom %}
+                <a class="btn" href="{% url 'visor_dicom' orden_id=orden.id %}">
+                    <svg><use href="#i-download"/></svg> Descargar DICOM
+                </a>
+            {% endif %}
+        </div>
+        <div class="tabs">
+            <button data-tab="images" class="{% if tab == 'images' %}on{% endif %}">Imágenes</button>
+            <button data-tab="report" class="{% if tab == 'report' %}on{% endif %}">Reporte</button>
+        </div>
+        <span style="font-size:0.8rem;color:var(--txt2);">Clínica de Imágenes</span>
+    </div>
+
+    <div class="paciente">
+        <div class="nombre">{{ paciente.nombre|upper }} {{ paciente.apellido|upper }}</div>
+        <div class="meta">
+            {{ paciente.get_sexo_display|default:'—' }}{% if edad %}, {{ edad }} años{% endif %} ·
+            DPI {{ paciente.dpi }}<br>
+            Estudio: {{ cita.tipo_estudio.nombre }} · Fecha: {{ cita.fecha|date:'d M Y' }}
+            {% if cita.radiologo %} · Radiólogo: {{ cita.radiologo.get_full_name|default:cita.radiologo.username }}{% endif %}
+        </div>
+    </div>
+
+    <div class="contenido">
+        <div class="tab-panel imagenes {% if tab == 'images' %}on{% endif %}" id="panel-images">
+            {% if imagenes %}
+                <div class="lienzo" id="lienzo">
+                    <span class="flecha prev" id="prev">&#8249;</span>
+                    <img id="img-actual" src="{% url 'visor_imagen' orden_id=orden.id imagen_id=imagenes.0.id %}" alt="">
+                    <span class="flecha next" id="next">&#8250;</span>
+                    <div class="herramientas">
+                        <button id="zoom-out" title="Alejar">&minus;</button>
+                        <button id="zoom-reset" title="Ajustar">&#9633;</button>
+                        <button id="zoom-in" title="Acercar">+</button>
+                        <a id="descargar-actual" title="Descargar esta imagen (JPG)" download
+                           style="display:inline-flex;align-items:center;justify-content:center;text-decoration:none;">
+                            <svg width="15" height="15"><use href="#i-download"/></svg>
+                        </a>
+                    </div>
+                    <div class="info" id="info-img"></div>
+                    <div class="zoom-lbl" id="zoom-lbl">Zoom: 100%</div>
+                </div>
+                <div class="tiras" id="tiras">
+                    {% for imagen in imagenes %}
+                        <img src="{% url 'visor_imagen' orden_id=orden.id imagen_id=imagen.id %}"
+                             data-i="{{ forloop.counter0 }}" loading="lazy"
+                             class="{% if forloop.first %}on{% endif %}" alt="Imagen {{ forloop.counter }}">
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="lienzo"><p class="vacio">Este estudio no tiene imágenes.</p></div>
+            {% endif %}
+        </div>
+
+        <div class="tab-panel reporte {% if tab == 'report' %}on{% endif %}" id="panel-report">
+            <div class="reporte-caja">
+                {% if tiene_pdf %}
+                    <a class="btn-pdf" href="{% url 'visor_informe_pdf' orden_id=orden.id %}" target="_blank" rel="noopener">
+                        <svg width="15" height="15"><use href="#i-file-text"/></svg> Descargar informe (PDF)
+                    </a>
+                {% endif %}
+                {% if orden.informe_texto %}
+                    <h2>Informe</h2>
+                    <div class="reporte-texto">{{ orden.informe_texto }}</div>
+                {% elif not tiene_pdf %}
+                    <p class="vacio">El informe todavía no está disponible.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            // Tabs
+            var tabs = document.querySelectorAll('.barra .tabs button');
+            var paneles = { images: document.getElementById('panel-images'), report: document.getElementById('panel-report') };
+            tabs.forEach(function (b) {
+                b.addEventListener('click', function () {
+                    tabs.forEach(function (x) { x.classList.remove('on'); });
+                    b.classList.add('on');
+                    Object.keys(paneles).forEach(function (k) { paneles[k].classList.toggle('on', k === b.dataset.tab); });
+                });
+            });
+
+            var img = document.getElementById('img-actual');
+            if (!img) return;
+            var tiras = document.getElementById('tiras');
+            var lienzo = document.getElementById('lienzo');
+            var infoImg = document.getElementById('info-img');
+            var zoomLbl = document.getElementById('zoom-lbl');
+            var descargar = document.getElementById('descargar-actual');
+            var fuentes = Array.prototype.map.call(tiras.querySelectorAll('img'), function (t) { return t.src; });
+            var i = 0, zoom = 1, panX = 0, panY = 0;
+
+            function aplicar() {
+                img.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + zoom + ')';
+                zoomLbl.textContent = 'Zoom: ' + Math.round(zoom * 100) + '%';
+            }
+            function mostrar(n) {
+                i = (n + fuentes.length) % fuentes.length;
+                img.src = fuentes[i];
+                if (descargar) { descargar.href = fuentes[i] + '?descargar=1'; }
+                zoom = 1; panX = 0; panY = 0; aplicar();
+                infoImg.textContent = 'Imagen ' + (i + 1) + ' / ' + fuentes.length;
+                tiras.querySelectorAll('img').forEach(function (t, k) { t.classList.toggle('on', k === i); });
+                var activa = tiras.querySelectorAll('img')[i];
+                if (activa) activa.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+            }
+
+            tiras.addEventListener('click', function (e) {
+                if (e.target.tagName === 'IMG') mostrar(parseInt(e.target.dataset.i, 10));
+            });
+            document.getElementById('prev').addEventListener('click', function () { mostrar(i - 1); });
+            document.getElementById('next').addEventListener('click', function () { mostrar(i + 1); });
+            document.getElementById('zoom-in').addEventListener('click', function () { zoom = Math.min(zoom * 1.25, 8); aplicar(); });
+            document.getElementById('zoom-out').addEventListener('click', function () { zoom = Math.max(zoom / 1.25, 1); if (zoom === 1) { panX = panY = 0; } aplicar(); });
+            document.getElementById('zoom-reset').addEventListener('click', function () { zoom = 1; panX = panY = 0; aplicar(); });
+
+            lienzo.addEventListener('wheel', function (e) {
+                e.preventDefault();
+                zoom = Math.min(Math.max(zoom * (e.deltaY < 0 ? 1.12 : 0.89), 1), 8);
+                if (zoom === 1) { panX = panY = 0; }
+                aplicar();
+            }, { passive: false });
+
+            // Arrastre para desplazar cuando hay zoom
+            var arrastrando = false, x0 = 0, y0 = 0;
+            lienzo.addEventListener('mousedown', function (e) { if (zoom > 1) { arrastrando = true; x0 = e.clientX - panX; y0 = e.clientY - panY; } });
+            window.addEventListener('mousemove', function (e) { if (arrastrando) { panX = e.clientX - x0; panY = e.clientY - y0; aplicar(); } });
+            window.addEventListener('mouseup', function () { arrastrando = false; });
+
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'ArrowLeft') mostrar(i - 1);
+                if (e.key === 'ArrowRight') mostrar(i + 1);
+            });
+
+            mostrar(0);
+        })();
+    </script>
+</body>
+</html>

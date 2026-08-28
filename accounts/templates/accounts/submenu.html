@@ -1,0 +1,34 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ pantalla.nombre }} - Clínica de Imágenes{% endblock %}
+{% block page_title %}{{ user.get_rol_display }} — {{ pantalla.nombre }}{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-danger btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Regresar
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="grid grid-3">
+        {% for hija in pantalla.submenu %}
+            <div class="card" style="animation-delay:{{ forloop.counter0 }}0ms;">
+                <div class="card-body flex-center" style="padding:1.5rem;">
+                    {% if hija.clave %}
+                        <a href="{% url 'pantalla_placeholder' clave=hija.clave %}" style="text-decoration:none;color:var(--primary);font-weight:600;font-size:0.9rem;display:flex;flex-direction:column;align-items:center;gap:0.5rem;">
+                            <svg width="28" height="28"><use href="#i-grid"/></svg>
+                            {{ hija.nombre }}
+                        </a>
+                    {% else %}
+                        <a href="{% url hija.url_name %}" style="text-decoration:none;color:var(--primary);font-weight:600;font-size:0.9rem;display:flex;flex-direction:column;align-items:center;gap:0.5rem;">
+                            <svg width="28" height="28"><use href="#i-grid"/></svg>
+                            {{ hija.nombre }}
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+        {% endfor %}
+    </div>
+{% endblock %}

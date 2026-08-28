@@ -1,0 +1,38 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iniciar sesión — Clínica de Imágenes</title>
+    <link rel="stylesheet" href="{% static 'css/theme.css' %}">
+</head>
+<body class="standalone">
+    {% include 'includes/icons.html' %}
+
+    <div class="main" style="margin-left: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh;">
+        <div class="card" style="width: 340px; padding: 2.5rem;">
+            <div style="text-align: center; margin-bottom: 1.5rem;">
+                <div style="font-size: 2.2rem; margin-bottom: 0.3rem;">&#9764;</div>
+                <h1 style="font-size: 1.1rem; color: var(--text); font-weight: 700; margin: 0;">Clínica de Imágenes</h1>
+                <small style="color: var(--text-muted); font-size: 0.75rem;">Sistema de Gestión Médica</small>
+            </div>
+            <form method="post">
+                {% csrf_token %}
+                {{ form.non_field_errors }}
+                <label for="{{ form.username.id_for_label }}">Usuario</label>
+                {{ form.username }}
+                {{ form.username.errors }}
+                <label for="{{ form.password.id_for_label }}">Contraseña</label>
+                {{ form.password }}
+                {{ form.password.errors }}
+                <button type="submit" class="btn btn-primary btn-block" style="margin-top: 1rem;">
+                    <svg width="14" height="14"><use href="#i-log-in"/></svg>
+                    Ingresar
+                </button>
+                <input type="hidden" name="next" value="{{ next }}">
+            </form>
+        </div>
+    </div>
+</body>
+</html>
