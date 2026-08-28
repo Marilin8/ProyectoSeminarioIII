@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {% extends 'base.html' %}
 
 {% block title %}{{ pantalla.nombre }} - Clínica de Imágenes{% endblock %}
@@ -22,3 +23,50 @@
         </div>
     </div>
 {% endblock %}
+=======
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ pantalla.nombre }} - Clínica de Imágenes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        a.volver {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .card {
+            margin-top: 1.5rem;
+            background: white;
+            border-radius: 12px;
+            padding: 2.5rem;
+            max-width: 480px;
+            text-align: center;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        h1 {
+            color: #0f172a;
+            font-size: 1.2rem;
+        }
+        p {
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+{% include 'includes/notificaciones.html' %}
+    <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
+    <div class="card">
+        <h1>{{ pantalla.nombre }}</h1>
+        <p>Esta pantalla todavía está en construcción.</p>
+    </div>
+</body>
+</html>
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

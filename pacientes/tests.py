@@ -1,4 +1,7 @@
+<<<<<<< HEAD
 import base64
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 import datetime
 
 from django.contrib.auth import get_user_model
@@ -47,6 +50,7 @@ def crear_cita(usuario, paciente=None, tipo_estudio=None, **kwargs):
     return Cita.objects.create(**datos)
 
 
+<<<<<<< HEAD
 class FlujoPrivadoTests(TestCase):
     """Flujo del módulo Privado: recepción agenda de una vez (AGENDADA, sin
     revisión del radiólogo), se auto-asigna radiólogo, avisa (sin bloquear)
@@ -176,6 +180,8 @@ class VisorEstudioTests(TestCase):
         self.assertNotContains(respuesta, self.estudio.nombre)
 
 
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 class PacienteModelTests(TestCase):
 
     def test_edad_en_antes_de_su_cumpleanos_no_cuenta_el_anio_actual(self):
@@ -412,9 +418,13 @@ class RegistrarTicketEmergenciaViewTests(TestCase):
             'apellido': 'Gómez',
             'sexo': Paciente.SEXO_MASCULINO,
             'telefono': '55551234',
+<<<<<<< HEAD
             'correo': 'carlos.gomez@correo.com',
             'fecha_nacimiento': '1985-03-10',
             'carnet_igss': '6666666666',
+=======
+            'fecha_nacimiento': '1985-03-10',
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             'prioridad': Ticket.PRIORIDAD_URGENTE,
             'motivo': 'Dolor abdominal agudo',
         }
@@ -439,21 +449,31 @@ class RegistrarTicketEmergenciaViewTests(TestCase):
         ticket = Ticket.objects.get()
         self.assertEqual(ticket.paciente_id, paciente_existente.id)
 
+<<<<<<< HEAD
     def test_registrar_ticket_no_pisa_datos_ya_guardados_pero_completa_los_vacios(self):
         crear_paciente(
             dpi='6666666666666', nombre='Nombre Viejo', telefono='00000000',
             sexo='', fecha_nacimiento=None,
         )
+=======
+    def test_registrar_ticket_sincroniza_datos_del_paciente_existente(self):
+        crear_paciente(dpi='6666666666666', nombre='Nombre Viejo', telefono='00000000')
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
         self.client.post(reverse('registrar_ticket_emergencia'), self.datos_formulario)
 
         paciente = Paciente.objects.get(dpi='6666666666666')
+<<<<<<< HEAD
         # Lo que ya estaba guardado NO se cambia, aunque el form traiga otra cosa.
         self.assertEqual(paciente.nombre, 'Nombre Viejo')
         self.assertEqual(paciente.telefono, '00000000')
         # Lo que estaba vacío SÍ se completa.
         self.assertEqual(paciente.sexo, Paciente.SEXO_MASCULINO)
         self.assertEqual(paciente.fecha_nacimiento, datetime.date(1985, 3, 10))
+=======
+        self.assertEqual(paciente.nombre, 'Carlos')
+        self.assertEqual(paciente.telefono, '55551234')
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
     def test_usuario_no_recepcionista_no_puede_acceder(self):
         otro_usuario = crear_usuario('tecnico_no_autorizado', rol=Usuario.ROL_TECNICO_IMAGENES)
@@ -511,7 +531,10 @@ class AgendarCitaViewTests(TestCase):
         self.client.force_login(self.usuario)
         self.tipo_estudio = TipoEstudio.objects.create(nombre='Radiografía de tórax')
         self.radiologo = crear_usuario('radiologa_agendar', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+<<<<<<< HEAD
         self.tipo_estudio.radiologos.add(self.radiologo)
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         self.manana = timezone.localdate() + datetime.timedelta(days=1)
         self.datos_formulario = {
             'dpi': '2020202020202',
@@ -519,9 +542,13 @@ class AgendarCitaViewTests(TestCase):
             'apellido': 'Marroquín',
             'sexo': Paciente.SEXO_MASCULINO,
             'telefono': '55599999',
+<<<<<<< HEAD
             'correo': 'luis.marroquin@correo.com',
             'fecha_nacimiento': '1988-02-14',
             'carnet_igss': '2020202020',
+=======
+            'fecha_nacimiento': '1988-02-14',
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             'tipo_estudio': self.tipo_estudio.id,
             'radiologo': self.radiologo.id,
             'fecha': self.manana,
@@ -541,21 +568,31 @@ class AgendarCitaViewTests(TestCase):
         cita = Cita.objects.get(paciente__dpi='2020202020202')
         self.assertEqual(cita.paciente_id, paciente_existente.id)
 
+<<<<<<< HEAD
     def test_agendar_cita_no_pisa_datos_ya_guardados_pero_completa_los_vacios(self):
         crear_paciente(
             dpi='2020202020202', nombre='Nombre Viejo', telefono='00000000',
             sexo='', fecha_nacimiento=None, correo=None,
         )
+=======
+    def test_agendar_cita_sincroniza_datos_del_paciente_existente(self):
+        crear_paciente(dpi='2020202020202', nombre='Nombre Viejo', telefono='00000000')
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
         self.client.post(self._url(), self.datos_formulario)
 
         paciente = Paciente.objects.get(dpi='2020202020202')
+<<<<<<< HEAD
         # Datos ya guardados: intactos.
         self.assertEqual(paciente.nombre, 'Nombre Viejo')
         self.assertEqual(paciente.telefono, '00000000')
         # Datos que estaban vacíos: se completan desde el formulario.
         self.assertEqual(paciente.sexo, Paciente.SEXO_MASCULINO)
         self.assertEqual(paciente.correo, 'luis.marroquin@correo.com')
+=======
+        self.assertEqual(paciente.nombre, 'Luis')
+        self.assertEqual(paciente.telefono, '55599999')
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
 
 class PantallaTurnosEmergenciaViewTests(TestCase):
@@ -675,7 +712,10 @@ class FechaNacimientoNoFuturaTests(TestCase):
             'apellido': 'Pérez',
             'sexo': Paciente.SEXO_FEMENINO,
             'telefono': '',
+<<<<<<< HEAD
             'correo': 'juana.perez@correo.com',
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             'fecha_nacimiento': fecha_nacimiento,
             'tipo_estudio': self.tipo_estudio.id,
             'radiologo': self.radiologo.id,
@@ -691,9 +731,13 @@ class FechaNacimientoNoFuturaTests(TestCase):
             'apellido': 'Pérez',
             'sexo': Paciente.SEXO_FEMENINO,
             'telefono': '',
+<<<<<<< HEAD
             'correo': 'juana.perez@correo.com',
             'fecha_nacimiento': fecha_nacimiento,
             'carnet_igss': '1234567890',
+=======
+            'fecha_nacimiento': fecha_nacimiento,
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             'prioridad': Ticket.PRIORIDAD_NORMAL,
             'motivo': '',
         }
@@ -728,7 +772,10 @@ class NotificacionesTests(TestCase):
         self.tecnico = crear_usuario('tecnico_notif', rol=Usuario.ROL_TECNICO_IMAGENES)
         self.radiologo = crear_usuario('radiologo_notif', rol=Usuario.ROL_MEDICO_RADIOLOGO)
         self.tipo_estudio = TipoEstudio.objects.create(nombre='Radiografía de tórax')
+<<<<<<< HEAD
         self.tipo_estudio.radiologos.add(self.radiologo)
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
     def test_agendar_cita_notifica_al_radiologo_asignado(self):
         self.client.force_login(self.recepcionista)
@@ -739,9 +786,13 @@ class NotificacionesTests(TestCase):
             'apellido': 'López',
             'sexo': Paciente.SEXO_FEMENINO,
             'telefono': '',
+<<<<<<< HEAD
             'correo': 'ana.lopez@correo.com',
             'fecha_nacimiento': '1990-01-01',
             'carnet_igss': '3030303030',
+=======
+            'fecha_nacimiento': '1990-01-01',
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             'tipo_estudio': self.tipo_estudio.id,
             'radiologo': self.radiologo.id,
             'fecha': manana,

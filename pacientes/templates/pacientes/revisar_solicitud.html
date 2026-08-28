@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {% extends 'base.html' %}
 
 {% block title %}Revisar solicitud - Clínica de Imágenes{% endblock %}
@@ -16,10 +17,66 @@
             background: #f8fafc;
             border: 1px solid var(--border-light);
             border-radius: var(--radius);
+=======
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Revisar solicitud - Clínica de Imágenes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        h1 {
+            color: #0f172a;
+            font-size: 1.4rem;
+        }
+        a.volver {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            max-width: 640px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        h2 {
+            font-size: 1rem;
+            color: #334155;
+            margin: 1.5rem 0 0.25rem;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 0.25rem;
+        }
+        h2:first-child {
+            margin-top: 0;
+        }
+        .datos {
+            font-size: 0.9rem;
+            color: #334155;
+            line-height: 1.6;
+        }
+        .notas {
+            font-size: 0.85rem;
+            color: #334155;
+            background: #f8fafc;
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             padding: 0.5rem 0.75rem;
             margin-top: 0.5rem;
         }
         .sugerido {
+<<<<<<< HEAD
             font-size: 0.82rem;
             color: var(--primary-dark);
             background: var(--info-light);
@@ -28,11 +85,43 @@
             border-radius: 4px;
             margin-top: 0.5rem;
         }
+=======
+            font-size: 0.85rem;
+            color: #0f172a;
+            background: #eff6ff;
+            border-left: 3px solid #2563eb;
+            padding: 0.5rem 0.75rem;
+            margin-top: 0.5rem;
+        }
+        label {
+            display: block;
+            font-size: 0.85rem;
+            color: #334155;
+            margin-bottom: 0.25rem;
+            margin-top: 1rem;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+        .fila {
+            display: flex;
+            gap: 1rem;
+        }
+        .fila > div {
+            flex: 1;
+        }
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         .botones {
             display: flex;
             gap: 0.75rem;
             margin-top: 1.5rem;
         }
+<<<<<<< HEAD
         .botones .btn {
             flex: 1;
             justify-content: center;
@@ -98,3 +187,81 @@
         </div>
     </div>
 {% endblock %}
+=======
+        button {
+            flex: 1;
+            padding: 0.6rem;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .btn-confirmar {
+            background: #2563eb;
+            color: white;
+        }
+        .btn-confirmar:hover {
+            background: #1d4ed8;
+        }
+        .btn-rechazar {
+            background: #dc2626;
+            color: white;
+        }
+        .btn-rechazar:hover {
+            background: #b91c1c;
+        }
+    </style>
+</head>
+<body>
+{% include 'includes/notificaciones.html' %}
+    <div class="topbar">
+        <h1>Revisar solicitud de cita</h1>
+        <a class="volver" href="{{ volver_url }}">&larr; Volver a solicitudes</a>
+    </div>
+    <div class="card">
+        {% if messages %}
+            {% for message in messages %}
+                <p style="color:#dc2626; font-size:0.85rem;">{{ message }}</p>
+            {% endfor %}
+        {% endif %}
+
+        <h2>Paciente</h2>
+        <div class="datos">
+            <strong>{{ cita.paciente.nombre }} {{ cita.paciente.apellido }}</strong><br>
+            DPI: {{ cita.paciente.dpi }} — {% if edad is not None %}{{ edad }} años{% else %}Edad no registrada{% endif %} — {{ cita.paciente.get_sexo_display }}<br>
+            Teléfono: {{ cita.paciente.telefono|default:"—" }}<br>
+            Convenio: {{ cita.get_convenio_display }} — Estudio: {{ cita.tipo_estudio.nombre }}
+        </div>
+        <div class="sugerido">
+            Solicitado por recepción: <strong>{{ cita.fecha_sugerida }} — {{ cita.hora_sugerida|time:'H:i' }}</strong>
+        </div>
+        {% if cita.notas %}
+            <div class="notas">{{ cita.notas }}</div>
+        {% endif %}
+
+        <h2>Confirmar cita</h2>
+        <form method="post">
+            {% csrf_token %}
+            <div class="fila">
+                <div>
+                    <label for="id_fecha">Fecha</label>
+                    <input type="date" id="id_fecha" name="fecha" value="{{ cita.fecha|date:'Y-m-d' }}">
+                </div>
+                <div>
+                    <label for="id_hora">Hora</label>
+                    <input type="time" id="id_hora" name="hora" value="{{ cita.hora|time:'H:i' }}">
+                </div>
+            </div>
+
+            <label for="id_motivo_rechazo">Motivo de rechazo (solo si vas a rechazar)</label>
+            <textarea id="id_motivo_rechazo" name="motivo_rechazo" rows="3"></textarea>
+
+            <div class="botones">
+                <button class="btn-confirmar" type="submit" name="accion" value="confirmar">Confirmar cita</button>
+                <button class="btn-rechazar" type="submit" name="accion" value="rechazar">Rechazar solicitud</button>
+            </div>
+        </form>
+    </div>
+</body>
+</html>
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {% extends 'base.html' %}
 
 {% block title %}Calendario — {{ convenio_nombre }}{% endblock %}
@@ -33,10 +34,76 @@
             font-weight: 700;
             color: #334155;
             white-space: nowrap;
+=======
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Calendario — {{ convenio_nombre }}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        h1 {
+            color: #0f172a;
+            font-size: 1.3rem;
+        }
+        a.volver {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .navegacion {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
+        .navegacion a {
+            color: #2563eb;
+            text-decoration: none;
+        }
+        .tabla-scroll {
+            overflow-x: auto;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            min-width: 700px;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        th, td {
+            border: 1px solid #e2e8f0;
+            padding: 0.5rem;
+            text-align: center;
+            font-size: 0.85rem;
+        }
+        th {
+            background: #0f172a;
+            color: white;
+        }
+        td.hora {
+            background: #f8fafc;
+            font-weight: bold;
+            color: #334155;
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         }
         a.slot {
             display: block;
             padding: 0.4rem;
+<<<<<<< HEAD
             border-radius: var(--radius);
             text-decoration: none;
             background: #bfdbfe;
@@ -44,6 +111,13 @@
             font-weight: 600;
             font-size: 0.8rem;
             transition: background var(--transition);
+=======
+            border-radius: 6px;
+            text-decoration: none;
+            background: #bfdbfe;
+            color: #0f172a;
+            font-weight: bold;
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         }
         a.slot:hover {
             background: #93c5fd;
@@ -51,6 +125,7 @@
         span.pasado {
             display: block;
             padding: 0.4rem;
+<<<<<<< HEAD
             border-radius: var(--radius);
             background: #e2e8f0;
             color: #94a3b8;
@@ -88,6 +163,16 @@
             margin-top: 1rem;
             font-size: 0.78rem;
             color: var(--text-muted);
+=======
+            border-radius: 6px;
+            background: #e2e8f0;
+            color: #94a3b8;
+        }
+        .leyenda {
+            margin-top: 1rem;
+            font-size: 0.8rem;
+            color: #64748b;
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         }
         .leyenda span {
             display: inline-block;
@@ -97,6 +182,7 @@
             margin-right: 0.3rem;
             vertical-align: middle;
         }
+<<<<<<< HEAD
     </style>
 {% endblock %}
 
@@ -125,18 +211,55 @@
                 <svg width="14" height="14"><use href="#i-chevron-left"/></svg>
                 Semana anterior
             </a>
+=======
+        .aviso {
+            background: #fef9c3;
+            border: 1px solid #fde047;
+            color: #713f12;
+            padding: 0.6rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+        .aviso a {
+            color: #713f12;
+            margin-left: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+{% include 'includes/notificaciones.html' %}
+    <div class="topbar">
+        <h1>Calendario — {{ convenio_nombre }}</h1>
+        <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
+    </div>
+    {% if reagendar_cita %}
+        <div class="aviso">
+            Eligiendo nuevo horario para <strong>{{ reagendar_cita.paciente }}</strong> (cita actual: {{ reagendar_cita.fecha }} {{ reagendar_cita.hora }})
+            <a href="{% url procesar_url_name %}?fecha={{ reagendar_cita.fecha|date:'Y-m-d' }}">Cancelar</a>
+        </div>
+    {% endif %}
+    <div class="navegacion">
+        {% if mostrar_semana_anterior %}
+            <a href="?semana={{ semana_anterior|date:'Y-m-d' }}{% if reagendar_cita %}&reagendar={{ reagendar_cita.id }}{% endif %}">&larr; Semana anterior</a>
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         {% else %}
             <span></span>
         {% endif %}
         {% if mostrar_semana_siguiente %}
+<<<<<<< HEAD
             <a href="?semana={{ semana_siguiente|date:'Y-m-d' }}{% if reagendar_cita %}&reagendar={{ reagendar_cita.id }}{% endif %}">
                 Semana siguiente
                 <svg width="14" height="14"><use href="#i-chevron-right"/></svg>
             </a>
+=======
+            <a href="?semana={{ semana_siguiente|date:'Y-m-d' }}{% if reagendar_cita %}&reagendar={{ reagendar_cita.id }}{% endif %}">Semana siguiente &rarr;</a>
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         {% else %}
             <span></span>
         {% endif %}
     </div>
+<<<<<<< HEAD
 
     <div class="card">
         <div class="card-body" style="padding: 0; overflow-x: auto;">
@@ -177,3 +300,38 @@
         <span style="background:#bfdbfe;"></span> Disponible — el número es solo referencia, no hay límite de cupo
     </p>
 {% endblock %}
+=======
+    <div class="tabla-scroll">
+        <table>
+            <tr>
+                <th>Hora</th>
+                {% for nombre, dia in dias %}
+                    <th>{{ nombre }}<br>{{ dia|date:'d/m' }}</th>
+                {% endfor %}
+            </tr>
+            {% for fila in filas %}
+                <tr>
+                    <td class="hora">{{ fila.hora }}:00</td>
+                    {% for celda in fila.celdas %}
+                        <td>
+                            {% if celda.pasado %}
+                                <span class="pasado">Pasado</span>
+                            {% elif celda.fuera_rango %}
+                                <span class="pasado">No disponible</span>
+                            {% elif reagendar_cita %}
+                                <a class="slot" href="{% url reagendar_url_name cita_id=reagendar_cita.id %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|stringformat:'02d' }}:00">{{ celda.cantidad }} cita{{ celda.cantidad|pluralize }}</a>
+                            {% else %}
+                                <a class="slot" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|stringformat:'02d' }}:00">{{ celda.cantidad }} cita{{ celda.cantidad|pluralize }}</a>
+                            {% endif %}
+                        </td>
+                    {% endfor %}
+                </tr>
+            {% endfor %}
+        </table>
+    </div>
+    <p class="leyenda">
+        <span style="background:#bfdbfe;"></span> Disponible — el número es solo referencia, no hay límite de cupo
+    </p>
+</body>
+</html>
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

@@ -12,7 +12,10 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 from decouple import config
+<<<<<<< HEAD
 from email.utils import formataddr
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -42,8 +45,11 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+<<<<<<< HEAD
     'django_otp',
     'django_otp.plugins.otp_totp',
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     'accounts',
     'pacientes',
 ]
@@ -54,22 +60,32 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+<<<<<<< HEAD
     'django_otp.middleware.OTPMiddleware',
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'pacientes.middleware.AutoMarcarAusenteMiddleware',
 ]
 
+<<<<<<< HEAD
 # Autenticación en dos pasos (django-otp TOTP). El emisor es lo que muestra
 # la app de autenticación (Google Authenticator, Authy, etc.).
 OTP_TOTP_ISSUER = 'Clínica de Imágenes'
 
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 ROOT_URLCONF = 'clinica.urls'
 
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
+<<<<<<< HEAD
         'DIRS': [BASE_DIR / 'templates'],
+=======
+        'DIRS': [],
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -137,7 +153,10 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+<<<<<<< HEAD
 STATICFILES_DIRS = [BASE_DIR / 'static']
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -152,6 +171,7 @@ LOGIN_REDIRECT_URL = 'dashboard'
 LOGOUT_REDIRECT_URL = 'login'
 
 AUTH_USER_MODEL = 'accounts.Usuario'
+<<<<<<< HEAD
 
 # Configuración para envío de correos (resultados de estudios al paciente).
 # Portado del commit 758cb02 de TechBlood/ProyectoSeminarioClinica.
@@ -181,3 +201,5 @@ VISOR_BASE_URL = config('VISOR_BASE_URL', default='http://localhost:8001').rstri
 # que puede traer varios cientos de archivos (una serie de TAC/resonancia).
 # El límite por defecto de Django (100) es insuficiente para eso.
 DATA_UPLOAD_MAX_NUMBER_FILES = 5000
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

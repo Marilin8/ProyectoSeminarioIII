@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import base64
 import datetime
 import io
@@ -26,6 +27,19 @@ from .forms import (
     PerfilForm,
 )
 from .models import Bitacora, HistorialComision, Usuario
+=======
+import datetime
+
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required, user_passes_test
+from django.http import Http404
+from django.shortcuts import redirect, render
+from django.utils import timezone
+from django.utils.dateparse import parse_date
+
+from .forms import CrearUsuarioForm
+from .models import Bitacora, Usuario
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 from .pantallas import buscar_pantalla, pantallas_de
 
 
@@ -33,6 +47,7 @@ def es_administrador(user):
     return user.is_authenticated and (user.is_superuser or user.rol == Usuario.ROL_ADMINISTRADOR)
 
 
+<<<<<<< HEAD
 # Roles que se administran desde la pantalla "Usuarios activos". El nombre es
 # el texto del botón/listado; el orden define el orden de los botones.
 ROLES_GESTIONABLES = {
@@ -174,12 +189,15 @@ def _clave_manual(device):
         return None
 
 
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 @login_required
 def dashboard(request):
     return render(request, 'accounts/dashboard.html', {'pantallas': pantallas_de(request.user)})
 
 
 @login_required
+<<<<<<< HEAD
 def mi_perfil(request):
     """Cada usuario ve y edita sus propios datos (nombres, apellidos, correo)
     y puede cambiar su contraseña. No puede tocar su rol, comisiones ni
@@ -220,6 +238,8 @@ def mi_perfil(request):
 
 
 @login_required
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 def pantalla_placeholder(request, clave):
     pantalla = buscar_pantalla(pantallas_de(request.user), clave)
     if pantalla is None:
@@ -254,6 +274,7 @@ def crear_usuario(request):
 
 @login_required
 @user_passes_test(es_administrador)
+<<<<<<< HEAD
 def lista_usuarios(request, rol):
     if rol not in ROLES_GESTIONABLES:
         raise Http404
@@ -412,6 +433,8 @@ def cambiar_estado_usuario(request, usuario_id):
 
 @login_required
 @user_passes_test(es_administrador)
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 def bitacora(request):
     hoy = datetime.date.today()
     fecha = parse_date(request.GET.get('fecha', '')) or hoy
@@ -425,11 +448,16 @@ def bitacora(request):
     # depender de esa conversión en la base de datos.
     inicio = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.min))
     fin = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.max))
+<<<<<<< HEAD
     eventos_qs = (
+=======
+    eventos = (
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         Bitacora.objects.filter(creado_en__range=(inicio, fin))
         .select_related('usuario')
         .order_by('-creado_en')
     )
+<<<<<<< HEAD
 
     filtro_accion = (request.GET.get('accion') or '').strip()
     filtro_usuario = (request.GET.get('usuario') or '').strip()
@@ -454,15 +482,22 @@ def bitacora(request):
     return render(request, 'accounts/bitacora.html', {
         'eventos': pagina,
         'pagina': pagina,
+=======
+    return render(request, 'accounts/bitacora.html', {
+        'eventos': eventos,
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         'fecha': fecha,
         'hoy': hoy,
         'dia_anterior': fecha - datetime.timedelta(days=1),
         'dia_siguiente': fecha + datetime.timedelta(days=1),
         'puede_avanzar': fecha < hoy,
+<<<<<<< HEAD
         'acciones': Bitacora.ACCION_CHOICES,
         'usuarios': Usuario.objects.order_by('username'),
         'filtro_accion': filtro_accion,
         'filtro_usuario': filtro_usuario,
         'busqueda': busqueda,
         'querystring_filtros': querystring_filtros,
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     })

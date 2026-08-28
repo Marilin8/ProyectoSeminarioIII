@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {% extends 'base.html' %}
 
 {% block title %}Citas procesadas - Clínica de Imágenes{% endblock %}
@@ -49,3 +50,114 @@
         </div>
     {% endif %}
 {% endblock %}
+=======
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Citas procesadas - Clínica de Imágenes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        h1 {
+            color: #0f172a;
+            font-size: 1.3rem;
+        }
+        a.volver {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .orden {
+            background: white;
+            border-radius: 10px;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        .orden .titulo {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 0.5rem;
+        }
+        .orden .titulo strong {
+            color: #0f172a;
+            font-size: 1rem;
+        }
+        .orden .convenio {
+            background: #ddd6fe;
+            color: #4c1d95;
+            font-size: 0.75rem;
+            font-weight: bold;
+            padding: 0.15rem 0.5rem;
+            border-radius: 999px;
+        }
+        .orden .datos {
+            font-size: 0.85rem;
+            color: #334155;
+            margin-bottom: 0.5rem;
+        }
+        .orden .motivo {
+            font-size: 0.85rem;
+            color: #0f172a;
+            background: #f8fafc;
+            border-left: 3px solid #2563eb;
+            padding: 0.5rem 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+        .btn-informe {
+            display: inline-block;
+            background: #2563eb;
+            color: white;
+            text-decoration: none;
+            font-size: 0.85rem;
+            padding: 0.5rem 0.9rem;
+            border-radius: 6px;
+        }
+        .vacio {
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+{% include 'includes/notificaciones.html' %}
+    <div class="topbar">
+        <h1>Citas procesadas</h1>
+        <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
+    </div>
+
+    {% if ordenes %}
+        {% for orden in ordenes %}
+            <div class="orden">
+                <div class="titulo">
+                    <strong>{{ orden.cita.paciente.nombre }} {{ orden.cita.paciente.apellido }}</strong>
+                    <span class="convenio">{{ orden.cita.get_convenio_display }}</span>
+                </div>
+                <div class="datos">
+                    {% if orden.edad_paciente is not None %}{{ orden.edad_paciente }} años{% else %}Edad no registrada{% endif %} —
+                    {{ orden.cita.paciente.get_sexo_display }} —
+                    Estudio: {{ orden.cita.tipo_estudio.nombre }} —
+                    Cita: {{ orden.cita.fecha }} {{ orden.cita.hora|time:'H:i' }}
+                </div>
+                <div class="motivo">{{ orden.motivo }}</div>
+                <a class="btn-informe" href="{% url 'adjuntar_informe' cita_id=orden.cita.id %}">Adjuntar informe</a>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p class="vacio">No hay citas pendientes de informe por el momento.</p>
+    {% endif %}
+</body>
+</html>
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

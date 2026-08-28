@@ -66,11 +66,15 @@ class Bitacora(models.Model):
     ACCION_LOGIN_EXITOSO = 'login_exitoso'
     ACCION_LOGIN_FALLIDO = 'login_fallido'
     ACCION_CREAR_USUARIO = 'crear_usuario'
+<<<<<<< HEAD
     ACCION_EDITAR_USUARIO = 'editar_usuario'
     ACCION_CAMBIAR_ESTADO_USUARIO = 'cambiar_estado_usuario'
     ACCION_EDITAR_COMISION = 'editar_comision'
     ACCION_CREAR_ESTUDIO = 'crear_estudio'
     ACCION_EDITAR_ESTUDIO = 'editar_estudio'
+=======
+    ACCION_CREAR_ESTUDIO = 'crear_estudio'
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     ACCION_SOLICITAR_CITA = 'solicitar_cita'
     ACCION_CONFIRMAR_CITA = 'confirmar_cita'
     ACCION_RECHAZAR_CITA = 'rechazar_cita'
@@ -79,9 +83,13 @@ class Bitacora(models.Model):
     ACCION_MARCAR_AUSENTE = 'marcar_ausente'
     ACCION_GENERAR_ORDEN = 'generar_orden'
     ACCION_ADJUNTAR_IMAGENES = 'adjuntar_imagenes'
+<<<<<<< HEAD
     ACCION_SELECCIONAR_IMAGENES = 'seleccionar_imagenes'
     ACCION_ADJUNTAR_INFORME = 'adjuntar_informe'
     ACCION_ENVIAR_ESTUDIO = 'enviar_estudio'
+=======
+    ACCION_ADJUNTAR_INFORME = 'adjuntar_informe'
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     ACCION_REGISTRAR_TICKET = 'registrar_ticket'
     ACCION_PROCESAR_TICKET = 'procesar_ticket'
     ACCION_ENVIAR_REPORTE_DIARIO = 'enviar_reporte_diario'
@@ -90,11 +98,15 @@ class Bitacora(models.Model):
         (ACCION_LOGIN_EXITOSO, 'Inicio de sesión'),
         (ACCION_LOGIN_FALLIDO, 'Intento de inicio de sesión fallido'),
         (ACCION_CREAR_USUARIO, 'Creación de usuario'),
+<<<<<<< HEAD
         (ACCION_EDITAR_USUARIO, 'Edición de usuario'),
         (ACCION_CAMBIAR_ESTADO_USUARIO, 'Cambio de estado de usuario (suspensión/reactivación)'),
         (ACCION_EDITAR_COMISION, 'Cambio de comisión de un usuario'),
         (ACCION_CREAR_ESTUDIO, 'Creación de estudio'),
         (ACCION_EDITAR_ESTUDIO, 'Edición de estudio'),
+=======
+        (ACCION_CREAR_ESTUDIO, 'Creación de estudio'),
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         (ACCION_SOLICITAR_CITA, 'Solicitud de cita'),
         (ACCION_CONFIRMAR_CITA, 'Confirmación de cita'),
         (ACCION_RECHAZAR_CITA, 'Rechazo de solicitud de cita'),
@@ -103,9 +115,13 @@ class Bitacora(models.Model):
         (ACCION_MARCAR_AUSENTE, 'Ausencia de paciente'),
         (ACCION_GENERAR_ORDEN, 'Generación de orden de trabajo'),
         (ACCION_ADJUNTAR_IMAGENES, 'Carga de imágenes de estudio'),
+<<<<<<< HEAD
         (ACCION_SELECCIONAR_IMAGENES, 'Selección de imágenes del estudio'),
         (ACCION_ADJUNTAR_INFORME, 'Carga de informe'),
         (ACCION_ENVIAR_ESTUDIO, 'Envío de estudio al paciente'),
+=======
+        (ACCION_ADJUNTAR_INFORME, 'Carga de informe'),
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         (ACCION_REGISTRAR_TICKET, 'Registro de ticket de emergencia'),
         (ACCION_PROCESAR_TICKET, 'Procesamiento de ticket (genera orden de trabajo)'),
         (ACCION_ENVIAR_REPORTE_DIARIO, 'Envío de reporte diario'),
@@ -141,6 +157,7 @@ class Bitacora(models.Model):
             descripcion=descripcion,
             ip=ip,
         )
+<<<<<<< HEAD
 
 
 class HistorialComision(models.Model):
@@ -185,3 +202,5 @@ class HistorialComision(models.Model):
     @property
     def campo_etiqueta(self):
         return self.ETIQUETAS_CAMPOS.get(self.campo, self.campo)
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

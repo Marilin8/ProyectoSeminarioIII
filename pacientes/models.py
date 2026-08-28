@@ -1,6 +1,9 @@
 import datetime
+<<<<<<< HEAD
 import uuid
 from decimal import Decimal
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
 from django.conf import settings
 from django.db import models, transaction
@@ -8,6 +11,7 @@ from django.utils import timezone
 
 MINUTOS_TOLERANCIA_LLEGADA = 15
 
+<<<<<<< HEAD
 # A partir de esta hora, las citas de convenio privado y de emergencia IGSS
 # cobran tarifa "inhábil" (ver PrecioEstudio y Cita.horario_habil). COEX
 # siempre se factura en tarifa hábil.
@@ -31,6 +35,8 @@ def es_horario_habil(convenio, hora):
         return False
     return True
 
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
 class Paciente(models.Model):
     SEXO_MASCULINO = 'M'
@@ -51,7 +57,10 @@ class Paciente(models.Model):
     apellido = models.CharField(max_length=100)
     sexo = models.CharField(max_length=1, choices=SEXO_CHOICES, blank=True)
     telefono = models.CharField(max_length=20, blank=True)
+<<<<<<< HEAD
     correo = models.EmailField(max_length=254, blank=True, null=True)
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     fecha_nacimiento = models.DateField(null=True, blank=True)
 
     # Campos que se pueden dejar sin llenar al registrar al paciente (ej. en
@@ -90,6 +99,7 @@ class Paciente(models.Model):
 
 
 class TipoEstudio(models.Model):
+<<<<<<< HEAD
     MODALIDAD_RX = 'rx'
     MODALIDAD_RX_CONTRASTE = 'rx_contraste'
     MODALIDAD_TAC = 'tac'
@@ -109,6 +119,10 @@ class TipoEstudio(models.Model):
         max_length=20, choices=MODALIDAD_CHOICES, default=MODALIDAD_RX,
         help_text='Agrupa el estudio por equipo/sala y define qué técnico y radiólogo pueden atenderlo.',
     )
+=======
+    nombre = models.CharField(max_length=50, unique=True)
+    precio = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     duracion_minutos = models.PositiveIntegerField(
         default=30,
         verbose_name='duración (minutos)',
@@ -130,6 +144,7 @@ class TipoEstudio(models.Model):
     def __str__(self):
         return self.nombre
 
+<<<<<<< HEAD
     def precio_para(self, convenio, horario_habil=True):
         """Precio de este estudio para un convenio y tipo de horario.
         Si no hay tarifa inhábil cargada, cae a la hábil; si no hay ninguna,
@@ -187,6 +202,22 @@ class Cita(models.Model):
     ESTADO_PENDIENTE = 'pendiente'
     ESTADO_AGENDADA = 'agendada'
     ESTADO_EN_ESPERA = 'en_espera'
+=======
+
+class Cita(models.Model):
+    CONVENIO_COEX = 'coex'
+    CONVENIO_PRIVADO = 'privado'
+    CONVENIO_EMERGENCIA_IGSS = 'emergencia_igss'
+
+    CONVENIO_CHOICES = [
+        (CONVENIO_COEX, 'COEX'),
+        (CONVENIO_PRIVADO, 'Privado'),
+        (CONVENIO_EMERGENCIA_IGSS, 'Emergencia IGSS'),
+    ]
+
+    ESTADO_PENDIENTE = 'pendiente'
+    ESTADO_AGENDADA = 'agendada'
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     ESTADO_EN_PROCESO = 'en_proceso'
     ESTADO_PROCESADA = 'procesada'
     ESTADO_AUSENTE = 'ausente'
@@ -195,7 +226,10 @@ class Cita(models.Model):
     ESTADO_CHOICES = [
         (ESTADO_PENDIENTE, 'Pendiente de confirmación'),
         (ESTADO_AGENDADA, 'Agendada'),
+<<<<<<< HEAD
         (ESTADO_EN_ESPERA, 'En espera'),
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         (ESTADO_EN_PROCESO, 'En proceso'),
         (ESTADO_PROCESADA, 'Procesada'),
         (ESTADO_AUSENTE, 'Ausente'),
@@ -221,6 +255,7 @@ class Cita(models.Model):
     hora_sugerida = models.TimeField(null=True, blank=True)
     hora_llegada = models.DateTimeField(null=True, blank=True)
     notas = models.TextField(blank=True)
+<<<<<<< HEAD
     es_emergencia_forzada = models.BooleanField(
         default=False,
         verbose_name='agendada como emergencia',
@@ -229,6 +264,8 @@ class Cita(models.Model):
             'horario ya ocupado, por tratarse de una emergencia.'
         ),
     )
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     creada_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='citas_creadas'
     )
@@ -284,6 +321,7 @@ class Cita(models.Model):
         el reporte diario pero no suman al total del día."""
         return self.estado != self.ESTADO_AUSENTE
 
+<<<<<<< HEAD
     @property
     def horario_habil(self):
         """True si esta cita se factura en tarifa hábil (ver es_horario_habil)."""
@@ -294,6 +332,8 @@ class Cita(models.Model):
         """Precio de la cita según su estudio, convenio y horario."""
         return self.tipo_estudio.precio_para(self.convenio, self.horario_habil)
 
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
 class ReporteDiario(models.Model):
     """Un reporte por convenio y fecha. Se crea automáticamente (en estado
@@ -334,14 +374,22 @@ class ReporteDiario(models.Model):
             Cita.objects.filter(convenio=self.convenio, fecha=self.fecha)
             .exclude(estado__in=(Cita.ESTADO_PENDIENTE, Cita.ESTADO_RECHAZADA))
             .select_related('paciente', 'tipo_estudio', 'radiologo')
+<<<<<<< HEAD
             .prefetch_related('tipo_estudio__precios')
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             .order_by('hora')
         )
 
     def total(self):
         return sum(
+<<<<<<< HEAD
             (cita.precio for cita in self.citas() if cita.cuenta_en_total_reporte),
             start=Decimal('0.00'),
+=======
+            (cita.tipo_estudio.precio for cita in self.citas() if cita.cuenta_en_total_reporte),
+            start=0,
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         )
 
 
@@ -363,6 +411,7 @@ class OrdenTrabajo(models.Model):
     )
     informe_creado_en = models.DateTimeField(null=True, blank=True)
 
+<<<<<<< HEAD
     # El envío de resultados al paciente ya no ocurre automáticamente cuando
     # la radióloga adjunta el informe: ahora lo dispara la recepcionista
     # manualmente desde "Estudios realizados" (botón "Enviar estudio").
@@ -381,6 +430,8 @@ class OrdenTrabajo(models.Model):
             self.save(update_fields=['token_publico'])
         return self.token_publico
 
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     @property
     def tiene_informe(self):
         return bool(self.informe_texto or self.informe_archivo)
@@ -406,6 +457,7 @@ class OrdenTrabajo(models.Model):
 class ImagenEstudio(models.Model):
     orden = models.ForeignKey(OrdenTrabajo, on_delete=models.CASCADE, related_name='imagenes')
     archivo = models.FileField(upload_to='imagenes_estudio/%Y/%m/')
+<<<<<<< HEAD
     # Cuando el técnico sube un DICOM, "archivo" queda con el JPG ya
     # convertido (para poder mostrarlo en el navegador) y acá se conserva el
     # .dcm original tal cual se subió, para que la radióloga pueda
@@ -413,16 +465,21 @@ class ImagenEstudio(models.Model):
     archivo_original = models.FileField(
         upload_to='imagenes_estudio/dicom_original/%Y/%m/', null=True, blank=True,
     )
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     subida_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='imagenes_subidas'
     )
     subida_en = models.DateTimeField(auto_now_add=True)
+<<<<<<< HEAD
     # La radióloga cura la galería (ver_imagenes_jpg): las que deja
     # marcadas son las que se siguen mostrando y las que se adjuntan en el
     # correo al paciente. Al descartar una, se le borra el JPG (queda
     # seleccionada=False y "archivo" vacío) pero "archivo_original" (el
     # DICOM) nunca se toca — se conserva completo pase lo que pase.
     seleccionada = models.BooleanField(default=True)
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
     class Meta:
         db_table = 'imagenes_estudio'

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {% extends 'base.html' %}
 
 {% block title %}Confirmar reagenda - Clínica de Imágenes{% endblock %}
@@ -33,3 +34,72 @@
         </div>
     </div>
 {% endblock %}
+=======
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Confirmar reagenda - Clínica de Imágenes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        a.volver {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .card {
+            margin-top: 1.5rem;
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            max-width: 480px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        h1 {
+            color: #0f172a;
+            font-size: 1.2rem;
+            margin-top: 0;
+        }
+        p {
+            color: #334155;
+            font-size: 0.9rem;
+        }
+        strong {
+            color: #0f172a;
+        }
+        button {
+            margin-top: 1rem;
+            width: 100%;
+            padding: 0.6rem;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+{% include 'includes/notificaciones.html' %}
+    <a class="volver" href="{{ calendario_url }}">&larr; Elegir otro horario</a>
+    <div class="card">
+        <h1>Confirmar reagenda</h1>
+        <p>Paciente: <strong>{{ cita.paciente }}</strong></p>
+        <p>Horario actual: <strong>{{ cita.fecha }} — {{ cita.hora|time:'H:i' }}</strong></p>
+        <p>Nuevo horario: <strong>{{ nueva_fecha }} — {{ nueva_hora }}</strong></p>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="fecha" value="{{ nueva_fecha|date:'Y-m-d' }}">
+            <input type="hidden" name="hora" value="{{ nueva_hora }}">
+            <button type="submit">Confirmar reagenda</button>
+        </form>
+    </div>
+</body>
+</html>
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

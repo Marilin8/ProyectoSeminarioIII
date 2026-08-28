@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {% extends 'base.html' %}
 
 {% block title %}{{ pantalla.nombre }} - Clínica de Imágenes{% endblock %}
@@ -32,3 +33,75 @@
         {% endfor %}
     </div>
 {% endblock %}
+=======
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ pantalla.nombre }} - Clínica de Imágenes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+        h1 {
+            color: #0f172a;
+        }
+        a.volver {
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            background: #dc2626;
+            color: white;
+            text-decoration: none;
+        }
+        .pantallas {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        .pantallas a {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 160px;
+            height: 100px;
+            background: #60a5fa;
+            color: #0f172a;
+            font-weight: bold;
+            text-align: center;
+            border-radius: 8px;
+            text-decoration: none;
+        }
+        .pantallas a:hover {
+            background: #3b82f6;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+{% include 'includes/notificaciones.html' %}
+    <div class="topbar">
+        <h1>{{ user.get_rol_display }} — {{ pantalla.nombre }}</h1>
+        <a class="volver" href="{% url 'dashboard' %}">Regresar</a>
+    </div>
+    <div class="pantallas">
+        {% for hija in pantalla.submenu %}
+            {% if hija.clave %}
+                <a href="{% url 'pantalla_placeholder' clave=hija.clave %}">{{ hija.nombre }}</a>
+            {% else %}
+                <a href="{% url hija.url_name %}">{{ hija.nombre }}</a>
+            {% endif %}
+        {% endfor %}
+    </div>
+</body>
+</html>
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

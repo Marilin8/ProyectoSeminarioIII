@@ -1,5 +1,6 @@
 {% if pacientes %}
     {% for paciente in pacientes %}
+<<<<<<< HEAD
         <div class="card{% if paciente.datos_pendientes %} pendiente{% endif %}">
             <div class="card-body" style="display: flex; justify-content: space-between; align-items: center;">
                 <div>
@@ -32,15 +33,53 @@
                         Ver estudios
                     </a>
                 </div>
+=======
+        <div class="paciente{% if paciente.datos_pendientes %} pendiente{% endif %}">
+            <div>
+                <div class="nombre">{{ paciente.nombre }} {{ paciente.apellido }}</div>
+                <div class="dpi">DPI: {{ paciente.dpi }}</div>
+                {% if paciente.datos_pendientes %}
+                    <div class="etiqueta-pendiente">
+                        Falta: {{ paciente.datos_pendientes|join:", " }}
+                    </div>
+                {% else %}
+                    <div class="etiquetas-convenio">
+                        {% for convenio in paciente.convenios_estudios %}
+                            <span class="convenio">{{ convenio }}</span>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+            <div class="acciones">
+                {% if paciente.datos_pendientes %}
+                    <a
+                        class="btn-completar"
+                        href="{% url 'completar_datos_paciente' paciente_id=paciente.id %}"
+                    >
+                        Completar datos
+                    </a>
+                {% endif %}
+                <a class="btn-ver" href="{% url 'historial_paciente' paciente_id=paciente.id %}">
+                    Ver estudios
+                </a>
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             </div>
         </div>
     {% endfor %}
 {% else %}
+<<<<<<< HEAD
     <div class="empty-state">
+=======
+    <p class="vacio">
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         {% if busqueda or filtro_convenio or filtro_fecha or filtro_tipo_estudio %}
             Ningún paciente con estudios realizados coincide con la búsqueda o los filtros elegidos.
         {% else %}
             Todavía no hay pacientes con estudios realizados.
         {% endif %}
+<<<<<<< HEAD
     </div>
+=======
+    </p>
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 {% endif %}

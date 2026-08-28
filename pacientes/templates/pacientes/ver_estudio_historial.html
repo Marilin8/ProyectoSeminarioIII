@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {% extends 'base.html' %}
 
 {% block title %}{{ cita.paciente.nombre }} {{ cita.paciente.apellido }} - {{ cita.tipo_estudio.nombre }}{% endblock %}
@@ -5,6 +6,73 @@
 
 {% block extra_css %}
     <style>
+=======
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ cita.paciente.nombre }} {{ cita.paciente.apellido }} - {{ cita.tipo_estudio.nombre }}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        h1 {
+            color: #0f172a;
+            font-size: 1.3rem;
+        }
+        a.volver {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            max-width: 640px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        .resumen {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 0.85rem 1rem;
+            font-size: 0.85rem;
+            color: #334155;
+            margin-bottom: 1.25rem;
+        }
+        .resumen strong {
+            color: #0f172a;
+        }
+        .seccion {
+            font-size: 0.8rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: #64748b;
+            margin: 1.25rem 0 0.5rem;
+        }
+        .seccion:first-of-type {
+            margin-top: 0;
+        }
+        .motivo, .informe-texto {
+            font-size: 0.9rem;
+            color: #0f172a;
+            background: #f8fafc;
+            border-left: 3px solid #2563eb;
+            padding: 0.6rem 0.85rem;
+            white-space: pre-line;
+        }
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         .imagenes {
             display: flex;
             flex-wrap: wrap;
@@ -14,7 +82,11 @@
             display: block;
             width: 110px;
             font-size: 0.75rem;
+<<<<<<< HEAD
             color: var(--primary);
+=======
+            color: #2563eb;
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             text-align: center;
             text-decoration: none;
         }
@@ -23,6 +95,7 @@
             height: 110px;
             object-fit: cover;
             border-radius: 6px;
+<<<<<<< HEAD
             border: 1px solid var(--border);
             display: block;
             margin-bottom: 0.25rem;
@@ -102,3 +175,74 @@
         </div>
     </div>
 {% endblock %}
+=======
+            border: 1px solid #cbd5e1;
+            display: block;
+            margin-bottom: 0.25rem;
+        }
+        .informe-archivo {
+            display: inline-block;
+            background: #2563eb;
+            color: white;
+            text-decoration: none;
+            font-size: 0.85rem;
+            padding: 0.5rem 0.9rem;
+            border-radius: 6px;
+        }
+        .vacio {
+            color: #64748b;
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+{% include 'includes/notificaciones.html' %}
+    <div class="topbar">
+        <h1>Estudio realizado</h1>
+        <a class="volver" href="{{ volver_url }}">&larr; Volver a los estudios del paciente</a>
+    </div>
+    <div class="card">
+        <div class="resumen">
+            <strong>{{ cita.paciente.nombre }} {{ cita.paciente.apellido }}</strong> ({{ cita.paciente.dpi }})<br>
+            {% if edad is not None %}{{ edad }} años{% else %}Edad no registrada{% endif %}, {{ cita.paciente.get_sexo_display }}<br>
+            Estudio: {{ cita.tipo_estudio.nombre }} — {{ cita.fecha }} {{ cita.hora|time:'H:i' }}
+            — {{ cita.get_convenio_display }}<br>
+            Motivo: {{ orden.motivo }}
+        </div>
+
+        <div class="seccion">Imágenes del estudio</div>
+        {% if orden.imagenes.all %}
+            <div class="imagenes">
+                {% for img in orden.imagenes.all %}
+                    <a href="{{ img.archivo.url }}" target="_blank">
+                        {% if img.archivo.name|lower|slice:"-4:" == '.dcm' %}
+                            📄 {{ img.archivo.name }}
+                        {% else %}
+                            <img src="{{ img.archivo.url }}" alt="Imagen del estudio">
+                            Ver completa
+                        {% endif %}
+                    </a>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="vacio">Este estudio no tiene imágenes adjuntas.</p>
+        {% endif %}
+
+        <div class="seccion">Informe</div>
+        {% if orden.informe_texto %}
+            <div class="informe-texto">{{ orden.informe_texto }}</div>
+        {% endif %}
+        {% if orden.informe_archivo %}
+            <p>
+                <a class="informe-archivo" href="{{ orden.informe_archivo.url }}" target="_blank">
+                    Ver informe (archivo)
+                </a>
+            </p>
+        {% endif %}
+        {% if not orden.informe_texto and not orden.informe_archivo %}
+            <p class="vacio">Este estudio no tiene informe adjunto.</p>
+        {% endif %}
+    </div>
+</body>
+</html>
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

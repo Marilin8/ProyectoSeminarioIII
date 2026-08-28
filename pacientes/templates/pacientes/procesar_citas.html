@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {% extends 'base.html' %}
 
 {% block title %}Procesar cita — {{ convenio_nombre }}{% endblock %}
@@ -6,11 +7,131 @@
 {% block extra_css %}
     <style>
         tr.tarde td { background: #fff7ed; }
+=======
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Procesar cita — {{ convenio_nombre }}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        h1 {
+            color: #0f172a;
+            font-size: 1.3rem;
+        }
+        a.volver {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .navegacion {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
+        .navegacion a {
+            color: #2563eb;
+            text-decoration: none;
+        }
+        .navegacion .fecha-actual {
+            font-weight: bold;
+            color: #0f172a;
+        }
+        .mensajes {
+            list-style: none;
+            padding: 0;
+        }
+        .mensajes li {
+            background: #dcfce7;
+            color: #166534;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+            font-size: 0.85rem;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        th, td {
+            border: 1px solid #e2e8f0;
+            padding: 0.6rem;
+            text-align: left;
+            font-size: 0.85rem;
+        }
+        th {
+            background: #0f172a;
+            color: white;
+        }
+        .estado {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+        .estado-agendada { background: #bfdbfe; color: #1e3a8a; }
+        .estado-en_proceso { background: #ddd6fe; color: #4c1d95; }
+        .estado-procesada { background: #bbf7d0; color: #14532d; }
+        .estado-ausente { background: #fecaca; color: #7f1d1d; }
+        .estado-rechazada { background: #fed7aa; color: #7c2d12; }
+        .motivo-rechazo {
+            display: block;
+            font-size: 0.75rem;
+            color: #7c2d12;
+        }
+        .acciones {
+            display: flex;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+        }
+        .acciones button, .acciones a {
+            border: none;
+            border-radius: 6px;
+            padding: 0.35rem 0.6rem;
+            font-size: 0.78rem;
+            cursor: pointer;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .btn-llegada { background: #16a34a; color: white; }
+        .btn-procesar { background: #2563eb; color: white; }
+        .btn-ausente { background: #f59e0b; color: white; }
+        .btn-reagendar { background: #64748b; color: white; }
+        .vacio {
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+        tr.tarde {
+            background: #fff7ed;
+        }
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         .alerta-tarde {
             display: block;
             margin-top: 0.3rem;
             font-size: 0.75rem;
+<<<<<<< HEAD
             font-weight: 600;
+=======
+            font-weight: bold;
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             color: #c2410c;
         }
         .llego-a {
@@ -19,6 +140,7 @@
             color: #166534;
             margin-bottom: 0.3rem;
         }
+<<<<<<< HEAD
         .motivo-rechazo {
             display: block;
             font-size: 0.75rem;
@@ -135,3 +257,85 @@
         <p class="vacio">No hay citas agendadas este día.</p>
     {% endif %}
 {% endblock %}
+=======
+    </style>
+</head>
+<body>
+{% include 'includes/notificaciones.html' %}
+    <div class="topbar">
+        <h1>Procesar cita — {{ convenio_nombre }}</h1>
+        <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
+    </div>
+    {% if messages %}
+        <ul class="mensajes">
+            {% for message in messages %}
+                <li>{{ message }}</li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+    <div class="navegacion">
+        <a href="?fecha={{ dia_anterior|date:'Y-m-d' }}">&larr; Día anterior</a>
+        <span class="fecha-actual">{{ fecha|date:'l d/m/Y' }}</span>
+        <a href="?fecha={{ dia_siguiente|date:'Y-m-d' }}">Día siguiente &rarr;</a>
+    </div>
+
+    {% if citas %}
+        <table>
+            <tr>
+                <th>Hora</th>
+                <th>Paciente</th>
+                <th>DPI</th>
+                <th>Tipo de estudio</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+            </tr>
+            {% for cita in citas %}
+                <tr class="{% if cita.esta_tarde %}tarde{% endif %}">
+                    <td>{{ cita.hora|time:'H:i' }}</td>
+                    <td>{{ cita.paciente.nombre }} {{ cita.paciente.apellido }}</td>
+                    <td>{{ cita.paciente.dpi }}</td>
+                    <td>{{ cita.tipo_estudio.nombre }}</td>
+                    <td><span class="estado estado-{{ cita.estado }}">{{ cita.get_estado_display }}</span></td>
+                    <td>
+                        {% if cita.estado == 'agendada' and not cita.hora_llegada %}
+                            <div class="acciones">
+                                <form method="post" action="{% url marcar_llegada_url_name cita_id=cita.id %}">
+                                    {% csrf_token %}
+                                    <button class="btn-llegada" type="submit">Llegó</button>
+                                </form>
+                                {% if fecha == hoy %}
+                                <form method="post" action="{% url marcar_ausente_url_name cita_id=cita.id %}">
+                                    {% csrf_token %}
+                                    <button class="btn-ausente" type="submit">Ausente</button>
+                                </form>
+                                {% endif %}
+                            </div>
+                            {% if cita.esta_tarde %}
+                                <span class="alerta-tarde">⚠ +15 min tarde, considera marcar ausente</span>
+                            {% endif %}
+                        {% elif cita.estado == 'agendada' and cita.hora_llegada %}
+                            <span class="llego-a">Llegó a las {{ cita.hora_llegada|time:'H:i' }}</span>
+                            <div class="acciones">
+                                <a class="btn-procesar" href="{% url generar_orden_url_name cita_id=cita.id %}">Procesar estudio</a>
+                            </div>
+                        {% elif cita.estado == 'en_proceso' %}
+                            <span class="llego-a">Orden enviada al técnico</span>
+                        {% elif cita.estado == 'ausente' %}
+                            <div class="acciones">
+                                <a class="btn-reagendar" href="{% url calendario_url_name %}?reagendar={{ cita.id }}">Reagendar</a>
+                            </div>
+                        {% elif cita.estado == 'rechazada' %}
+                            <span class="motivo-rechazo">Motivo: {{ cita.motivo_rechazo|default:"—" }}</span>
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p class="vacio">No hay citas agendadas este día.</p>
+    {% endif %}
+</body>
+</html>
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

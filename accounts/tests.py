@@ -1,11 +1,16 @@
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
+<<<<<<< HEAD
 from django.urls import reverse
 from django_otp.oath import totp
 from django_otp.plugins.otp_totp.models import TOTPDevice
 
 from accounts.models import Bitacora, HistorialComision, Usuario
 from clinica.validators import validar_dominio_correo
+=======
+
+from accounts.models import Bitacora, Usuario
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
 UsuarioModel = get_user_model()
 
@@ -14,6 +19,7 @@ def crear_usuario(username='usuario', rol=Usuario.ROL_RECEPCIONISTA, **kwargs):
     return UsuarioModel.objects.create_user(username=username, password='clave-segura-123', rol=rol, **kwargs)
 
 
+<<<<<<< HEAD
 class ValidacionDominioCorreoTests(TestCase):
 
     def test_dominio_valido_pasa(self):
@@ -127,6 +133,8 @@ class MFATests(TestCase):
         self.assertRedirects(respuesta, reverse('dashboard'))
 
 
+=======
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 class UsuarioModelTests(TestCase):
 
     def test_el_rol_por_defecto_es_administrador(self):

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {% extends 'base.html' %}
 
 {% block title %}Generar orden — Clínica de Imágenes{% endblock %}
@@ -12,6 +13,103 @@
 
 {% block content %}
     <div class="card" style="padding:1.5rem;max-width:560px;">
+=======
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Generar orden de trabajo - Clínica de Imágenes</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f1f5f9;
+            margin: 0;
+            padding: 2rem;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        h1 {
+            color: #0f172a;
+            font-size: 1.3rem;
+        }
+        a.volver {
+            color: #2563eb;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            max-width: 560px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        .resumen {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 0.85rem 1rem;
+            font-size: 0.85rem;
+            color: #334155;
+            margin-bottom: 1.25rem;
+        }
+        .resumen strong {
+            color: #0f172a;
+        }
+        label {
+            display: block;
+            font-size: 0.85rem;
+            color: #334155;
+            margin-bottom: 0.25rem;
+        }
+        textarea {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+        .ayuda {
+            font-size: 0.75rem;
+            color: #64748b;
+            margin-top: 0.25rem;
+        }
+        .errorlist {
+            color: #dc2626;
+            font-size: 0.8rem;
+            list-style: none;
+            padding: 0;
+            margin: 0.25rem 0 0;
+        }
+        button {
+            margin-top: 1.25rem;
+            width: 100%;
+            padding: 0.6rem;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #1d4ed8;
+        }
+    </style>
+</head>
+<body>
+{% include 'includes/notificaciones.html' %}
+    <div class="topbar">
+        <h1>Generar orden de trabajo</h1>
+        <a class="volver" href="{{ volver_url }}">&larr; Volver al listado</a>
+    </div>
+    <div class="card">
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         <div class="resumen">
             <strong>{{ cita.paciente.nombre }} {{ cita.paciente.apellido }}</strong> ({{ cita.paciente.dpi }})<br>
             {% if edad is not None %}{{ edad }} años{% else %}Edad no registrada{% endif %}, {{ cita.paciente.get_sexo_display }}<br>
@@ -22,6 +120,7 @@
             {{ form.non_field_errors }}
             <label for="{{ form.motivo.id_for_label }}">{{ form.motivo.label }}</label>
             {{ form.motivo }}
+<<<<<<< HEAD
             <p class="form-help">{{ form.motivo.help_text }}</p>
             {{ form.motivo.errors }}
 
@@ -36,3 +135,12 @@
         </form>
     </div>
 {% endblock %}
+=======
+            <p class="ayuda">{{ form.motivo.help_text }}</p>
+            {{ form.motivo.errors }}
+            <button type="submit">Generar orden y enviar a técnico</button>
+        </form>
+    </div>
+</body>
+</html>
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

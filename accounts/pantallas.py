@@ -10,6 +10,7 @@ from .models import Usuario
 PANTALLAS_POR_ROL = {
     Usuario.ROL_ADMINISTRADOR: [
         {'nombre': 'Crear usuario', 'url_name': 'crear_usuario'},
+<<<<<<< HEAD
         {
             'nombre': 'Usuarios activos',
             'clave': 'usuarios_activos',
@@ -21,6 +22,9 @@ PANTALLAS_POR_ROL = {
         },
         {'nombre': 'Estudios', 'url_name': 'lista_estudios'},
         {'nombre': 'Historial de comisiones', 'url_name': 'historial_comisiones'},
+=======
+        {'nombre': 'Crear estudio', 'url_name': 'crear_estudio'},
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         {'nombre': 'Bitácora del sistema', 'url_name': 'bitacora'},
         {
             'nombre': 'Reportes diarios',
@@ -41,6 +45,7 @@ PANTALLAS_POR_ROL = {
                 {'nombre': 'Procesar cita', 'url_name': 'procesar_citas_coex'},
             ],
         },
+<<<<<<< HEAD
         {
             'nombre': 'PRIVADO',
             'clave': 'privado',
@@ -51,6 +56,9 @@ PANTALLAS_POR_ROL = {
                 {'nombre': 'Pantalla de turnos', 'url_name': 'pantalla_turnos_privado'},
             ],
         },
+=======
+        {'nombre': 'PRIVADO', 'clave': 'privado'},
+>>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         {
             'nombre': 'EMERGENCIA IGSS',
             'clave': 'emergencia_igss',
