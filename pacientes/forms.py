@@ -188,6 +188,109 @@ class AgendarCitaForm(forms.Form):
         return cleaned
 
 
+class AgendarCitaPrivadoForm(forms.Form):
+    """Agendamiento del módulo Privado. Más simple que AgendarCitaForm: sin
+    carné IGSS, sin radiólogo (se asigna al confirmar la solicitud) y sin
+    casilla de emergencia. La cita queda PENDIENTE para revisión del
+    radiólogo."""
+
+    dpi = forms.CharField(
+        label='DPI',
+        max_length=13,
+        min_length=13,
+        widget=forms.TextInput(attrs={
+            'maxlength': 13,
+            'inputmode': 'numeric',
+            'pattern': r'\d{13}',
+            'title': 'El DPI debe tener exactamente 13 dígitos.',
+        }),
+    )
+    nombre = forms.CharField(
+        max_length=100,
+        widget=forms.TextInput(attrs={
+            'pattern': r'[A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]+',
+            'title': 'Solo letras y espacios.',
+        }),
+    )
+    apellido = forms.CharField(
+        max_length=100,
+        widget=forms.TextInput(attrs={
+            'pattern': r'[A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]+',
+            'title': 'Solo letras y espacios.',
+        }),
+    )
+    sexo = forms.ChoiceField(
+        choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
+    )
+    telefono = forms.CharField(max_length=20, required=False)
+    correo = forms.EmailField(
+        label='Correo electrónico (opcional)',
+        max_length=254,
+        required=False,
+        widget=forms.EmailInput(attrs={
+            'placeholder': 'paciente@correo.com',
+            'autocomplete': 'email',
+        }),
+    )
+    fecha_nacimiento = forms.DateField(
+        required=False, widget=forms.DateInput(attrs={'type': 'date'}),
+    )
+    tipo_estudio = forms.ModelChoiceField(
+        queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
+        widget=TipoEstudioSelect(),
+    )
+    fecha = forms.DateField(widget=forms.DateInput(attrs={'type': 'date'}))
+    hora = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}))
+    motivo = forms.CharField(
+        label='Motivo de la consulta',
+        max_length=255,
+        required=False,
+        widget=forms.Textarea(attrs={'rows': 3}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['fecha_nacimiento'].widget.attrs['max'] = timezone.localdate().isoformat()
+        queryset = self.fields['tipo_estudio'].queryset.prefetch_related('precios')
+        self.fields['tipo_estudio'].queryset = queryset
+        self.fields['tipo_estudio'].widget.detalles = {
+            str(te.pk): (
+                te.precio_para(Cita.CONVENIO_PRIVADO, True),
+                te.precio_para(Cita.CONVENIO_PRIVADO, False),
+                te.duracion_minutos,
+            )
+            for te in queryset
+        }
+
+    def clean_dpi(self):
+        dpi = self.cleaned_data['dpi'].strip()
+        if not dpi.isdigit():
+            raise forms.ValidationError('El DPI debe contener solo números.')
+        if len(dpi) != 13:
+            raise forms.ValidationError('El DPI debe tener exactamente 13 dígitos.')
+        return dpi
+
+    def clean_nombre(self):
+        nombre = self.cleaned_data['nombre'].strip()
+        if not NOMBRE_REGEX.match(nombre):
+            raise forms.ValidationError('El nombre solo puede contener letras y espacios.')
+        return nombre
+
+    def clean_apellido(self):
+        apellido = self.cleaned_data['apellido'].strip()
+        if not NOMBRE_REGEX.match(apellido):
+            raise forms.ValidationError('El apellido solo puede contener letras y espacios.')
+        return apellido
+
+    def clean_correo(self):
+        return (self.cleaned_data['correo'] or '').strip().lower()
+
+    def clean_fecha_nacimiento(self):
+        fecha = self.cleaned_data['fecha_nacimiento']
+        validar_fecha_nacimiento_no_futura(fecha)
+        return fecha
+
+
 class RegistrarTicketForm(forms.Form):
     """Check-in de un paciente que llega sin cita (HU: Registrar Ticket,
     pantalla de Emergencia IGSS). Si el DPI ya existe se reutiliza ese

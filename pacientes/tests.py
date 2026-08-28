@@ -46,6 +46,72 @@ def crear_cita(usuario, paciente=None, tipo_estudio=None, **kwargs):
     return Cita.objects.create(**datos)
 
 
+class FlujoPrivadoTests(TestCase):
+    """Flujo del módulo Privado: recepción agenda de una vez (AGENDADA, sin
+    revisión del radiólogo), se auto-asigna radiólogo, avisa (sin bloquear)
+    si el turno ya está ocupado -> cola de procesamiento -> llegada -> orden."""
+
+    def setUp(self):
+        self.recepcionista = crear_usuario('recep_priv', rol=Usuario.ROL_RECEPCIONISTA)
+        self.radiologo = crear_usuario('rad_priv', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.estudio = TipoEstudio.objects.create(nombre='Radiografía de tórax privada')
+        self.estudio.radiologos.add(self.radiologo)
+        self.fecha = timezone.localdate() + datetime.timedelta(days=2)
+
+    def _agendar(self, hora='10:00', dpi='9090909090901', nombre='Marco'):
+        self.client.force_login(self.recepcionista)
+        return self.client.post(reverse('agendar_cita_privado'), {
+            'dpi': dpi,
+            'nombre': nombre,
+            'apellido': 'Privado',
+            'sexo': Paciente.SEXO_MASCULINO,
+            'telefono': '55551234',
+            'correo': '',
+            'fecha_nacimiento': '1990-01-01',
+            'tipo_estudio': self.estudio.id,
+            'fecha': self.fecha.isoformat(),
+            'hora': hora,
+            'motivo': 'Control',
+        }, follow=True)
+
+    def test_agendar_privado_agenda_directo_y_autoasigna_radiologo(self):
+        self._agendar()
+        cita = Cita.objects.get(paciente__dpi='9090909090901')
+        self.assertEqual(cita.convenio, Cita.CONVENIO_PRIVADO)
+        self.assertEqual(cita.estado, Cita.ESTADO_AGENDADA)
+        self.assertEqual(cita.radiologo, self.radiologo)
+
+    def test_privado_no_aparece_en_solicitudes_del_radiologo(self):
+        self._agendar()
+        self.client.force_login(self.radiologo)
+        lista = self.client.get(reverse('solicitudes_pendientes'))
+        self.assertNotContains(lista, 'Marco')
+
+    def test_agendar_privado_avisa_si_turno_ocupado(self):
+        crear_cita(
+            self.recepcionista, tipo_estudio=self.estudio,
+            fecha=self.fecha, hora=datetime.time(10, 0),
+            paciente=crear_paciente(dpi='1010101010101'),
+        )
+        respuesta = self._agendar(dpi='2020202020202', nombre='Segundo')
+        self.assertContains(respuesta, 'ya estaba ocupado')
+        self.assertEqual(Cita.objects.filter(paciente__dpi='2020202020202').count(), 1)
+
+    def test_cola_de_procesamiento_llegada_y_orden(self):
+        self._agendar()
+        cita = Cita.objects.get(paciente__dpi='9090909090901')
+
+        self.client.force_login(self.recepcionista)
+        self.client.post(reverse('marcar_llegada_privado', args=[cita.id]))
+        cita.refresh_from_db()
+        self.assertIsNotNone(cita.hora_llegada)
+
+        self.client.post(reverse('generar_orden_privado', args=[cita.id]), {'motivo': 'Rx de control'})
+        cita.refresh_from_db()
+        self.assertEqual(cita.estado, Cita.ESTADO_EN_PROCESO)
+        self.assertTrue(OrdenTrabajo.objects.filter(cita=cita).exists())
+
+
 class PacienteModelTests(TestCase):
 
     def test_edad_en_antes_de_su_cumpleanos_no_cuenta_el_anio_actual(self):

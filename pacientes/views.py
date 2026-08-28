@@ -24,6 +24,7 @@ from .forms import (
     AdjuntarImagenesForm,
     AdjuntarInformeForm,
     AgendarCitaForm,
+    AgendarCitaPrivadoForm,
     CompletarDatosPacienteForm,
     CrearTipoEstudioForm,
     EXTENSIONES_IMAGEN_DIRECTA,
@@ -59,6 +60,13 @@ from .models import (
 # Cuántas citas de emergencia (agendadas encima de otra ya existente) se
 # permiten como máximo por día, para no saturar a la radióloga.
 MAXIMO_EMERGENCIAS_POR_DIA = 5
+
+# Etiqueta corta del convenio para mostrar en las celdas del calendario.
+ETIQUETA_CONVENIO_CORTA = {
+    Cita.CONVENIO_COEX: 'COEX',
+    Cita.CONVENIO_PRIVADO: 'Privado',
+    Cita.CONVENIO_EMERGENCIA_IGSS: 'Emerg. IGSS',
+}
 
 
 def es_recepcionista(user):
@@ -643,34 +651,36 @@ def seleccionar_horario(request, convenio):
     if reagendar_cita:
         citas_semana = citas_semana.exclude(id=reagendar_cita.id)
 
-    ocupados_por_dia = {}
-    asignados_por_dia = {}
+    # El calendario es único para toda la clínica: un turno ocupado por
+    # cualquier convenio (COEX / Privado / Emergencia IGSS) se ve ocupado en
+    # los tres. Se guarda la etiqueta del convenio para mostrarla en la celda.
+    ocupados_por_dia = {}   # fecha -> [(rango, etiqueta_convenio), ...]
+    asignados_por_dia = {}  # fecha -> {hora: {etiquetas}}
     for cita in citas_semana:
+        etiqueta = ETIQUETA_CONVENIO_CORTA.get(cita.convenio, cita.convenio)
         rango = rango_ocupado_por(cita.fecha, cita.hora, cita.tipo_estudio.duracion_minutos)
-        ocupados_por_dia.setdefault(cita.fecha, []).append(rango)
-        asignados_por_dia.setdefault(cita.fecha, set()).add(cita.hora)
+        ocupados_por_dia.setdefault(cita.fecha, []).append((rango, etiqueta))
+        asignados_por_dia.setdefault(cita.fecha, {}).setdefault(cita.hora, set()).add(etiqueta)
+
+    def _celda(dia, hora):
+        asignados = asignados_por_dia.get(dia, {})
+        cruces = [
+            et for rango, et in ocupados_por_dia.get(dia, [])
+            if se_cruzan(rango_ocupado_por(dia, hora, PASO_MINUTOS), rango)
+        ]
+        return {
+            'dia': dia,
+            'hora': hora,
+            'pasado': en_el_pasado(dia, hora),
+            'fuera_rango': fuera_de_ventana(dia),
+            'asignado': hora in asignados,
+            'ocupado': hora not in asignados and bool(cruces),
+            'convenios': ', '.join(sorted(asignados[hora])) if hora in asignados
+            else ', '.join(sorted(set(cruces))),
+        }
 
     filas = [
-        {
-            'hora': hora,
-            'celdas': [
-                {
-                    'dia': dia,
-                    'hora': hora,
-                    'pasado': en_el_pasado(dia, hora),
-                    'fuera_rango': fuera_de_ventana(dia),
-                    'asignado': hora in asignados_por_dia.get(dia, set()),
-                    'ocupado': (
-                        hora not in asignados_por_dia.get(dia, set())
-                        and any(
-                            se_cruzan(rango_ocupado_por(dia, hora, PASO_MINUTOS), ocupado)
-                            for ocupado in ocupados_por_dia.get(dia, [])
-                        )
-                    ),
-                }
-                for dia in dias
-            ],
-        }
+        {'hora': hora, 'celdas': [_celda(dia, hora) for dia in dias]}
         for hora in horarios_disponibles()
     ]
 
@@ -831,6 +841,107 @@ def agendar_cita(request, convenio):
 
 @login_required
 @user_passes_test(es_recepcionista)
+def agendar_cita_privado(request):
+    """Agendamiento del módulo Privado: formulario simple, sin carné IGSS y
+    sin revisión del radiólogo. La cita se agenda de una vez (estado
+    AGENDADA), se asigna automáticamente al primer radiólogo habilitado para
+    ese estudio, y se avisa (sin bloquear) si el turno ya está ocupado por
+    otra cita."""
+    calendario_url = reverse('calendario_privado')
+
+    datos = request.POST if request.method == 'POST' else request.GET
+    fecha_inicial = datos.get('fecha')
+    hora_inicial = datos.get('hora')
+
+    if request.method == 'POST':
+        form = AgendarCitaPrivadoForm(request.POST)
+        if form.is_valid():
+            cd = form.cleaned_data
+            if en_el_pasado(cd['fecha'], cd['hora']):
+                messages.error(request, 'No se pueden agendar citas en un horario que ya pasó.')
+                return redirect(calendario_url)
+            if fuera_de_ventana(cd['fecha']):
+                messages.error(request, 'Solo se pueden agendar citas hasta 3 semanas después de hoy.')
+                return redirect(calendario_url)
+
+            hay_conflicto = _hay_conflicto_horario(
+                cd['fecha'], cd['hora'], cd['tipo_estudio'].duracion_minutos,
+            )
+            radiologo = (
+                cd['tipo_estudio'].radiologos.filter(is_active=True).order_by('username').first()
+            )
+
+            paciente = obtener_o_actualizar_paciente(cd)
+            cita = Cita.objects.create(
+                paciente=paciente,
+                tipo_estudio=cd['tipo_estudio'],
+                radiologo=radiologo,
+                convenio=Cita.CONVENIO_PRIVADO,
+                estado=Cita.ESTADO_AGENDADA,
+                fecha=cd['fecha'],
+                hora=cd['hora'],
+                fecha_sugerida=cd['fecha'],
+                hora_sugerida=cd['hora'],
+                notas=cd['motivo'],
+                creada_por=request.user,
+                revisada_por=request.user,
+                revisada_en=timezone.now(),
+            )
+            ReporteDiario.objects.get_or_create(fecha=cita.fecha, convenio=cita.convenio)
+            Bitacora.registrar(
+                request=request,
+                usuario=request.user,
+                accion=Bitacora.ACCION_SOLICITAR_CITA,
+                descripcion=(
+                    ('[TURNO OCUPADO] ' if hay_conflicto else '')
+                    + f'Agendó cita privada para {paciente.nombre} {paciente.apellido} '
+                    f'(DPI {paciente.dpi}): {cd["tipo_estudio"]} '
+                    f'para {cd["fecha"]} {cd["hora"]} (cita #{cita.id}).'
+                ),
+            )
+            if hay_conflicto:
+                messages.warning(
+                    request,
+                    f'Cita agendada para {paciente.nombre} {paciente.apellido} el '
+                    f'{cd["fecha"]} a las {cd["hora"]}. Ojo: ese turno ya estaba ocupado '
+                    'por otra cita.',
+                )
+            else:
+                messages.success(
+                    request,
+                    f'Cita agendada para {paciente.nombre} {paciente.apellido} el '
+                    f'{cd["fecha"]} a las {cd["hora"]}.',
+                )
+            if radiologo is None:
+                messages.warning(
+                    request,
+                    f'El estudio "{cd["tipo_estudio"]}" no tiene ningún radiólogo habilitado. '
+                    'Asignalo desde el admin antes de procesar el estudio.',
+                )
+            return redirect(f'{reverse("procesar_citas_privado")}?fecha={cita.fecha}')
+    else:
+        inicial = {}
+        if fecha_inicial:
+            inicial['fecha'] = fecha_inicial
+        if hora_inicial:
+            inicial['hora'] = hora_inicial
+        form = AgendarCitaPrivadoForm(initial=inicial)
+        if fecha_inicial and hora_inicial:
+            try:
+                hora_dt = datetime.datetime.strptime(hora_inicial, '%H:%M').time()
+            except ValueError:
+                hora_dt = None
+            if hora_dt and _hay_conflicto_horario(parse_date(fecha_inicial), hora_dt, PASO_MINUTOS):
+                messages.warning(request, 'Ese turno ya está ocupado por otra cita.')
+
+    return render(request, 'pacientes/agendar_privado.html', {
+        'form': form,
+        'calendario_url': calendario_url,
+    })
+
+
+@login_required
+@user_passes_test(es_recepcionista)
 def procesar_citas(request, convenio):
     convenio_nombre = dict(Cita.CONVENIO_CHOICES).get(convenio, convenio)
 
@@ -861,9 +972,13 @@ def procesar_citas(request, convenio):
 @user_passes_test(es_recepcionista)
 def marcar_llegada(request, convenio, cita_id):
     cita = get_object_or_404(Cita, id=cita_id, convenio=convenio)
-    if request.method == 'POST' and cita.estado == Cita.ESTADO_AGENDADA:
+    if request.method == 'POST' and cita.estado in (Cita.ESTADO_AGENDADA, Cita.ESTADO_EN_ESPERA):
+        campos = ['hora_llegada']
         cita.hora_llegada = timezone.now()
-        cita.save(update_fields=['hora_llegada'])
+        if cita.estado == Cita.ESTADO_EN_ESPERA:
+            cita.estado = Cita.ESTADO_AGENDADA
+            campos.append('estado')
+        cita.save(update_fields=campos)
         Bitacora.registrar(
             request=request,
             usuario=request.user,
@@ -883,7 +998,7 @@ def generar_orden(request, convenio, cita_id):
     if not cita.hora_llegada:
         messages.error(request, 'Primero hay que marcar la llegada del paciente.')
         return redirect(volver_url)
-    if cita.estado != Cita.ESTADO_AGENDADA:
+    if cita.estado not in (Cita.ESTADO_AGENDADA, Cita.ESTADO_EN_ESPERA):
         messages.error(request, 'Esta cita ya no está pendiente de procesar.')
         return redirect(volver_url)
 

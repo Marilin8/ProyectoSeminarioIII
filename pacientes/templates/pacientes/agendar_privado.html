@@ -1,0 +1,165 @@
+{% extends 'base.html' %}
+
+{% block title %}Agendar cita — Privado{% endblock %}
+{% block page_title %}Agendar cita — Privado{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .aviso-paciente { display: none; margin-top: 0.75rem; padding: 0.6rem 0.75rem; border-radius: var(--radius); font-size: 0.82rem; background: var(--success-light); color: #166534; border: 1px solid #bbf7d0; }
+        .aviso-paciente a { color: inherit; font-weight: bold; margin-left: 0.5rem; }
+        .previa-estudio { display: none; margin-top: 0.35rem; padding: 0.4rem 0.65rem; background: var(--info-light); border: 1px solid #bfdbfe; border-radius: var(--radius); font-size: 0.82rem; color: var(--primary-dark); font-weight: 600; }
+        .previa-estudio.visible { display: block; }
+        .seccion-titulo { font-size: 0.95rem; color: var(--text); margin: 1.5rem 0 0.25rem; border-bottom: 1px solid var(--border-light); padding-bottom: 0.3rem; font-weight: 600; }
+    </style>
+{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a href="{% url 'calendario_privado' %}" class="btn btn-outline btn-sm">
+        <svg width="14" height="14"><use href="#i-calendar"/></svg> Calendario
+    </a>
+    <a href="{% url 'dashboard' %}" class="btn btn-outline btn-sm">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg> Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="card" style="padding:1.5rem;max-width:640px;">
+        <form method="post" id="form-agendar-privado">
+            {% csrf_token %}
+            {{ form.non_field_errors }}
+            {% if form.errors %}
+                <div class="aviso-paciente" style="display:block;background:var(--danger-light);color:#991b1b;border:1px solid #fecaca;">
+                    No se pudo registrar la cita: revisá los campos marcados en rojo.
+                </div>
+            {% endif %}
+
+            <div class="seccion-titulo">Paciente</div>
+
+            <label for="{{ form.dpi.id_for_label }}">DPI</label>
+            {{ form.dpi }}
+            {{ form.dpi.errors }}
+            <div class="aviso-paciente" id="aviso-paciente-existente">
+                Paciente ya registrado — se completaron sus datos.
+                <a href="#" id="btn-buscar-otro">No es este paciente</a>
+            </div>
+
+            <label for="{{ form.nombre.id_for_label }}">Nombre</label>
+            {{ form.nombre }}
+            {{ form.nombre.errors }}
+
+            <label for="{{ form.apellido.id_for_label }}">Apellido</label>
+            {{ form.apellido }}
+            {{ form.apellido.errors }}
+
+            <label for="{{ form.sexo.id_for_label }}">Sexo</label>
+            {{ form.sexo }}
+            {{ form.sexo.errors }}
+
+            <label for="{{ form.telefono.id_for_label }}">Teléfono</label>
+            {{ form.telefono }}
+            {{ form.telefono.errors }}
+
+            <label for="{{ form.correo.id_for_label }}">Correo electrónico (opcional)</label>
+            {{ form.correo }}
+            {{ form.correo.errors }}
+
+            <label for="{{ form.fecha_nacimiento.id_for_label }}">Fecha de nacimiento</label>
+            {{ form.fecha_nacimiento }}
+            {{ form.fecha_nacimiento.errors }}
+
+            <div class="seccion-titulo">Cita</div>
+
+            <label for="{{ form.tipo_estudio.id_for_label }}">Tipo de estudio</label>
+            {{ form.tipo_estudio }}
+            {{ form.tipo_estudio.errors }}
+            <div class="previa-estudio" id="previa-estudio"></div>
+
+            <label for="{{ form.fecha.id_for_label }}">Fecha</label>
+            {{ form.fecha }}
+            {{ form.fecha.errors }}
+
+            <label for="{{ form.hora.id_for_label }}">Hora</label>
+            {{ form.hora }}
+            {{ form.hora.errors }}
+
+            <label for="{{ form.motivo.id_for_label }}">Motivo de la consulta</label>
+            {{ form.motivo }}
+            {{ form.motivo.errors }}
+
+            <button type="submit" class="btn btn-primary btn-block mt-2">
+                <svg width="14" height="14"><use href="#i-check-circle"/></svg>
+                Agendar cita
+            </button>
+        </form>
+    </div>
+
+    <script>
+        // Autocompletar datos del paciente por DPI.
+        (function () {
+            var dpi = document.getElementById('id_dpi');
+            var aviso = document.getElementById('aviso-paciente-existente');
+            var campos = ['nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento'];
+            var timer = null;
+            var ultimo = '';
+
+            function buscar() {
+                var valor = dpi.value.trim();
+                if (valor.length !== 13 || valor === ultimo) return;
+                ultimo = valor;
+                fetch('{% url "buscar_paciente_por_dpi" %}?dpi=' + encodeURIComponent(valor))
+                    .then(function (r) { return r.json(); })
+                    .then(function (d) {
+                        if (!d.encontrado) { aviso.style.display = 'none'; return; }
+                        campos.forEach(function (c) {
+                            var el = document.getElementById('id_' + c);
+                            if (el) el.value = d[c] || '';
+                        });
+                        aviso.style.display = 'block';
+                    });
+            }
+
+            dpi.addEventListener('input', function () {
+                clearTimeout(timer);
+                if (dpi.value.trim().length !== 13) { aviso.style.display = 'none'; ultimo = ''; return; }
+                timer = setTimeout(buscar, 300);
+            });
+            dpi.addEventListener('blur', buscar);
+            document.getElementById('btn-buscar-otro').addEventListener('click', function (e) {
+                e.preventDefault();
+                campos.forEach(function (c) { var el = document.getElementById('id_' + c); if (el) el.value = ''; });
+                aviso.style.display = 'none';
+                ultimo = '';
+                dpi.focus();
+            });
+        })();
+
+        // Duración y precio del estudio elegido (privado: tarifa inhábil ≥ 18:00).
+        (function () {
+            var select = document.getElementById('id_tipo_estudio');
+            var hora = document.getElementById('id_hora');
+            var previa = document.getElementById('previa-estudio');
+
+            function esInhabil() {
+                return hora && hora.value && hora.value >= '18:00';
+            }
+
+            function actualizar() {
+                var opcion = select.options[select.selectedIndex];
+                var duracion = opcion ? opcion.getAttribute('data-duracion') : null;
+                if (!duracion) { previa.classList.remove('visible'); return; }
+                var precio = opcion.getAttribute(esInhabil() ? 'data-precio-inhabil' : 'data-precio-habil');
+                var texto = 'Duración estimada: ' + duracion + ' min';
+                if (precio) {
+                    texto += ' · Precio: Q' + precio + (esInhabil() ? ' (tarifa inhábil)' : '');
+                }
+                previa.textContent = texto;
+                previa.classList.add('visible');
+            }
+
+            select.addEventListener('change', actualizar);
+            if (hora) hora.addEventListener('change', actualizar);
+            actualizar();
+        })();
+    </script>
+{% endblock %}

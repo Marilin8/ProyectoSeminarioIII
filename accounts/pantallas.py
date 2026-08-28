@@ -40,7 +40,14 @@ PANTALLAS_POR_ROL = {
                 {'nombre': 'Procesar cita', 'url_name': 'procesar_citas_coex'},
             ],
         },
-        {'nombre': 'PRIVADO', 'clave': 'privado'},
+        {
+            'nombre': 'PRIVADO',
+            'clave': 'privado',
+            'submenu': [
+                {'nombre': 'Agendar cita', 'url_name': 'calendario_privado'},
+                {'nombre': 'Procesar cita', 'url_name': 'procesar_citas_privado'},
+            ],
+        },
         {
             'nombre': 'EMERGENCIA IGSS',
             'clave': 'emergencia_igss',
