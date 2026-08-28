@@ -159,9 +159,9 @@
                                 {% elif reagendar_cita %}
                                     <a class="slot" href="{% url reagendar_url_name cita_id=reagendar_cita.id %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}">{{ celda.cantidad }} cita{{ celda.cantidad|pluralize }}</a>
                                 {% elif celda.ocupado %}
-                                    <a class="slot-ocupado" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}" title="Horario cruzado con otra cita: solo usar en una emergencia.">Ocupado</a>
+                                    <a class="slot-ocupado" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}" title="Horario cruzado con una cita de {{ celda.convenios }}.">Ocupado · {{ celda.convenios }}</a>
                                 {% elif celda.asignado %}
-                                    <a class="slot-ocupado" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}" title="Ya existe una cita que inicia aqui: solo usar en una emergencia.">Ocupado</a>
+                                    <a class="slot-ocupado" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}" title="Ya hay una cita de {{ celda.convenios }} que inicia aquí.">Ocupado · {{ celda.convenios }}</a>
                                 {% else %}
                                     <a class="slot-libre" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}">Libre</a>
                                 {% endif %}

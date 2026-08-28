@@ -185,6 +185,7 @@ class Cita(models.Model):
 
     ESTADO_PENDIENTE = 'pendiente'
     ESTADO_AGENDADA = 'agendada'
+    ESTADO_EN_ESPERA = 'en_espera'
     ESTADO_EN_PROCESO = 'en_proceso'
     ESTADO_PROCESADA = 'procesada'
     ESTADO_AUSENTE = 'ausente'
@@ -193,6 +194,7 @@ class Cita(models.Model):
     ESTADO_CHOICES = [
         (ESTADO_PENDIENTE, 'Pendiente de confirmación'),
         (ESTADO_AGENDADA, 'Agendada'),
+        (ESTADO_EN_ESPERA, 'En espera'),
         (ESTADO_EN_PROCESO, 'En proceso'),
         (ESTADO_PROCESADA, 'Procesada'),
         (ESTADO_AUSENTE, 'Ausente'),

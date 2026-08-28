@@ -57,8 +57,7 @@ urlpatterns = [
     ),
     path(
         'citas/agendar/privado/',
-        views.agendar_cita,
-        {'convenio': Cita.CONVENIO_PRIVADO},
+        views.agendar_cita_privado,
         name='agendar_cita_privado',
     ),
     path(
@@ -96,6 +95,36 @@ urlpatterns = [
         views.confirmar_reagenda,
         {'convenio': Cita.CONVENIO_COEX},
         name='confirmar_reagenda_coex',
+    ),
+    path(
+        'citas/procesar/privado/',
+        views.procesar_citas,
+        {'convenio': Cita.CONVENIO_PRIVADO},
+        name='procesar_citas_privado',
+    ),
+    path(
+        'citas/procesar/privado/<int:cita_id>/llegada/',
+        views.marcar_llegada,
+        {'convenio': Cita.CONVENIO_PRIVADO},
+        name='marcar_llegada_privado',
+    ),
+    path(
+        'citas/procesar/privado/<int:cita_id>/orden/',
+        views.generar_orden,
+        {'convenio': Cita.CONVENIO_PRIVADO},
+        name='generar_orden_privado',
+    ),
+    path(
+        'citas/procesar/privado/<int:cita_id>/ausente/',
+        views.marcar_ausente,
+        {'convenio': Cita.CONVENIO_PRIVADO},
+        name='marcar_ausente_privado',
+    ),
+    path(
+        'citas/procesar/privado/<int:cita_id>/reagendar/',
+        views.confirmar_reagenda,
+        {'convenio': Cita.CONVENIO_PRIVADO},
+        name='confirmar_reagenda_privado',
     ),
     path('citas/solicitudes/', views.solicitudes_pendientes, name='solicitudes_pendientes'),
     path('citas/solicitudes/<int:cita_id>/revisar/', views.revisar_solicitud, name='revisar_solicitud'),
