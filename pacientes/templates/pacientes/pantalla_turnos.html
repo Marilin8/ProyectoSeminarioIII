@@ -20,6 +20,16 @@
             text-align: center;
             padding: 2rem;
         }
+        .turno-numero { font-weight: 700; }
+        .turno-origen {
+            display: block;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: var(--text-muted);
+            margin-top: 0.15rem;
+        }
     </style>
 {% endblock %}
 
@@ -73,7 +83,10 @@
                     <tbody>
                         {% for ticket in cola %}
                             <tr class="{% if ticket == actual %}turno-actual{% endif %}">
-                                <td>{{ ticket.turno }}</td>
+                                <td>
+                                    <span class="turno-numero">{{ ticket.turno }}</span>
+                                    <span class="turno-origen">{{ ticket.get_servicio_display }}</span>
+                                </td>
                                 <td>{{ ticket.paciente.nombre }} {{ ticket.paciente.apellido }}</td>
                                 <td><span class="badge prioridad-{{ ticket.prioridad }}">{{ ticket.get_prioridad_display }}</span></td>
                                 <td>{{ ticket.creado_en|time:'H:i' }}</td>
