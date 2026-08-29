@@ -2,7 +2,7 @@
 
 {% block title %}Comisiones de {{ empleado.get_full_name|default:empleado.username }} - Clínica de Imágenes{% endblock %}
 {% block page_title %}Comisiones — {{ empleado.get_full_name|default:empleado.username }}{% endblock %}
-{% block nav_usuarios %}active{% endblock %}
+{% block nav_planilla %}active{% endblock %}
 
 {% block topbar_actions %}
     {% include 'includes/notificaciones.html' %}

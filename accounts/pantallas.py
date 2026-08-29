@@ -20,7 +20,6 @@ PANTALLAS_POR_ROL = {
             ],
         },
         {'nombre': 'Estudios', 'url_name': 'lista_estudios'},
-        {'nombre': 'Planilla', 'url_name': 'planilla'},
         {'nombre': 'Historial de comisiones', 'url_name': 'historial_comisiones'},
         {'nombre': 'Bitácora del sistema', 'url_name': 'bitacora'},
         {
