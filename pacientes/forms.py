@@ -5,7 +5,7 @@ from django.utils import timezone
 
 from accounts.models import Usuario
 
-from .models import Cita, Paciente, Ticket, TipoEstudio
+from .models import Cita, Paciente, TipoEstudio
 
 CONVENIOS_QUE_REQUIEREN_CARNET_IGSS = (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS)
 
@@ -340,11 +340,6 @@ class RegistrarTicketForm(forms.Form):
         label='Carné de afiliación IGSS',
         max_length=20,
         widget=forms.TextInput(attrs={'inputmode': 'numeric', 'required': True}),
-    )
-    prioridad = forms.ChoiceField(
-        choices=Ticket.PRIORIDAD_CHOICES,
-        initial=Ticket.PRIORIDAD_NORMAL,
-        label='Prioridad',
     )
     motivo = forms.CharField(
         label='Motivo de la visita',

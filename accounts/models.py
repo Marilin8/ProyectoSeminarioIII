@@ -83,6 +83,8 @@ class Bitacora(models.Model):
     ACCION_ENVIAR_ESTUDIO = 'enviar_estudio'
     ACCION_REGISTRAR_TICKET = 'registrar_ticket'
     ACCION_PROCESAR_TICKET = 'procesar_ticket'
+    ACCION_ADELANTAR_TICKET = 'adelantar_ticket'
+    ACCION_AVANZAR_TURNO = 'avanzar_turno'
     ACCION_ENVIAR_REPORTE_DIARIO = 'enviar_reporte_diario'
 
     ACCION_CHOICES = [
@@ -104,8 +106,10 @@ class Bitacora(models.Model):
         (ACCION_SELECCIONAR_IMAGENES, 'Selección de imágenes del estudio'),
         (ACCION_ADJUNTAR_INFORME, 'Carga de informe'),
         (ACCION_ENVIAR_ESTUDIO, 'Envío de estudio al paciente'),
-        (ACCION_REGISTRAR_TICKET, 'Registro de ticket de emergencia'),
+        (ACCION_REGISTRAR_TICKET, 'Registro de ticket / turno'),
         (ACCION_PROCESAR_TICKET, 'Procesamiento de ticket (genera orden de trabajo)'),
+        (ACCION_ADELANTAR_TICKET, 'Adelantó un turno en la fila de espera'),
+        (ACCION_AVANZAR_TURNO, 'Avanzó la pantalla de turnos (siguiente)'),
         (ACCION_ENVIAR_REPORTE_DIARIO, 'Envío de reporte diario'),
     ]
 

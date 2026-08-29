@@ -968,6 +968,33 @@ def procesar_citas(request, convenio):
     })
 
 
+def _crear_ticket_de_turno(*, request, cita, usuario, prioridad=Ticket.PRIORIDAD_NORMAL, motivo=''):
+    """Genera el ticket de la Pantalla de turnos para una cita que acaba de
+    marcarse como llegada (COEX/Privado). Si por algún motivo ya existiera
+    un ticket para esta cita (doble clic, etc.) no crea uno duplicado."""
+    ticket_existente = Ticket.objects.filter(cita=cita).first()
+    if ticket_existente:
+        return ticket_existente
+    ticket = Ticket.objects.create(
+        paciente=cita.paciente,
+        cita=cita,
+        servicio=cita.convenio,
+        prioridad=prioridad,
+        motivo=motivo,
+        registrado_por=usuario,
+    )
+    Bitacora.registrar(
+        request=request,
+        usuario=usuario,
+        accion=Bitacora.ACCION_REGISTRAR_TICKET,
+        descripcion=(
+            f'Se generó el turno {ticket.turno} para {ticket.paciente} al marcar su llegada '
+            f'(cita #{cita.id}, {cita.get_convenio_display()}).'
+        ),
+    )
+    return ticket
+
+
 @login_required
 @user_passes_test(es_recepcionista)
 def marcar_llegada(request, convenio, cita_id):
@@ -985,7 +1012,36 @@ def marcar_llegada(request, convenio, cita_id):
             accion=Bitacora.ACCION_MARCAR_LLEGADA,
             descripcion=f'Marcó la llegada de {cita.paciente} (cita #{cita.id}).',
         )
-        messages.success(request, f'Se registró la llegada de {cita.paciente}.')
+
+        # Se genera el turno de la Pantalla de turnos para COEX/Privado (los
+        # de Emergencia IGSS se registran aparte, en "Registrar Ticket",
+        # porque llegan sin cita agendada).
+        if convenio in (Cita.CONVENIO_COEX, Cita.CONVENIO_PRIVADO):
+            ticket = _crear_ticket_de_turno(request=request, cita=cita, usuario=request.user)
+            mensaje = f'Se registró la llegada de {cita.paciente} — turno {ticket.turno}.'
+
+            if convenio == Cita.CONVENIO_PRIVADO:
+                try:
+                    posiciones = int(request.POST.get('adelantar') or 0)
+                except ValueError:
+                    posiciones = 0
+                posiciones = max(0, min(2, posiciones))
+                if posiciones:
+                    ticket.adelantar(posiciones)
+                    Bitacora.registrar(
+                        request=request,
+                        usuario=request.user,
+                        accion=Bitacora.ACCION_ADELANTAR_TICKET,
+                        descripcion=(
+                            f'Adelantó {posiciones} turno(s) al turno {ticket.turno} de '
+                            f'{ticket.paciente} en la Pantalla de turnos.'
+                        ),
+                    )
+                    mensaje += f' Se adelantó {posiciones} turno(s) en la fila de espera.'
+
+            messages.success(request, mensaje)
+        else:
+            messages.success(request, f'Se registró la llegada de {cita.paciente}.')
     return redirect(f'{reverse(f"procesar_citas_{convenio}")}?fecha={cita.fecha}')
 
 
@@ -1553,7 +1609,9 @@ def confirmar_reagenda(request, convenio, cita_id):
 
 # Registrar Ticket: check-in de pacientes que llegan a Emergencia IGSS sin
 # cita agendada. Genera un turno numerado (ver Ticket.save) para la fila de
-# atención.
+# atención. Siempre entra como prioridad "Urgente": es la única forma de
+# obtener esa prioridad en la Pantalla de turnos (COEX/Privado son siempre
+# "Normal", ver _crear_ticket_de_turno).
 @login_required
 @user_passes_test(es_recepcionista)
 def registrar_ticket_emergencia(request):
@@ -1567,7 +1625,7 @@ def registrar_ticket_emergencia(request):
             ticket = Ticket.objects.create(
                 paciente=paciente,
                 servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
-                prioridad=int(cd['prioridad']),
+                prioridad=Ticket.PRIORIDAD_URGENTE,
                 motivo=cd['motivo'],
                 registrado_por=request.user,
             )
@@ -1583,7 +1641,7 @@ def registrar_ticket_emergencia(request):
             messages.success(
                 request, f'Ticket {ticket.turno} registrado para {paciente.nombre} {paciente.apellido}.'
             )
-            return redirect('pantalla_turnos_emergencia')
+            return redirect('pantalla_turnos')
     else:
         form = RegistrarTicketForm()
 
@@ -1595,18 +1653,54 @@ def registrar_ticket_emergencia(request):
 
 @login_required
 @user_passes_test(es_recepcionista)
-def pantalla_turnos_emergencia(request):
-    cola = (
-        Ticket.objects.filter(servicio=Ticket.SERVICIO_EMERGENCIA_IGSS)
-        .exclude(estado__in=[Ticket.ESTADO_ATENDIDO, Ticket.ESTADO_AUSENTE])
-        .select_related('paciente')
-        .order_by('-prioridad', 'creado_en')
-    )
-    return render(request, 'pacientes/pantalla_turnos_emergencia.html', {
+def pantalla_turnos(request):
+    """Fila de espera unificada de COEX + Privado + Emergencia IGSS. El
+    primero de la cola (mayor prioridad y, entre iguales, el que lleva más
+    tiempo esperando o fue adelantado) se resalta como el turno actual;
+    "Siguiente" lo marca atendido y pasa al que sigue.
+
+    Solo el día de hoy muestra la fila en vivo (nada más los que siguen en
+    espera, con el botón "Siguiente" habilitado). Los demás días muestran el
+    historial completo de turnos de ese día, de solo lectura."""
+    hoy = timezone.localdate()
+    fecha = parse_date(request.GET.get('fecha', '')) or hoy
+    es_hoy = fecha == hoy
+
+    tickets_del_dia = Ticket.objects.filter(creado_en__date=fecha).select_related('paciente')
+    if es_hoy:
+        cola = tickets_del_dia.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden')
+    else:
+        cola = tickets_del_dia.order_by('-prioridad', 'orden')
+
+    return render(request, 'pacientes/pantalla_turnos.html', {
         'cola': cola,
-        'siguiente': cola.first(),
-        'volver_url': reverse('pantalla_placeholder', kwargs={'clave': 'emergencia_igss'}),
+        'actual': cola.first() if es_hoy else None,
+        'fecha': fecha,
+        'es_hoy': es_hoy,
+        'hoy': hoy,
+        'dia_anterior': fecha - datetime.timedelta(days=1),
+        'dia_siguiente': fecha + datetime.timedelta(days=1),
     })
+
+
+@login_required
+@user_passes_test(es_recepcionista)
+@require_POST
+def avanzar_turno(request, ticket_id):
+    """Marca este ticket como atendido (desaparece de la Pantalla de turnos)
+    y de paso el siguiente en la cola pasa a ser el turno actual."""
+    ticket = get_object_or_404(Ticket, id=ticket_id, estado=Ticket.ESTADO_EN_ESPERA)
+    ticket.estado = Ticket.ESTADO_ATENDIDO
+    ticket.atendido_en = timezone.now()
+    ticket.save(update_fields=['estado', 'atendido_en'])
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_AVANZAR_TURNO,
+        descripcion=f'Avanzó la Pantalla de turnos: turno {ticket.turno} ({ticket.paciente}) atendido.',
+    )
+    messages.success(request, f'Turno {ticket.turno} atendido.')
+    return redirect('pantalla_turnos')
 
 
 @login_required
@@ -1616,7 +1710,7 @@ def procesar_ticket_emergencia(request, ticket_id):
     para que el técnico la vea en 'Órdenes pendientes'. Se salta agendado y
     revisión del radiólogo porque el paciente ya está en la clínica."""
     ticket = get_object_or_404(Ticket, id=ticket_id, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS)
-    volver_url = reverse('pantalla_turnos_emergencia')
+    volver_url = reverse('pantalla_turnos')
 
     if ticket.estado != Ticket.ESTADO_EN_ESPERA:
         messages.error(request, f'El ticket {ticket.turno} ya fue procesado.')

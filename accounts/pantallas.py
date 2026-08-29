@@ -53,9 +53,9 @@ PANTALLAS_POR_ROL = {
             'clave': 'emergencia_igss',
             'submenu': [
                 {'nombre': 'Registrar Ticket', 'url_name': 'registrar_ticket_emergencia'},
-                {'nombre': 'Pantalla de turnos', 'url_name': 'pantalla_turnos_emergencia'},
             ],
         },
+        {'nombre': 'Pantalla de turnos', 'url_name': 'pantalla_turnos'},
         {'nombre': 'Estudios realizados', 'url_name': 'historial_pacientes'},
         {
             'nombre': 'Reportes diarios',

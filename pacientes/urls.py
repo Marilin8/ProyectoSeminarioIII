@@ -154,12 +154,13 @@ urlpatterns = [
         name='descargar_dicom_orden',
     ),
     path('emergencia/tickets/nuevo/', views.registrar_ticket_emergencia, name='registrar_ticket_emergencia'),
-    path('emergencia/tickets/', views.pantalla_turnos_emergencia, name='pantalla_turnos_emergencia'),
     path(
         'emergencia/tickets/<int:ticket_id>/procesar/',
         views.procesar_ticket_emergencia,
         name='procesar_ticket_emergencia',
     ),
+    path('turnos/', views.pantalla_turnos, name='pantalla_turnos'),
+    path('turnos/<int:ticket_id>/siguiente/', views.avanzar_turno, name='avanzar_turno'),
     path('notificaciones/pendientes/', views.notificaciones_pendientes, name='notificaciones_pendientes'),
     path(
         'notificaciones/<int:notificacion_id>/marcar-leida/',

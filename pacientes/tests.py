@@ -111,6 +111,40 @@ class FlujoPrivadoTests(TestCase):
         self.assertEqual(cita.estado, Cita.ESTADO_EN_PROCESO)
         self.assertTrue(OrdenTrabajo.objects.filter(cita=cita).exists())
 
+    def test_marcar_llegada_privado_genera_ticket_normal(self):
+        self._agendar()
+        cita = Cita.objects.get(paciente__dpi='9090909090901')
+        self.client.force_login(self.recepcionista)
+
+        self.client.post(reverse('marcar_llegada_privado', args=[cita.id]))
+
+        ticket = Ticket.objects.get(cita=cita)
+        self.assertEqual(ticket.servicio, Cita.CONVENIO_PRIVADO)
+        self.assertEqual(ticket.prioridad, Ticket.PRIORIDAD_NORMAL)
+        self.assertEqual(ticket.estado, Ticket.ESTADO_EN_ESPERA)
+
+    def test_marcar_llegada_privado_puede_adelantar_el_turno(self):
+        p1, p2 = crear_paciente(dpi='9191919191911'), crear_paciente(dpi='9292929292921')
+        cita_coex = crear_cita(
+            self.recepcionista, paciente=p1, tipo_estudio=self.estudio,
+            convenio=Cita.CONVENIO_COEX, fecha=self.fecha, hora=datetime.time(9, 0),
+        )
+        cita_privado = crear_cita(
+            self.recepcionista, paciente=p2, tipo_estudio=self.estudio,
+            convenio=Cita.CONVENIO_PRIVADO, fecha=self.fecha, hora=datetime.time(9, 30),
+        )
+        self.client.force_login(self.recepcionista)
+
+        self.client.post(reverse('marcar_llegada_coex', args=[cita_coex.id]))
+        self.client.post(reverse('marcar_llegada_privado', args=[cita_privado.id]), {'adelantar': '1'})
+
+        ticket_coex = Ticket.objects.get(cita=cita_coex)
+        ticket_privado = Ticket.objects.get(cita=cita_privado)
+        cola = list(Ticket.objects.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden'))
+        self.assertEqual(cola, [ticket_privado, ticket_coex])
+        # El número de turno oficial no cambia aunque se haya adelantado.
+        self.assertEqual(ticket_privado.numero, 2)
+
 
 class PacienteModelTests(TestCase):
 
@@ -294,7 +328,7 @@ class TicketModelTests(TestCase):
     def setUp(self):
         self.usuario = crear_usuario('recepcionista_tickets')
 
-    def test_al_guardar_genera_numero_y_turno_correlativos_por_servicio(self):
+    def test_al_guardar_genera_numero_y_turno_correlativos(self):
         paciente1 = crear_paciente(dpi='1111111111111')
         paciente2 = crear_paciente(dpi='2222222222222')
 
@@ -306,11 +340,15 @@ class TicketModelTests(TestCase):
         )
 
         self.assertEqual(ticket1.numero, 1)
-        self.assertEqual(ticket1.turno, 'EMER-001')
+        self.assertEqual(ticket1.turno, '001')
         self.assertEqual(ticket2.numero, 2)
-        self.assertEqual(ticket2.turno, 'EMER-002')
+        self.assertEqual(ticket2.turno, '002')
+        self.assertEqual(ticket1.orden, 1)
+        self.assertEqual(ticket2.orden, 2)
 
-    def test_las_secuencias_de_distintos_servicios_no_se_mezclan(self):
+    def test_la_secuencia_de_turnos_es_compartida_entre_servicios(self):
+        """La Pantalla de turnos une COEX/Privado/Emergencia IGSS: el número
+        de turno es un solo contador correlativo, no uno por servicio."""
         paciente1 = crear_paciente(dpi='3333333333333')
         paciente2 = crear_paciente(dpi='4444444444444')
 
@@ -321,8 +359,37 @@ class TicketModelTests(TestCase):
             paciente=paciente2, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
         )
 
-        self.assertEqual(ticket_emergencia.turno, 'EMER-001')
-        self.assertEqual(ticket_coex.turno, 'COEX-001')
+        self.assertEqual(ticket_emergencia.turno, '001')
+        self.assertEqual(ticket_coex.turno, '002')
+
+    def test_adelantar_cambia_el_orden_pero_no_el_numero_de_turno(self):
+        """Ejemplo del enunciado: 001 y 002 llegan por COEX, 003 llega por
+        Privado y se adelanta 1 turno -> queda mostrado antes que 002, pero
+        su número de turno sigue siendo 003."""
+        p1, p2, p3 = (crear_paciente(dpi=f'{n:013d}') for n in (1, 2, 3))
+        ticket_001 = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
+        ticket_002 = Ticket.objects.create(paciente=p2, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
+        ticket_003 = Ticket.objects.create(paciente=p3, servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario)
+
+        ticket_003.adelantar(1)
+
+        cola = list(Ticket.objects.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden'))
+        self.assertEqual(cola, [ticket_001, ticket_003, ticket_002])
+        self.assertEqual(ticket_003.turno, '003')
+
+    def test_ticket_urgente_de_emergencia_siempre_va_primero(self):
+        p1, p2 = (crear_paciente(dpi=f'{n:013d}') for n in (5, 6))
+        ticket_coex = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
+        ticket_emergencia = Ticket.objects.create(
+            paciente=p2, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
+            prioridad=Ticket.PRIORIDAD_URGENTE, registrado_por=self.usuario,
+        )
+
+        # Adelantar de más no debe poder pasar por encima del urgente.
+        ticket_coex.adelantar(5)
+
+        cola = list(Ticket.objects.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden'))
+        self.assertEqual(cola, [ticket_emergencia, ticket_coex])
 
     def test_guardar_de_nuevo_no_regenera_el_turno_ya_asignado(self):
         paciente = crear_paciente(dpi='5555555555555')
@@ -351,14 +418,13 @@ class RegistrarTicketEmergenciaViewTests(TestCase):
             'correo': 'carlos.gomez@correo.com',
             'fecha_nacimiento': '1985-03-10',
             'carnet_igss': '6666666666',
-            'prioridad': Ticket.PRIORIDAD_URGENTE,
             'motivo': 'Dolor abdominal agudo',
         }
 
     def test_registrar_ticket_crea_paciente_y_ticket_en_espera(self):
         respuesta = self.client.post(reverse('registrar_ticket_emergencia'), self.datos_formulario)
 
-        self.assertRedirects(respuesta, reverse('pantalla_turnos_emergencia'))
+        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
         paciente = Paciente.objects.get(dpi='6666666666666')
         ticket = Ticket.objects.get(paciente=paciente)
         self.assertEqual(ticket.servicio, Ticket.SERVICIO_EMERGENCIA_IGSS)
@@ -480,7 +546,7 @@ class AgendarCitaViewTests(TestCase):
         self.assertEqual(paciente.telefono, '55599999')
 
 
-class PantallaTurnosEmergenciaViewTests(TestCase):
+class PantallaTurnosViewTests(TestCase):
 
     def setUp(self):
         self.usuario = crear_usuario('recepcionista_turnos', rol=Usuario.ROL_RECEPCIONISTA)
@@ -498,11 +564,43 @@ class PantallaTurnosEmergenciaViewTests(TestCase):
             estado=Ticket.ESTADO_ATENDIDO,
         )
 
-        respuesta = self.client.get(reverse('pantalla_turnos_emergencia'))
+        respuesta = self.client.get(reverse('pantalla_turnos'))
 
         cola = list(respuesta.context['cola'])
         self.assertIn(ticket_en_espera, cola)
         self.assertNotIn(ticket_atendido, cola)
+
+    def test_la_cola_une_coex_privado_y_emergencia_igss(self):
+        p1, p2, p3 = (crear_paciente(dpi=f'{n:013d}') for n in (7, 8, 9))
+        ticket_coex = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
+        ticket_privado = Ticket.objects.create(
+            paciente=p2, servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario,
+        )
+        ticket_emergencia = Ticket.objects.create(
+            paciente=p3, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
+            prioridad=Ticket.PRIORIDAD_URGENTE, registrado_por=self.usuario,
+        )
+
+        respuesta = self.client.get(reverse('pantalla_turnos'))
+
+        cola = list(respuesta.context['cola'])
+        self.assertEqual(cola, [ticket_emergencia, ticket_coex, ticket_privado])
+        self.assertEqual(respuesta.context['actual'], ticket_emergencia)
+
+    def test_avanzar_turno_marca_atendido_y_pasa_al_siguiente(self):
+        p1, p2 = (crear_paciente(dpi=f'{n:013d}') for n in (10, 11))
+        ticket_1 = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
+        ticket_2 = Ticket.objects.create(paciente=p2, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
+
+        respuesta = self.client.post(reverse('avanzar_turno', args=[ticket_1.id]))
+
+        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
+        ticket_1.refresh_from_db()
+        self.assertEqual(ticket_1.estado, Ticket.ESTADO_ATENDIDO)
+        self.assertIsNotNone(ticket_1.atendido_en)
+
+        respuesta = self.client.get(reverse('pantalla_turnos'))
+        self.assertEqual(respuesta.context['actual'], ticket_2)
 
 
 class ProcesarTicketEmergenciaViewTests(TestCase):
@@ -525,7 +623,7 @@ class ProcesarTicketEmergenciaViewTests(TestCase):
             {'tipo_estudio': self.tipo_estudio.id, 'motivo': 'Dolor abdominal agudo, descartar apendicitis.'},
         )
 
-        self.assertRedirects(respuesta, reverse('pantalla_turnos_emergencia'))
+        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
 
         self.ticket.refresh_from_db()
         self.assertEqual(self.ticket.estado, Ticket.ESTADO_ATENDIDO)
@@ -547,7 +645,7 @@ class ProcesarTicketEmergenciaViewTests(TestCase):
             {'tipo_estudio': self.tipo_estudio.id, 'motivo': 'Control.'},
         )
 
-        respuesta = self.client.get(reverse('pantalla_turnos_emergencia'))
+        respuesta = self.client.get(reverse('pantalla_turnos'))
 
         self.assertNotIn(self.ticket, list(respuesta.context['cola']))
 
@@ -576,7 +674,7 @@ class ProcesarTicketEmergenciaViewTests(TestCase):
             {'tipo_estudio': self.tipo_estudio.id, 'motivo': 'Otra vez.'},
         )
 
-        self.assertRedirects(respuesta, reverse('pantalla_turnos_emergencia'))
+        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
         self.assertEqual(Cita.objects.filter(paciente=self.paciente).count(), 1)
 
 
