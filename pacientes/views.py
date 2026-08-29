@@ -15,6 +15,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 
 from accounts.models import Bitacora, Usuario
@@ -2301,12 +2302,15 @@ def visor_jpg(request, orden_id):
     return respuesta
 
 
+@xframe_options_sameorigin
 def visor_informe_pdf(request, orden_id):
     orden = _visor_orden_autorizada(request, orden_id)
     if not orden.informe_archivo:
         raise Http404
+    descargar = request.GET.get('descargar') == '1'
     return FileResponse(
         orden.informe_archivo.open('rb'),
+        as_attachment=descargar,
         content_type='application/pdf',
         filename=f'informe_{orden.cita.paciente.apellido}_{orden.cita.fecha}.pdf',
     )

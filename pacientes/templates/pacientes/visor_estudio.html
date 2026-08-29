@@ -102,8 +102,14 @@
         /* --- Pestaña Reporte --- */
         .tab-panel.reporte { padding: 1.25rem; overflow-y: auto; display: none; }
         .tab-panel.reporte.on { display: block; }
-        .reporte-caja { max-width: 720px; margin: 0 auto; }
-        .reporte-caja h2 { font-size: 1rem; margin-bottom: 0.75rem; }
+        .reporte-caja { max-width: 900px; margin: 0 auto; }
+        .reporte-caja h2 { font-size: 1rem; margin: 1.25rem 0 0.75rem; }
+        .pdf-visor {
+            height: 80vh; margin-bottom: 1rem;
+            border: 1px solid var(--linea); border-radius: 8px;
+            overflow: hidden; background: #525659;
+        }
+        .pdf-visor iframe { width: 100%; height: 100%; border: 0; display: block; }
         .reporte-texto {
             white-space: pre-wrap; font-size: 0.9rem; line-height: 1.6;
             background: var(--panel); border: 1px solid var(--linea);
@@ -184,9 +190,13 @@
         <div class="tab-panel reporte {% if tab == 'report' %}on{% endif %}" id="panel-report">
             <div class="reporte-caja">
                 {% if tiene_pdf %}
-                    <a class="btn-pdf" href="{% url 'visor_informe_pdf' orden_id=orden.id %}" target="_blank" rel="noopener">
+                    <a class="btn-pdf" href="{% url 'visor_informe_pdf' orden_id=orden.id %}?descargar=1">
                         <svg width="15" height="15"><use href="#i-file-text"/></svg> Descargar informe (PDF)
                     </a>
+                    <div class="pdf-visor">
+                        <iframe src="{% url 'visor_informe_pdf' orden_id=orden.id %}#toolbar=1&navpanes=0"
+                                title="Informe en PDF" loading="lazy"></iframe>
+                    </div>
                 {% endif %}
                 {% if orden.informe_texto %}
                     <h2>Informe</h2>
