@@ -110,6 +110,11 @@
                                     <span class="text-muted text-xs">elegí un mes</span>
                                 {% elif fila.pago %}
                                     <span class="badge badge-success">Pagado</span>
+                                    {% if fila.pago.verificado %}
+                                        <span class="badge badge-muted" title="{{ fila.pago.verificacion_nota }}">✓ verificado</span>
+                                    {% else %}
+                                        <span class="badge badge-warning" title="{{ fila.pago.verificacion_nota }}">sin verificar</span>
+                                    {% endif %}
                                     <a class="pago-link" href="{{ fila.pago.comprobante.url }}" target="_blank" rel="noopener">ver comprobante</a>
                                     <a class="pago-link" href="{% url 'registrar_pago_planilla' fila.usuario.id %}{% if query_detalle %}?{{ query_detalle }}{% endif %}">reemplazar</a>
                                 {% elif fila.total > 0 %}

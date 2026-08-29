@@ -222,6 +222,14 @@ class PagoPlanilla(models.Model):
         upload_to='comprobantes_planilla/%Y/%m/',
         verbose_name='comprobante (boleta o transferencia)',
     )
+    numero_boleta = models.CharField(
+        max_length=60, blank=True, verbose_name='número de boleta / referencia',
+    )
+    verificado = models.BooleanField(
+        default=False,
+        help_text='El OCR del comprobante confirmó el monto (y el número de boleta, si se indicó).',
+    )
+    verificacion_nota = models.CharField(max_length=255, blank=True)
     notas = models.CharField(max_length=255, blank=True)
     registrado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT,

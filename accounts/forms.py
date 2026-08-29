@@ -202,16 +202,35 @@ class EditarUsuarioForm(forms.ModelForm):
 
 class RegistrarPagoPlanillaForm(forms.Form):
     """Comprobante de pago de planilla: foto de la boleta o de la
-    transferencia (JPG/PNG/WEBP) o un PDF, y una nota opcional."""
+    transferencia (JPG/PNG/WEBP) o un PDF, el número de boleta y una nota.
+
+    Al validar, corre el OCR del comprobante (``accounts.verificacion_boleta``)
+    y compara el monto (y el número de boleta, si se indicó) con lo que se
+    está pagando. Si no coinciden, no deja registrar el pago salvo que se
+    marque ``confirmar_pese_a_diferencia``.
+    """
 
     EXTENSIONES_VALIDAS = ('.jpg', '.jpeg', '.png', '.webp', '.pdf')
     TAMANO_MAXIMO = 10 * 1024 * 1024  # 10 MB
 
     comprobante = forms.FileField(label='Comprobante (boleta o transferencia)')
+    numero_boleta = forms.CharField(
+        label='Número de boleta / referencia', max_length=60, required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'El que aparece en la boleta'}),
+    )
     notas = forms.CharField(
         label='Notas (opcional)', max_length=255, required=False,
-        widget=forms.TextInput(attrs={'placeholder': 'Ej.: transferencia Banco Industrial, No. 12345'}),
+        widget=forms.TextInput(attrs={'placeholder': 'Ej.: transferencia Banco Industrial'}),
     )
+    confirmar_pese_a_diferencia = forms.BooleanField(
+        label='Registrar el pago aunque los datos del comprobante no coincidan',
+        required=False,
+    )
+
+    def __init__(self, *args, monto_esperado=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.monto_esperado = monto_esperado
+        self.verificacion = None
 
     def clean_comprobante(self):
         archivo = self.cleaned_data['comprobante']
@@ -220,3 +239,26 @@ class RegistrarPagoPlanillaForm(forms.Form):
         if archivo.size > self.TAMANO_MAXIMO:
             raise forms.ValidationError('El archivo no debe pesar más de 10 MB.')
         return archivo
+
+    def clean(self):
+        from .verificacion_boleta import ESTADO_NO_COINCIDE, verificar
+
+        cleaned = super().clean()
+        archivo = cleaned.get('comprobante')
+        if archivo is None or self.monto_esperado is None:
+            return cleaned
+
+        contenido = archivo.read()
+        archivo.seek(0)  # el archivo se sigue usando para guardarlo
+        self.verificacion = verificar(
+            contenido, self.monto_esperado, cleaned.get('numero_boleta', ''),
+            nombre_archivo=archivo.name,
+        )
+
+        if self.verificacion.estado == ESTADO_NO_COINCIDE and not cleaned.get('confirmar_pese_a_diferencia'):
+            raise forms.ValidationError(
+                'Los datos del comprobante no coinciden con el pago: '
+                f'{self.verificacion.mensaje}. Revisá la boleta; si aun así querés '
+                'registrar el pago, marcá la casilla de confirmación.'
+            )
+        return cleaned

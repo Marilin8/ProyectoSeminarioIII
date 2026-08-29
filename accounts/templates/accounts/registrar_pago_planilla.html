@@ -57,14 +57,32 @@
                 Ya hay un pago registrado ({{ pago.creado_en|date:'d/m/Y H:i' }}).
                 <a href="{{ pago.comprobante.url }}" target="_blank" rel="noopener" style="margin-left:auto;">Ver comprobante actual</a>
             </div>
-            <p class="text-muted text-xs" style="margin-top:-0.5rem;margin-bottom:1rem;">
-                Si subís un archivo nuevo se reemplaza el comprobante y se actualiza el monto.
+            <p style="margin-top:-0.5rem;margin-bottom:1rem;font-size:0.82rem;">
+                {% if pago.verificado %}
+                    <span class="badge badge-success">Verificado</span>
+                {% else %}
+                    <span class="badge badge-warning">Sin verificar</span>
+                {% endif %}
+                {% if pago.verificacion_nota %}<span class="text-muted">{{ pago.verificacion_nota }}</span>{% endif %}
+            </p>
+            <p class="text-muted text-xs" style="margin-bottom:1rem;">
+                Si subís un archivo nuevo se reemplaza el comprobante y se vuelve a verificar.
             </p>
         {% endif %}
 
+        <p class="text-muted text-xs" style="margin-bottom:1rem;">
+            Al subir el comprobante, el sistema lo lee e intenta confirmar que el
+            <strong>monto depositado</strong> y el <strong>número de boleta</strong>
+            coinciden con este pago.
+        </p>
+
         <form method="post" enctype="multipart/form-data">
             {% csrf_token %}
-            {{ form.non_field_errors }}
+            {% if form.non_field_errors %}
+                <div class="alert alert-warning" style="margin-bottom:1rem;">
+                    {{ form.non_field_errors }}
+                </div>
+            {% endif %}
 
             <div style="margin-bottom:1rem;">
                 <label for="{{ form.comprobante.id_for_label }}">{{ form.comprobante.label }}</label>
@@ -75,11 +93,24 @@
                 {{ form.comprobante.errors }}
             </div>
 
-            <div style="margin-bottom:1.25rem;">
+            <div style="margin-bottom:1rem;">
+                <label for="{{ form.numero_boleta.id_for_label }}">{{ form.numero_boleta.label }}</label>
+                {{ form.numero_boleta }}
+                {{ form.numero_boleta.errors }}
+            </div>
+
+            <div style="margin-bottom:1rem;">
                 <label for="{{ form.notas.id_for_label }}">{{ form.notas.label }}</label>
                 {{ form.notas }}
                 {{ form.notas.errors }}
             </div>
+
+            {% if form.non_field_errors %}
+                <label style="display:flex;align-items:flex-start;gap:0.5rem;margin-bottom:1.25rem;font-weight:400;">
+                    {{ form.confirmar_pese_a_diferencia }}
+                    <span>{{ form.confirmar_pese_a_diferencia.label }}</span>
+                </label>
+            {% endif %}
 
             <button type="submit" class="btn btn-primary">
                 <svg width="14" height="14"><use href="#i-save"/></svg>

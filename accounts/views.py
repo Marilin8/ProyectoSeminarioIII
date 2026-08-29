@@ -404,33 +404,49 @@ def registrar_pago_planilla(request, usuario_id):
     pago = PagoPlanilla.objects.filter(usuario=empleado, anio=anio, mes=mes).first()
 
     if request.method == 'POST':
-        form = RegistrarPagoPlanillaForm(request.POST, request.FILES)
+        form = RegistrarPagoPlanillaForm(
+            request.POST, request.FILES, monto_esperado=fila['total'],
+        )
         if form.is_valid():
             if pago is None:
                 pago = PagoPlanilla(usuario=empleado, anio=anio, mes=mes)
+            verificacion = form.verificacion
             pago.salario_base = fila['salario_base']
             pago.comisiones = fila['comisiones']
             pago.total = fila['total']
             pago.comprobante = form.cleaned_data['comprobante']
+            pago.numero_boleta = form.cleaned_data['numero_boleta']
             pago.notas = form.cleaned_data['notas']
+            pago.verificado = bool(verificacion and verificacion.ok)
+            pago.verificacion_nota = verificacion.mensaje if verificacion else ''
             pago.registrado_por = request.user
             pago.save()
+            estado_txt = 'verificado' if pago.verificado else 'SIN verificar'
             Bitacora.registrar(
                 request=request, usuario=request.user,
                 accion=Bitacora.ACCION_REGISTRAR_PAGO_PLANILLA,
                 descripcion=(
                     f'Registró el pago de planilla de "{empleado.username}" — '
-                    f'{periodo["etiqueta"]} (Q{pago.total}).'
+                    f'{periodo["etiqueta"]} (Q{pago.total}, {estado_txt}). '
+                    f'{pago.verificacion_nota}'
                 ),
             )
-            messages.success(
-                request,
-                f'Pago de {periodo["etiqueta"]} registrado para '
-                f'{empleado.get_full_name() or empleado.username}.',
-            )
+            if pago.verificado:
+                messages.success(
+                    request,
+                    f'Pago de {periodo["etiqueta"]} registrado y verificado para '
+                    f'{empleado.get_full_name() or empleado.username}.',
+                )
+            else:
+                messages.warning(
+                    request,
+                    f'Pago de {periodo["etiqueta"]} registrado para '
+                    f'{empleado.get_full_name() or empleado.username}, pero sin verificar: '
+                    f'{pago.verificacion_nota}',
+                )
             return redirect(volver)
     else:
-        form = RegistrarPagoPlanillaForm()
+        form = RegistrarPagoPlanillaForm(monto_esperado=fila['total'])
 
     return render(request, 'accounts/registrar_pago_planilla.html', {
         'empleado': empleado,

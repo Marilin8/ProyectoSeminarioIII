@@ -353,6 +353,119 @@ class PlanillaTests(TestCase):
         self.assertEqual(respuesta.status_code, 302)
         self.assertFalse(PagoPlanilla.objects.exists())
 
+    def test_bloquea_pago_si_el_comprobante_no_coincide(self):
+        from accounts import verificacion_boleta
+        from accounts.models import PagoPlanilla
+
+        self._cita_procesada()  # total del técnico = Q3050.00
+        self.client.force_login(self.admin)
+
+        # OCR simulado: la boleta dice otro monto y otro número.
+        original = verificacion_boleta._leer_texto
+        verificacion_boleta._leer_texto = lambda *a, **k: 'Deposito Q1,000.00\nBoleta No. 42'
+        try:
+            respuesta = self.client.post(
+                reverse('registrar_pago_planilla', args=[self.tecnico.id]) + '?mes=2026-08',
+                {'comprobante': self._comprobante(), 'numero_boleta': '999', 'notas': ''},
+            )
+            self.assertEqual(respuesta.status_code, 200)
+            self.assertFalse(PagoPlanilla.objects.exists())
+
+            # Con la casilla de confirmación marcada, se registra pero sin verificar.
+            respuesta = self.client.post(
+                reverse('registrar_pago_planilla', args=[self.tecnico.id]) + '?mes=2026-08',
+                {
+                    'comprobante': self._comprobante(), 'numero_boleta': '999',
+                    'notas': '', 'confirmar_pese_a_diferencia': 'on',
+                },
+            )
+            self.assertRedirects(respuesta, reverse('planilla') + '?mes=2026-08')
+            pago = PagoPlanilla.objects.get()
+            self.assertFalse(pago.verificado)
+            pago.comprobante.delete(save=False)
+        finally:
+            verificacion_boleta._leer_texto = original
+
+    def test_pago_verificado_cuando_el_comprobante_coincide(self):
+        from decimal import Decimal
+
+        from accounts import verificacion_boleta
+        from accounts.models import PagoPlanilla
+
+        self._cita_procesada()
+        self.client.force_login(self.admin)
+
+        original = verificacion_boleta._leer_texto
+        verificacion_boleta._leer_texto = lambda *a, **k: 'Transferencia\nMonto Q3,050.00\nRef 12345'
+        try:
+            respuesta = self.client.post(
+                reverse('registrar_pago_planilla', args=[self.tecnico.id]) + '?mes=2026-08',
+                {'comprobante': self._comprobante(), 'numero_boleta': '12345', 'notas': ''},
+            )
+            self.assertRedirects(respuesta, reverse('planilla') + '?mes=2026-08')
+            pago = PagoPlanilla.objects.get()
+            self.assertTrue(pago.verificado)
+            self.assertEqual(pago.total, Decimal('3050.00'))
+            pago.comprobante.delete(save=False)
+        finally:
+            verificacion_boleta._leer_texto = original
+
+
+class VerificacionBoletaTests(TestCase):
+    """El programa que lee la boleta: parseo de montos / números y la
+    comparación contra lo que se está pagando."""
+
+    def test_extrae_montos_en_distintos_formatos(self):
+        from decimal import Decimal
+
+        from accounts.verificacion_boleta import extraer_montos
+
+        texto = 'Deposito Q1,234.56 comision 0.00 total Q 1.234,56 otro 500,00'
+        montos = extraer_montos(texto)
+        self.assertIn(Decimal('1234.56'), montos)
+        self.assertIn(Decimal('500.00'), montos)
+
+    def test_extrae_numero_de_boleta(self):
+        from accounts.verificacion_boleta import extraer_numeros
+
+        self.assertEqual(extraer_numeros('No. Boleta: 000123456'), ['000123456'])
+        self.assertEqual(extraer_numeros('Referencia # 55-6677'), ['556677'])
+
+    def test_verificar_detecta_coincidencia(self):
+        from accounts import verificacion_boleta
+
+        original = verificacion_boleta._leer_texto
+        verificacion_boleta._leer_texto = lambda *a, **k: 'Monto Q3,134.00\nBoleta 987654'
+        try:
+            r = verificacion_boleta.verificar(b'x', '3134.00', '987654')
+            self.assertEqual(r.estado, verificacion_boleta.ESTADO_COINCIDE)
+            self.assertTrue(r.ok)
+        finally:
+            verificacion_boleta._leer_texto = original
+
+    def test_verificar_detecta_diferencia_de_monto(self):
+        from accounts import verificacion_boleta
+
+        original = verificacion_boleta._leer_texto
+        verificacion_boleta._leer_texto = lambda *a, **k: 'Monto Q100.00'
+        try:
+            r = verificacion_boleta.verificar(b'x', '3134.00')
+            self.assertEqual(r.estado, verificacion_boleta.ESTADO_NO_COINCIDE)
+            self.assertFalse(r.monto_coincide)
+        finally:
+            verificacion_boleta._leer_texto = original
+
+    def test_sin_ocr_devuelve_no_verificable(self):
+        from accounts import verificacion_boleta
+
+        original = verificacion_boleta._leer_texto
+        verificacion_boleta._leer_texto = lambda *a, **k: None
+        try:
+            r = verificacion_boleta.verificar(b'x', '3134.00')
+            self.assertEqual(r.estado, verificacion_boleta.ESTADO_NO_VERIFICABLE)
+        finally:
+            verificacion_boleta._leer_texto = original
+
    
 
     
