@@ -17,7 +17,8 @@
             <div class="alert alert-danger">
                 <svg style="width:16px;height:16px;vertical-align:middle;margin-right:0.3rem;"><use href="#i-alert-triangle"/></svg>
                 Este registro es para pacientes que llegan sin cita agendada. Se le asignará un
-                turno numerado y quedará en la fila de la <a href="{% url 'pantalla_turnos_emergencia' %}">pantalla de turnos</a>.
+                turno numerado con prioridad <strong>Urgente</strong> y quedará primero en la fila de la
+                <a href="{% url 'pantalla_turnos' %}">Pantalla de turnos</a>.
             </div>
 
             <form method="post">
@@ -64,10 +65,6 @@
                 <label for="{{ form.carnet_igss.id_for_label }}">Carné de afiliación IGSS</label>
                 {{ form.carnet_igss }}
                 {{ form.carnet_igss.errors }}
-
-                <label for="{{ form.prioridad.id_for_label }}">Prioridad</label>
-                {{ form.prioridad }}
-                {{ form.prioridad.errors }}
 
                 <label for="{{ form.motivo.id_for_label }}">Motivo de la visita</label>
                 {{ form.motivo }}

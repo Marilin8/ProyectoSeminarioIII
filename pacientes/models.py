@@ -435,10 +435,12 @@ class ImagenEstudio(models.Model):
 
 
 class Ticket(models.Model):
-    """Turno de la fila de recepción para pacientes que llegan sin cita
-    agendada (walk-in). Por ahora solo se usa desde la pantalla de
-    Emergencia IGSS, pero el campo `servicio` queda abierto para reusar
-    este mismo sistema de turnos en COEX/Privado más adelante."""
+    """Turno de la fila de recepción. Se genera al marcar la llegada de una
+    cita agendada (COEX/Privado) o al hacer check-in de un paciente sin cita
+    (Emergencia IGSS). La "Pantalla de turnos" une los tres servicios en una
+    sola fila de espera, numerada con un contador compartido por día (ver
+    `save`) — así el turno 001, 002, 003... es único sin importar de qué
+    servicio venga."""
 
     SERVICIO_COEX = 'coex'
     SERVICIO_PRIVADO = 'privado'
@@ -450,11 +452,10 @@ class Ticket(models.Model):
         (SERVICIO_EMERGENCIA_IGSS, 'Emergencia IGSS'),
     ]
 
-    PREFIJO_TURNO = {
-        SERVICIO_COEX: 'COEX',
-        SERVICIO_PRIVADO: 'PRIV',
-        SERVICIO_EMERGENCIA_IGSS: 'EMER',
-    }
+    # Clave usada en DailySequence para el contador de turnos: es la misma
+    # para los tres servicios a propósito, así el número de turno es
+    # correlativo entre COEX/Privado/Emergencia IGSS (no uno por servicio).
+    SECUENCIA_TURNOS = 'turnos_recepcion'
 
     PRIORIDAD_NORMAL = 1
     PRIORIDAD_URGENTE = 2
@@ -488,6 +489,14 @@ class Ticket(models.Model):
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=ESTADO_EN_ESPERA)
     numero = models.PositiveIntegerField(editable=False, default=0)
     turno = models.CharField(max_length=20, editable=False, blank=True)
+    orden = models.PositiveIntegerField(
+        default=0, editable=False,
+        help_text=(
+            'Posición dentro de la fila de espera del día. Normalmente coincide '
+            'con el número de turno, pero puede adelantarse (ver `adelantar`) '
+            'sin que eso cambie el número oficial del turno.'
+        ),
+    )
     motivo = models.CharField(max_length=255, blank=True, verbose_name='motivo de la visita')
     registrado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='tickets_registrados',
@@ -499,7 +508,7 @@ class Ticket(models.Model):
         db_table = 'tickets'
         verbose_name = 'ticket'
         verbose_name_plural = 'tickets'
-        ordering = ['-prioridad', 'creado_en']
+        ordering = ['-prioridad', 'orden']
 
     def __str__(self):
         return f'{self.turno} - {self.paciente}'
@@ -511,16 +520,50 @@ class Ticket(models.Model):
 
         fecha = timezone.localdate()
         with transaction.atomic():
-            # DailySequence garantiza un solo contador por (servicio, fecha),
-            # incluso si dos recepcionistas registran un ticket al mismo tiempo.
+            # DailySequence garantiza un solo contador por fecha, compartido
+            # entre los tres servicios, incluso si dos recepcionistas
+            # registran un ticket al mismo tiempo.
             secuencia, _ = DailySequence.objects.select_for_update().get_or_create(
-                servicio=self.servicio, fecha=fecha,
+                servicio=self.SECUENCIA_TURNOS, fecha=fecha,
             )
             secuencia.ultimo += 1
             secuencia.save(update_fields=['ultimo'])
             self.numero = secuencia.ultimo
-            self.turno = f'{self.PREFIJO_TURNO.get(self.servicio, self.servicio.upper())}-{self.numero:03d}'
+            self.turno = f'{self.numero:03d}'
+            self.orden = self.numero
             super().save(*args, **kwargs)
+
+    def adelantar(self, posiciones):
+        """Adelanta este ticket `posiciones` lugares dentro de la fila de
+        espera del día, sin tocar su número de turno oficial (`turno`) — solo
+        reordena la posición en que aparece en la Pantalla de turnos. Nunca
+        lo deja delante de un ticket de mayor prioridad (ej. no puede pasar
+        delante de un ticket de Emergencia IGSS)."""
+        if posiciones <= 0 or not self.pk:
+            return
+
+        hoy = timezone.localdate()
+        with transaction.atomic():
+            cola = list(
+                Ticket.objects.select_for_update()
+                .filter(estado=self.ESTADO_EN_ESPERA, creado_en__date=hoy)
+                .order_by('-prioridad', 'orden')
+            )
+            if self not in cola:
+                return
+
+            idx = cola.index(self)
+            limite = sum(1 for t in cola if t.prioridad > self.prioridad)
+            nuevo_idx = max(limite, idx - posiciones)
+            if nuevo_idx == idx:
+                return
+
+            cola.pop(idx)
+            cola.insert(nuevo_idx, self)
+            for posicion, ticket in enumerate(cola, start=1):
+                if ticket.orden != posicion:
+                    Ticket.objects.filter(pk=ticket.pk).update(orden=posicion)
+                    ticket.orden = posicion
 
 
 class Notificacion(models.Model):
