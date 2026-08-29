@@ -513,6 +513,20 @@ class Ticket(models.Model):
     def __str__(self):
         return f'{self.turno} - {self.paciente}'
 
+    @classmethod
+    def del_dia(cls, fecha):
+        """Tickets creados durante el día local `fecha`.
+
+        Se filtra por rango de `creado_en` en vez de `creado_en__date=fecha`
+        porque el MySQL local no tiene cargadas las tablas de zonas horarias
+        con nombre: con USE_TZ activo, `__date` genera un CONVERT_TZ(...,
+        'America/Lima') que devuelve NULL y la consulta no trae nada.
+        """
+        inicio = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.min))
+        return cls.objects.filter(
+            creado_en__gte=inicio, creado_en__lt=inicio + datetime.timedelta(days=1),
+        )
+
     def save(self, *args, **kwargs):
         if self.turno:
             super().save(*args, **kwargs)
@@ -545,8 +559,9 @@ class Ticket(models.Model):
         hoy = timezone.localdate()
         with transaction.atomic():
             cola = list(
-                Ticket.objects.select_for_update()
-                .filter(estado=self.ESTADO_EN_ESPERA, creado_en__date=hoy)
+                Ticket.del_dia(hoy)
+                .select_for_update()
+                .filter(estado=self.ESTADO_EN_ESPERA)
                 .order_by('-prioridad', 'orden')
             )
             if self not in cola:

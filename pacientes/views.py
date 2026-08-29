@@ -1666,7 +1666,7 @@ def pantalla_turnos(request):
     fecha = parse_date(request.GET.get('fecha', '')) or hoy
     es_hoy = fecha == hoy
 
-    tickets_del_dia = Ticket.objects.filter(creado_en__date=fecha).select_related('paciente')
+    tickets_del_dia = Ticket.del_dia(fecha).select_related('paciente')
     if es_hoy:
         cola = tickets_del_dia.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden')
     else:

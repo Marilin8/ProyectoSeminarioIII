@@ -15,7 +15,7 @@ def backfill_orden(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('pacientes', '0031_alter_cita_estado'),
+        ('pacientes', '0032_ordentrabajo_token_publico'),
     ]
 
     operations = [
