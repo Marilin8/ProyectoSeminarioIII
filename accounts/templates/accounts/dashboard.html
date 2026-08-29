@@ -51,7 +51,7 @@
 <div class="section-title">Acciones principales</div>
 <div class="tiles">
     {% for pantalla in pantallas %}
-        {% if pantalla.url_name != 'ordenes_pendientes' and pantalla.url_name != 'citas_procesadas' %}
+        {% if pantalla.url_name != 'ordenes_pendientes' and pantalla.url_name != 'citas_procesadas' and pantalla.clave != 'usuarios_activos' %}
             {% if pantalla.clave %}
                 <a href="{% url 'pantalla_placeholder' clave=pantalla.clave %}" class="tile">
                     <svg><use href="#i-grid"/></svg>
