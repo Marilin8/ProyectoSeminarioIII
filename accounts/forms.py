@@ -198,3 +198,25 @@ class EditarUsuarioForm(forms.ModelForm):
         else:
             self._guardar_estudios = guardar_estudios
         return usuario
+
+
+class RegistrarPagoPlanillaForm(forms.Form):
+    """Comprobante de pago de planilla: foto de la boleta o de la
+    transferencia (JPG/PNG/WEBP) o un PDF, y una nota opcional."""
+
+    EXTENSIONES_VALIDAS = ('.jpg', '.jpeg', '.png', '.webp', '.pdf')
+    TAMANO_MAXIMO = 10 * 1024 * 1024  # 10 MB
+
+    comprobante = forms.FileField(label='Comprobante (boleta o transferencia)')
+    notas = forms.CharField(
+        label='Notas (opcional)', max_length=255, required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'Ej.: transferencia Banco Industrial, No. 12345'}),
+    )
+
+    def clean_comprobante(self):
+        archivo = self.cleaned_data['comprobante']
+        if not archivo.name.lower().endswith(self.EXTENSIONES_VALIDAS):
+            raise forms.ValidationError('Subí una foto (JPG, PNG o WEBP) o un PDF.')
+        if archivo.size > self.TAMANO_MAXIMO:
+            raise forms.ValidationError('El archivo no debe pesar más de 10 MB.')
+        return archivo

@@ -11,6 +11,7 @@ from django.core.paginator import Paginator
 from django.db.models import Count, Prefetch, Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.http import urlencode
@@ -25,8 +26,9 @@ from .forms import (
     EditarUsuarioForm,
     LoginForm,
     PerfilForm,
+    RegistrarPagoPlanillaForm,
 )
-from .models import Bitacora, HistorialComision, Usuario
+from .models import Bitacora, HistorialComision, PagoPlanilla, Usuario
 from .pantallas import buscar_pantalla, pantallas_de
 
 
@@ -344,6 +346,19 @@ def planilla(request):
     )
     filas = calcular_planilla(desde, hasta, usuarios)
 
+    # Solo se puede registrar el pago cuando se está viendo un mes concreto
+    # (no un rango de fechas): el pago se guarda por (empleado, mes).
+    anio_mes = _mes_del_periodo(periodo)
+    if anio_mes:
+        pagos = {
+            pago.usuario_id: pago
+            for pago in PagoPlanilla.objects.filter(
+                anio=anio_mes[0], mes=anio_mes[1],
+            ).select_related('registrado_por')
+        }
+        for fila in filas:
+            fila['pago'] = pagos.get(fila['usuario'].id)
+
     totales = {
         'salario_base': sum((f['salario_base'] for f in filas), Decimal('0.00')),
         'comisiones': sum((f['comisiones'] for f in filas), Decimal('0.00')),
@@ -353,7 +368,77 @@ def planilla(request):
         'filas': filas,
         'totales': totales,
         'periodo': periodo,
+        'puede_pagar': anio_mes is not None,
         'query_detalle': request.GET.urlencode(),
+    })
+
+
+def _mes_del_periodo(periodo):
+    """(anio, mes) si el período de la planilla es un mes concreto; None si
+    es un rango de fechas libre (en ese caso no se registran pagos)."""
+    if periodo.get('modo') != 'mes':
+        return None
+    anio, mes = (int(parte) for parte in periodo['mes_valor'].split('-'))
+    return anio, mes
+
+
+@login_required
+@user_passes_test(es_administrador)
+def registrar_pago_planilla(request, usuario_id):
+    """Registra (o reemplaza) el pago de planilla de un empleado para el mes
+    seleccionado, guardando la foto de la boleta / transferencia como
+    comprobante."""
+    from .planilla import planilla as calcular_planilla
+
+    empleado = get_object_or_404(Usuario, id=usuario_id)
+    desde, hasta, periodo = _periodo_planilla(request)
+    volver = f"{reverse('planilla')}?{request.GET.urlencode()}"
+
+    anio_mes = _mes_del_periodo(periodo)
+    if anio_mes is None:
+        messages.error(request, 'Para registrar un pago elegí un mes, no un rango de fechas.')
+        return redirect(volver)
+    anio, mes = anio_mes
+
+    fila = calcular_planilla(desde, hasta, [empleado])[0]
+    pago = PagoPlanilla.objects.filter(usuario=empleado, anio=anio, mes=mes).first()
+
+    if request.method == 'POST':
+        form = RegistrarPagoPlanillaForm(request.POST, request.FILES)
+        if form.is_valid():
+            if pago is None:
+                pago = PagoPlanilla(usuario=empleado, anio=anio, mes=mes)
+            pago.salario_base = fila['salario_base']
+            pago.comisiones = fila['comisiones']
+            pago.total = fila['total']
+            pago.comprobante = form.cleaned_data['comprobante']
+            pago.notas = form.cleaned_data['notas']
+            pago.registrado_por = request.user
+            pago.save()
+            Bitacora.registrar(
+                request=request, usuario=request.user,
+                accion=Bitacora.ACCION_REGISTRAR_PAGO_PLANILLA,
+                descripcion=(
+                    f'Registró el pago de planilla de "{empleado.username}" — '
+                    f'{periodo["etiqueta"]} (Q{pago.total}).'
+                ),
+            )
+            messages.success(
+                request,
+                f'Pago de {periodo["etiqueta"]} registrado para '
+                f'{empleado.get_full_name() or empleado.username}.',
+            )
+            return redirect(volver)
+    else:
+        form = RegistrarPagoPlanillaForm()
+
+    return render(request, 'accounts/registrar_pago_planilla.html', {
+        'empleado': empleado,
+        'periodo': periodo,
+        'fila': fila,
+        'pago': pago,
+        'form': form,
+        'query': request.GET.urlencode(),
     })
 
 

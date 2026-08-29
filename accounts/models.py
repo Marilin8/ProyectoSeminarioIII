@@ -93,6 +93,7 @@ class Bitacora(models.Model):
     ACCION_ADELANTAR_TICKET = 'adelantar_ticket'
     ACCION_AVANZAR_TURNO = 'avanzar_turno'
     ACCION_ENVIAR_REPORTE_DIARIO = 'enviar_reporte_diario'
+    ACCION_REGISTRAR_PAGO_PLANILLA = 'registrar_pago_planilla'
 
     ACCION_CHOICES = [
         (ACCION_LOGIN_EXITOSO, 'Inicio de sesión'),
@@ -119,6 +120,7 @@ class Bitacora(models.Model):
         (ACCION_ADELANTAR_TICKET, 'Adelantó un turno en la fila de espera'),
         (ACCION_AVANZAR_TURNO, 'Avanzó la pantalla de turnos (siguiente)'),
         (ACCION_ENVIAR_REPORTE_DIARIO, 'Envío de reporte diario'),
+        (ACCION_REGISTRAR_PAGO_PLANILLA, 'Registro de pago de planilla'),
     ]
 
     usuario = models.ForeignKey(
@@ -195,3 +197,50 @@ class HistorialComision(models.Model):
     @property
     def campo_etiqueta(self):
         return self.ETIQUETAS_CAMPOS.get(self.campo, self.campo)
+
+
+MESES_ES = [
+    '', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
+    'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+]
+
+
+class PagoPlanilla(models.Model):
+    """Pago de planilla a un empleado por un mes: el monto pagado (con la
+    foto de la boleta / transferencia como comprobante) y quién lo registró.
+    Un solo pago por (empleado, mes)."""
+
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='pagos_planilla',
+    )
+    anio = models.PositiveIntegerField(verbose_name='año')
+    mes = models.PositiveSmallIntegerField()
+    salario_base = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    comisiones = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    comprobante = models.FileField(
+        upload_to='comprobantes_planilla/%Y/%m/',
+        verbose_name='comprobante (boleta o transferencia)',
+    )
+    notas = models.CharField(max_length=255, blank=True)
+    registrado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='pagos_planilla_registrados',
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'pagos_planilla'
+        verbose_name = 'pago de planilla'
+        verbose_name_plural = 'pagos de planilla'
+        unique_together = ('usuario', 'anio', 'mes')
+        ordering = ['-anio', '-mes']
+
+    def __str__(self):
+        return f'{self.usuario} · {self.periodo_etiqueta} · Q{self.total}'
+
+    @property
+    def periodo_etiqueta(self):
+        mes = self.mes if 1 <= self.mes <= 12 else 0
+        return f'{MESES_ES[mes]} {self.anio}'.strip()

@@ -37,6 +37,12 @@
         }
         .col-num { text-align: right; white-space: nowrap; }
         table tfoot td { font-weight: 700; border-top: 2px solid var(--border-light); }
+        .pago-link {
+            display: inline-block;
+            margin-left: 0.4rem;
+            font-size: 0.75rem;
+            color: var(--primary);
+        }
     </style>
 {% endblock %}
 
@@ -82,6 +88,7 @@
                         <th class="col-num">Salario base</th>
                         <th class="col-num">Comisiones</th>
                         <th class="col-num">Total a pagar</th>
+                        <th>Pago del mes</th>
                         <th></th>
                     </tr>
                 </thead>
@@ -99,6 +106,22 @@
                             </td>
                             <td class="col-num text-bold">Q{{ fila.total|floatformat:2 }}</td>
                             <td style="white-space:nowrap;">
+                                {% if not puede_pagar %}
+                                    <span class="text-muted text-xs">elegí un mes</span>
+                                {% elif fila.pago %}
+                                    <span class="badge badge-success">Pagado</span>
+                                    <a class="pago-link" href="{{ fila.pago.comprobante.url }}" target="_blank" rel="noopener">ver comprobante</a>
+                                    <a class="pago-link" href="{% url 'registrar_pago_planilla' fila.usuario.id %}{% if query_detalle %}?{{ query_detalle }}{% endif %}">reemplazar</a>
+                                {% elif fila.total > 0 %}
+                                    <a class="btn btn-primary btn-sm" href="{% url 'registrar_pago_planilla' fila.usuario.id %}{% if query_detalle %}?{{ query_detalle }}{% endif %}">
+                                        <svg width="14" height="14"><use href="#i-upload"/></svg>
+                                        Pagar
+                                    </a>
+                                {% else %}
+                                    <span class="text-muted text-xs">—</span>
+                                {% endif %}
+                            </td>
+                            <td style="white-space:nowrap;">
                                 {% if fila.cantidad_comisiones %}
                                     <a class="btn btn-ghost btn-sm" href="{% url 'planilla_empleado' fila.usuario.id %}{% if query_detalle %}?{{ query_detalle }}{% endif %}">
                                         <svg width="14" height="14"><use href="#i-file-text"/></svg>
@@ -110,7 +133,7 @@
                             </td>
                         </tr>
                     {% empty %}
-                        <tr><td colspan="6" class="text-muted text-center" style="padding:2rem 0;">No hay empleados activos.</td></tr>
+                        <tr><td colspan="7" class="text-muted text-center" style="padding:2rem 0;">No hay empleados activos.</td></tr>
                     {% endfor %}
                 </tbody>
                 <tfoot>
@@ -119,6 +142,7 @@
                         <td class="col-num">Q{{ totales.salario_base|floatformat:2 }}</td>
                         <td class="col-num">Q{{ totales.comisiones|floatformat:2 }}</td>
                         <td class="col-num">Q{{ totales.total|floatformat:2 }}</td>
+                        <td></td>
                         <td></td>
                     </tr>
                 </tfoot>

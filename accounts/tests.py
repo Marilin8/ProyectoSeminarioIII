@@ -284,6 +284,75 @@ class PlanillaTests(TestCase):
         respuesta = self.client.get(reverse('planilla'))
         self.assertNotEqual(respuesta.status_code, 200)
 
+    def _comprobante(self, nombre='boleta.jpg'):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        return SimpleUploadedFile(nombre, b'\xff\xd8\xff\xe0datos', content_type='image/jpeg')
+
+    def test_registrar_pago_guarda_comprobante_y_montos(self):
+        from decimal import Decimal
+
+        from accounts.models import Bitacora, PagoPlanilla
+
+        self._cita_procesada()
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.post(
+            reverse('registrar_pago_planilla', args=[self.tecnico.id]) + '?mes=2026-08',
+            {'comprobante': self._comprobante(), 'notas': 'transferencia BI 123'},
+        )
+
+        self.assertRedirects(respuesta, reverse('planilla') + '?mes=2026-08')
+        pago = PagoPlanilla.objects.get(usuario=self.tecnico, anio=2026, mes=8)
+        self.assertEqual(pago.total, Decimal('3050.00'))
+        self.assertEqual(pago.comisiones, Decimal('50.00'))
+        self.assertEqual(pago.registrado_por, self.admin)
+        self.assertTrue(pago.comprobante.name)
+        self.assertTrue(
+            Bitacora.objects.filter(accion=Bitacora.ACCION_REGISTRAR_PAGO_PLANILLA).exists()
+        )
+        pago.comprobante.delete(save=False)
+
+    def test_pago_rechaza_archivo_no_permitido(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        from accounts.models import PagoPlanilla
+
+        self.client.force_login(self.admin)
+        respuesta = self.client.post(
+            reverse('registrar_pago_planilla', args=[self.tecnico.id]) + '?mes=2026-08',
+            {'comprobante': SimpleUploadedFile('pago.txt', b'x'), 'notas': ''},
+        )
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertFalse(PagoPlanilla.objects.exists())
+
+    def test_planilla_marca_empleado_ya_pagado(self):
+        self._cita_procesada()
+        self.client.force_login(self.admin)
+        self.client.post(
+            reverse('registrar_pago_planilla', args=[self.tecnico.id]) + '?mes=2026-08',
+            {'comprobante': self._comprobante(), 'notas': ''},
+        )
+
+        respuesta = self.client.get(reverse('planilla'), {'mes': '2026-08'})
+
+        filas = {f['usuario'].username: f for f in respuesta.context['filas']}
+        self.assertIsNotNone(filas['tec_planilla']['pago'])
+        self.assertIsNone(filas['rad_planilla'].get('pago'))
+        filas['tec_planilla']['pago'].comprobante.delete(save=False)
+
+    def test_no_se_puede_pagar_en_modo_rango(self):
+        from accounts.models import PagoPlanilla
+
+        self.client.force_login(self.admin)
+        respuesta = self.client.post(
+            reverse('registrar_pago_planilla', args=[self.tecnico.id])
+            + '?desde=2026-08-01&hasta=2026-08-20',
+            {'comprobante': self._comprobante(), 'notas': ''},
+        )
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertFalse(PagoPlanilla.objects.exists())
+
    
 
     
