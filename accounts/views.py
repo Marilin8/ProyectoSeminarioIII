@@ -7,7 +7,7 @@ from django.contrib.auth import login as auth_login
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.paginator import Paginator
-from django.db.models import Q
+from django.db.models import Count, Prefetch, Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -259,12 +259,23 @@ def lista_usuarios(request, rol):
         raise Http404
     usuarios = Usuario.objects.filter(rol=rol).order_by('-is_active', 'first_name', 'last_name', 'username')
     if rol == Usuario.ROL_MEDICO_RADIOLOGO:
-        usuarios = usuarios.prefetch_related('tipos_estudio_asignados')
+        from pacientes.models import TipoEstudio
+
+        total_estudios = TipoEstudio.objects.filter(activo=True).count()
+        usuarios = usuarios.annotate(n_estudios=Count('tipos_estudio_asignados')).prefetch_related(
+            Prefetch(
+                'tipos_estudio_asignados',
+                queryset=TipoEstudio.objects.order_by('modalidad', 'nombre'),
+            )
+        )
+    else:
+        total_estudios = 0
     return render(request, 'accounts/lista_usuarios.html', {
         'usuarios': usuarios,
         'rol': rol,
         'rol_label': ROLES_GESTIONABLES[rol],
         'es_radiologo': rol == Usuario.ROL_MEDICO_RADIOLOGO,
+        'total_estudios': total_estudios,
         'roles_gestionables': ROLES_GESTIONABLES,
     })
 
