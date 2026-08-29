@@ -30,6 +30,20 @@
         .resumen-cards .valor { font-size: 1.15rem; font-weight: 700; margin-top: 0.2rem; }
         .col-num { text-align: right; white-space: nowrap; }
         .seccion-titulo { font-size: 0.95rem; font-weight: 700; margin: 1.5rem 0 0.6rem; }
+        .momentos {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.15rem 0.4rem;
+            margin-top: 0.35rem;
+        }
+        .momentos span {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            background: var(--bg-muted, #f1f5f9);
+            border-radius: 4px;
+            padding: 0.05rem 0.3rem;
+            white-space: nowrap;
+        }
         table tfoot td { font-weight: 700; border-top: 2px solid var(--border-light); }
     </style>
 {% endblock %}
@@ -89,6 +103,11 @@
                                     {% else %}
                                         <span class="badge badge-warning">Inhábil</span>
                                     {% endif %}
+                                    <div class="momentos">
+                                        {% for fecha, hora in g.momentos %}
+                                            <span>{{ fecha|date:'d/m' }} {{ hora|time:'H:i' }}</span>
+                                        {% endfor %}
+                                    </div>
                                 </td>
                                 <td class="col-num">{{ g.cantidad }}</td>
                                 <td class="col-num">Q{{ g.base|floatformat:2 }}</td>

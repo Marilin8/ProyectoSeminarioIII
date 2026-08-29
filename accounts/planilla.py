@@ -113,10 +113,12 @@ def _resumen_agrupado(lineas):
             'cantidad': 0,
             'base': Decimal('0.00'),
             'comision': Decimal('0.00'),
+            'momentos': [],
         })
         grupo['cantidad'] += 1
         grupo['base'] += linea['precio']
         grupo['comision'] += linea['comision']
+        grupo['momentos'].append((linea['fecha'], linea['hora']))
     return sorted(
         grupos.values(),
         key=lambda g: (g['rol_en_cita'], g['modalidad'], g['convenio'], not g['habil']),

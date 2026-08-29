@@ -243,8 +243,11 @@ class PlanillaTests(TestCase):
         self.assertEqual(len(respuesta.context['lineas']), 2)
         self.assertEqual(respuesta.context['total_comisiones'], Decimal('100.00'))
         self.assertEqual(len(respuesta.context['resumen']), 1)
-        self.assertEqual(respuesta.context['resumen'][0]['cantidad'], 2)
-        self.assertEqual(respuesta.context['resumen'][0]['pct'], Decimal('5.00'))
+        grupo = respuesta.context['resumen'][0]
+        self.assertEqual(grupo['cantidad'], 2)
+        self.assertEqual(grupo['pct'], Decimal('5.00'))
+        horas = [hora.strftime('%H:%M') for _, hora in grupo['momentos']]
+        self.assertEqual(horas, ['08:00', '10:00'])
 
     def test_cita_fuera_del_periodo_no_cuenta(self):
         import datetime
