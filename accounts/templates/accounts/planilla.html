@@ -1,0 +1,128 @@
+{% extends 'base.html' %}
+
+{% block title %}Planilla - Clínica de Imágenes{% endblock %}
+{% block page_title %}Planilla{% endblock %}
+{% block nav_usuarios %}active{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .periodo-form {
+            display: flex;
+            gap: 1.25rem;
+            align-items: flex-end;
+            flex-wrap: wrap;
+            padding: 0.9rem 1rem;
+        }
+        .periodo-form .campo { display: flex; flex-direction: column; gap: 0.2rem; }
+        .periodo-form label {
+            margin: 0;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: var(--text-muted);
+        }
+        .periodo-form .sep {
+            align-self: center;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+        .col-num { text-align: right; white-space: nowrap; }
+        table tfoot td { font-weight: 700; border-top: 2px solid var(--border-light); }
+    </style>
+{% endblock %}
+
+{% block content %}
+    <div class="tabs">
+        <a href="{% url 'planilla' %}" class="active">Planilla</a>
+        <a href="{% url 'historial_comisiones' %}">Historial de comisiones</a>
+    </div>
+
+    <form method="get" class="card mb-2 periodo-form">
+        <div class="campo">
+            <label for="mes">Mes</label>
+            <input type="month" name="mes" id="mes" value="{{ periodo.mes_valor }}">
+        </div>
+        <span class="sep">o rango</span>
+        <div class="campo">
+            <label for="desde">Desde</label>
+            <input type="date" name="desde" id="desde" value="{% if periodo.modo == 'rango' %}{{ periodo.desde|date:'Y-m-d' }}{% endif %}">
+        </div>
+        <div class="campo">
+            <label for="hasta">Hasta</label>
+            <input type="date" name="hasta" id="hasta" value="{% if periodo.modo == 'rango' %}{{ periodo.hasta|date:'Y-m-d' }}{% endif %}">
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">
+            <svg width="14" height="14"><use href="#i-search"/></svg> Ver planilla
+        </button>
+        <a class="btn btn-outline btn-sm" href="{% url 'planilla' %}">Mes actual</a>
+    </form>
+
+    <p class="text-muted text-sm mb-2">
+        Período: <strong>{{ periodo.etiqueta }}</strong>
+        ({{ periodo.desde|date:'d/m/Y' }} – {{ periodo.hasta|date:'d/m/Y' }}).
+        Las comisiones se calculan sobre las citas <strong>procesadas</strong> del período.
+    </p>
+
+    <div class="card">
+        <div class="card-body" style="padding:0;overflow-x:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Empleado</th>
+                        <th>Rol</th>
+                        <th class="col-num">Salario base</th>
+                        <th class="col-num">Comisiones</th>
+                        <th class="col-num">Total a pagar</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for fila in filas %}
+                        <tr>
+                            <td>{{ fila.usuario.get_full_name|default:fila.usuario.username }}</td>
+                            <td><span class="badge badge-muted">{{ fila.usuario.get_rol_display }}</span></td>
+                            <td class="col-num">Q{{ fila.salario_base|floatformat:2 }}</td>
+                            <td class="col-num">
+                                Q{{ fila.comisiones|floatformat:2 }}
+                                {% if fila.cantidad_comisiones %}
+                                    <span class="text-muted text-xs">({{ fila.cantidad_comisiones }})</span>
+                                {% endif %}
+                            </td>
+                            <td class="col-num text-bold">Q{{ fila.total|floatformat:2 }}</td>
+                            <td style="white-space:nowrap;">
+                                {% if fila.cantidad_comisiones %}
+                                    <a class="btn btn-ghost btn-sm" href="{% url 'planilla_empleado' fila.usuario.id %}{% if query_detalle %}?{{ query_detalle }}{% endif %}">
+                                        <svg width="14" height="14"><use href="#i-file-text"/></svg>
+                                        Ver comisiones
+                                    </a>
+                                {% else %}
+                                    <span class="text-muted text-xs">sin comisiones</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% empty %}
+                        <tr><td colspan="6" class="text-muted text-center" style="padding:2rem 0;">No hay empleados activos.</td></tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="2">Totales</td>
+                        <td class="col-num">Q{{ totales.salario_base|floatformat:2 }}</td>
+                        <td class="col-num">Q{{ totales.comisiones|floatformat:2 }}</td>
+                        <td class="col-num">Q{{ totales.total|floatformat:2 }}</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+{% endblock %}

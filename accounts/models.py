@@ -27,6 +27,12 @@ class Usuario(AbstractUser):
         verbose_name='rol',
     )
 
+    # Salario fijo mensual del empleado, antes de comisiones. Se usa en la
+    # pantalla de Planilla (salario base + comisiones del período = total).
+    salario_base = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0, verbose_name='salario base mensual',
+    )
+
     # Comisión aplicable a técnicos, radiólogos y médicos remitentes: % sobre
     # el precio del estudio, según el convenio de la cita en que participaron.
     porcentaje_coex = models.DecimalField(

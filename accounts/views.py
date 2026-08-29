@@ -1,6 +1,7 @@
 import base64
 import datetime
 import io
+from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth import login as auth_login
@@ -277,6 +278,101 @@ def lista_usuarios(request, rol):
         'es_radiologo': rol == Usuario.ROL_MEDICO_RADIOLOGO,
         'total_estudios': total_estudios,
         'roles_gestionables': ROLES_GESTIONABLES,
+    })
+
+
+def _periodo_planilla(request):
+    """Resuelve el período de la planilla a partir del querystring:
+
+    - ?desde=YYYY-MM-DD&hasta=YYYY-MM-DD  -> rango libre (hasta inclusive)
+    - ?mes=YYYY-MM                        -> ese mes completo
+    - sin parámetros                      -> el mes actual
+
+    Devuelve (desde, hasta_exclusivo, contexto_para_el_template).
+    """
+    from .planilla import rango_mes
+
+    hoy = timezone.localdate()
+    desde_txt = (request.GET.get('desde') or '').strip()
+    hasta_txt = (request.GET.get('hasta') or '').strip()
+    desde = parse_date(desde_txt) if desde_txt else None
+    hasta = parse_date(hasta_txt) if hasta_txt else None
+
+    if desde and hasta and desde <= hasta:
+        return desde, hasta + datetime.timedelta(days=1), {
+            'modo': 'rango',
+            'desde': desde,
+            'hasta': hasta,
+            'mes_valor': hoy.strftime('%Y-%m'),
+            'etiqueta': f'{desde:%d/%m/%Y} — {hasta:%d/%m/%Y}',
+        }
+
+    mes_txt = (request.GET.get('mes') or '').strip()
+    anio, mes = hoy.year, hoy.month
+    if mes_txt:
+        try:
+            anio, mes = (int(p) for p in mes_txt.split('-')[:2])
+            datetime.date(anio, mes, 1)
+        except (ValueError, TypeError):
+            anio, mes = hoy.year, hoy.month
+
+    inicio, fin = rango_mes(anio, mes)
+    MESES = [
+        '', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
+        'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+    ]
+    return inicio, fin, {
+        'modo': 'mes',
+        'desde': inicio,
+        'hasta': fin - datetime.timedelta(days=1),
+        'mes_valor': f'{anio:04d}-{mes:02d}',
+        'etiqueta': f'{MESES[mes]} {anio}',
+    }
+
+
+@login_required
+@user_passes_test(es_administrador)
+def planilla(request):
+    """Planilla del período: todos los empleados activos con su salario
+    base, el total de comisiones que ganaron y el total a pagar. Cada fila
+    enlaza al detalle de sus comisiones."""
+    from .planilla import planilla as calcular_planilla
+
+    desde, hasta, periodo = _periodo_planilla(request)
+    usuarios = Usuario.objects.filter(is_active=True).order_by(
+        'first_name', 'last_name', 'username',
+    )
+    filas = calcular_planilla(desde, hasta, usuarios)
+
+    totales = {
+        'salario_base': sum((f['salario_base'] for f in filas), Decimal('0.00')),
+        'comisiones': sum((f['comisiones'] for f in filas), Decimal('0.00')),
+        'total': sum((f['total'] for f in filas), Decimal('0.00')),
+    }
+    return render(request, 'accounts/planilla.html', {
+        'filas': filas,
+        'totales': totales,
+        'periodo': periodo,
+        'query_detalle': request.GET.urlencode(),
+    })
+
+
+@login_required
+@user_passes_test(es_administrador)
+def planilla_empleado(request, usuario_id):
+    """Detalle de las comisiones de un empleado en el período: un resumen
+    agrupado (cuántos estudios de cada tipo/horario y a qué %) y el detalle
+    línea por línea (fecha, hora, paciente, estudio, comisión)."""
+    from .planilla import detalle_empleado
+
+    usuario = get_object_or_404(Usuario, id=usuario_id)
+    desde, hasta, periodo = _periodo_planilla(request)
+    datos = detalle_empleado(desde, hasta, usuario)
+    return render(request, 'accounts/planilla_empleado.html', {
+        'empleado': usuario,
+        'periodo': periodo,
+        'query': request.GET.urlencode(),
+        **datos,
     })
 
 

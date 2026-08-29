@@ -33,6 +33,8 @@ urlpatterns = [
     path('usuarios/<int:usuario_id>/editar/', views.editar_usuario, name='editar_usuario'),
     path('usuarios/<int:usuario_id>/estado/', views.cambiar_estado_usuario, name='cambiar_estado_usuario'),
     path('comisiones/historial/', views.historial_comisiones, name='historial_comisiones'),
+    path('planilla/', views.planilla, name='planilla'),
+    path('planilla/<int:usuario_id>/', views.planilla_empleado, name='planilla_empleado'),
     path('bitacora/', views.bitacora, name='bitacora'),
     path('pantalla/<slug:clave>/', views.pantalla_placeholder, name='pantalla_placeholder'),
 ]

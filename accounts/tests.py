@@ -55,7 +55,7 @@ class HistorialComisionTests(TestCase):
     def _editar(self, **porcentajes):
         datos = {
             'first_name': 'R', 'last_name': 'C', 'email': 'rad@gmail.com',
-            'rol': Usuario.ROL_MEDICO_RADIOLOGO, 'is_active': 'on',
+            'rol': Usuario.ROL_MEDICO_RADIOLOGO, 'is_active': 'on', 'salario_base': '0',
             'porcentaje_coex': '0', 'porcentaje_privado': '0', 'porcentaje_emergencia_igss': '0',
             'tipos_estudio': [],
         }
@@ -154,6 +154,132 @@ class BitacoraModelTests(TestCase):
         self.assertEqual(evento.usuario, usuario)
         self.assertEqual(evento.accion, Bitacora.ACCION_LOGIN_EXITOSO)
         self.assertEqual(evento.ip, None)
+
+
+class PlanillaTests(TestCase):
+    """Planilla: salario base + comisiones calculadas de las citas
+    procesadas del período, y el detalle por empleado."""
+
+    def setUp(self):
+        import datetime
+        from decimal import Decimal
+
+        from pacientes.models import Cita, PrecioEstudio, TipoEstudio
+
+        self.admin = crear_usuario('admin_planilla', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.tecnico = crear_usuario(
+            'tec_planilla', rol=Usuario.ROL_TECNICO_IMAGENES, salario_base=Decimal('3000'),
+        )
+        self.tecnico.porcentaje_privado = Decimal('5')
+        self.tecnico.save()
+        self.radiologo = crear_usuario(
+            'rad_planilla', rol=Usuario.ROL_MEDICO_RADIOLOGO, salario_base=Decimal('6000'),
+        )
+        self.radiologo.porcentaje_privado = Decimal('10')
+        self.radiologo.save()
+
+        from pacientes.models import Paciente
+
+        self.paciente = Paciente.objects.create(
+            dpi='9990001112223', nombre='Ana', apellido='Gómez',
+            fecha_nacimiento=datetime.date(1990, 1, 1),
+        )
+        self.estudio = TipoEstudio.objects.create(
+            nombre='RX de tórax planilla', modalidad=TipoEstudio.MODALIDAD_RX,
+        )
+        PrecioEstudio.objects.create(
+            tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
+            horario_habil=True, precio=Decimal('1000'),
+        )
+        self.fecha = datetime.date(2026, 8, 15)
+
+    def _cita_procesada(self, hora=None):
+        import datetime
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        from pacientes.models import Cita, ImagenEstudio, OrdenTrabajo
+
+        cita = Cita.objects.create(
+            paciente=self.paciente, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
+            estado=Cita.ESTADO_PROCESADA, fecha=self.fecha, hora=hora or datetime.time(9, 0),
+            creada_por=self.admin, radiologo=self.radiologo,
+        )
+        orden = OrdenTrabajo.objects.create(cita=cita, motivo='motivo', creada_por=self.admin)
+        ImagenEstudio.objects.create(
+            orden=orden, subida_por=self.tecnico,
+            archivo=SimpleUploadedFile('img.jpg', b'fake'),
+        )
+        return cita
+
+    def test_planilla_suma_salario_base_y_comisiones_del_mes(self):
+        from decimal import Decimal
+
+        self._cita_procesada()
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.get(reverse('planilla'), {'mes': '2026-08'})
+
+        self.assertEqual(respuesta.status_code, 200)
+        filas = {f['usuario'].username: f for f in respuesta.context['filas']}
+        self.assertEqual(filas['tec_planilla']['comisiones'], Decimal('50.00'))
+        self.assertEqual(filas['tec_planilla']['total'], Decimal('3050.00'))
+        self.assertEqual(filas['rad_planilla']['comisiones'], Decimal('100.00'))
+        self.assertEqual(filas['rad_planilla']['total'], Decimal('6100.00'))
+
+    def test_detalle_empleado_lista_cada_comision_y_agrupa(self):
+        import datetime
+        from decimal import Decimal
+
+        self._cita_procesada(hora=datetime.time(8, 0))
+        self._cita_procesada(hora=datetime.time(10, 0))
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.get(
+            reverse('planilla_empleado', args=[self.tecnico.id]), {'mes': '2026-08'},
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(len(respuesta.context['lineas']), 2)
+        self.assertEqual(respuesta.context['total_comisiones'], Decimal('100.00'))
+        self.assertEqual(len(respuesta.context['resumen']), 1)
+        self.assertEqual(respuesta.context['resumen'][0]['cantidad'], 2)
+        self.assertEqual(respuesta.context['resumen'][0]['pct'], Decimal('5.00'))
+
+    def test_cita_fuera_del_periodo_no_cuenta(self):
+        import datetime
+        from decimal import Decimal
+
+        self.fecha = datetime.date(2026, 7, 15)
+        self._cita_procesada()
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.get(reverse('planilla'), {'mes': '2026-08'})
+
+        filas = {f['usuario'].username: f for f in respuesta.context['filas']}
+        self.assertEqual(filas['tec_planilla']['comisiones'], Decimal('0.00'))
+
+    def test_rango_de_fechas_personalizado(self):
+        import datetime
+        from decimal import Decimal
+
+        self.fecha = datetime.date(2026, 8, 10)
+        self._cita_procesada()
+        self.fecha = datetime.date(2026, 8, 20)
+        self._cita_procesada()
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.get(
+            reverse('planilla'), {'desde': '2026-08-01', 'hasta': '2026-08-15'},
+        )
+
+        filas = {f['usuario'].username: f for f in respuesta.context['filas']}
+        self.assertEqual(filas['tec_planilla']['comisiones'], Decimal('50.00'))
+
+    def test_solo_el_administrador_ve_la_planilla(self):
+        self.client.force_login(self.tecnico)
+        respuesta = self.client.get(reverse('planilla'))
+        self.assertNotEqual(respuesta.status_code, 200)
 
    
 

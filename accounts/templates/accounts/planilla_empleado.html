@@ -1,0 +1,154 @@
+{% extends 'base.html' %}
+
+{% block title %}Comisiones de {{ empleado.get_full_name|default:empleado.username }} - Clínica de Imágenes{% endblock %}
+{% block page_title %}Comisiones — {{ empleado.get_full_name|default:empleado.username }}{% endblock %}
+{% block nav_usuarios %}active{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'planilla' %}{% if query %}?{{ query }}{% endif %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver a la planilla
+    </a>
+{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .resumen-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 0.75rem;
+            margin-bottom: 1.25rem;
+        }
+        .resumen-cards .card { padding: 0.85rem 1rem; }
+        .resumen-cards .rotulo {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: var(--text-muted);
+        }
+        .resumen-cards .valor { font-size: 1.15rem; font-weight: 700; margin-top: 0.2rem; }
+        .col-num { text-align: right; white-space: nowrap; }
+        .seccion-titulo { font-size: 0.95rem; font-weight: 700; margin: 1.5rem 0 0.6rem; }
+        table tfoot td { font-weight: 700; border-top: 2px solid var(--border-light); }
+    </style>
+{% endblock %}
+
+{% block content %}
+    <p class="text-muted text-sm mb-2">
+        <span class="badge badge-muted">{{ empleado.get_rol_display }}</span>
+        Período: <strong>{{ periodo.etiqueta }}</strong>
+        ({{ periodo.desde|date:'d/m/Y' }} – {{ periodo.hasta|date:'d/m/Y' }})
+    </p>
+
+    <div class="resumen-cards">
+        <div class="card">
+            <div class="rotulo">Salario base</div>
+            <div class="valor">Q{{ empleado.salario_base|floatformat:2 }}</div>
+        </div>
+        <div class="card">
+            <div class="rotulo">Comisiones del período</div>
+            <div class="valor">Q{{ total_comisiones|floatformat:2 }}</div>
+        </div>
+        <div class="card">
+            <div class="rotulo">Total a pagar</div>
+            <div class="valor">Q{{ total|floatformat:2 }}</div>
+        </div>
+        <div class="card">
+            <div class="rotulo">Estudios con comisión</div>
+            <div class="valor">{{ lineas|length }}</div>
+        </div>
+    </div>
+
+    {% if resumen %}
+        <div class="seccion-titulo">Resumen</div>
+        <div class="card">
+            <div class="card-body" style="padding:0;overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Participó como</th>
+                            <th>Modalidad</th>
+                            <th>Convenio</th>
+                            <th>Horario</th>
+                            <th class="col-num">Estudios</th>
+                            <th class="col-num">Base</th>
+                            <th class="col-num">%</th>
+                            <th class="col-num">Comisión</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for g in resumen %}
+                            <tr>
+                                <td>{{ g.rol_en_cita }}</td>
+                                <td>{{ g.modalidad }}</td>
+                                <td>{{ g.convenio }}</td>
+                                <td>
+                                    {% if g.habil %}
+                                        <span class="badge badge-muted">Hábil</span>
+                                    {% else %}
+                                        <span class="badge badge-warning">Inhábil</span>
+                                    {% endif %}
+                                </td>
+                                <td class="col-num">{{ g.cantidad }}</td>
+                                <td class="col-num">Q{{ g.base|floatformat:2 }}</td>
+                                <td class="col-num">{{ g.pct|floatformat:2 }}%</td>
+                                <td class="col-num text-bold">Q{{ g.comision|floatformat:2 }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="7">Total comisiones</td>
+                            <td class="col-num">Q{{ total_comisiones|floatformat:2 }}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+
+        <div class="seccion-titulo">Detalle</div>
+        <div class="card">
+            <div class="card-body" style="padding:0;overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Hora</th>
+                            <th>Paciente</th>
+                            <th>Estudio</th>
+                            <th>Convenio</th>
+                            <th>Horario</th>
+                            <th>Participó como</th>
+                            <th class="col-num">Precio</th>
+                            <th class="col-num">%</th>
+                            <th class="col-num">Comisión</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for l in lineas %}
+                            <tr>
+                                <td>{{ l.fecha|date:'d/m/Y' }}</td>
+                                <td>{{ l.hora|time:'H:i' }}</td>
+                                <td>{{ l.paciente.nombre }} {{ l.paciente.apellido }}</td>
+                                <td>{{ l.estudio.nombre }}</td>
+                                <td>{{ l.convenio }}</td>
+                                <td>
+                                    {% if l.habil %}Hábil{% else %}<span class="text-bold">Inhábil</span>{% endif %}
+                                </td>
+                                <td>{{ l.rol_en_cita }}</td>
+                                <td class="col-num">Q{{ l.precio|floatformat:2 }}</td>
+                                <td class="col-num">{{ l.pct|floatformat:2 }}%</td>
+                                <td class="col-num text-bold">Q{{ l.comision|floatformat:2 }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% else %}
+        <p class="text-muted text-center" style="padding:2.5rem 0;">
+            {{ empleado.get_full_name|default:empleado.username }} no tiene comisiones en este período.
+        </p>
+    {% endif %}
+{% endblock %}

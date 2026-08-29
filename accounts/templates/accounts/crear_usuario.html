@@ -42,6 +42,10 @@
                 {{ form.rol }}
                 {{ form.rol.errors }}
 
+                <label for="{{ form.salario_base.id_for_label }}">Salario base mensual (Q)</label>
+                {{ form.salario_base }}
+                {{ form.salario_base.errors }}
+
                 <p class="form-help mt-1">
                     Los porcentajes de comisión solo aplican a técnicos de imágenes,
                     médicos radiólogos y médicos remitentes. Para otros roles, déjalos en 0.

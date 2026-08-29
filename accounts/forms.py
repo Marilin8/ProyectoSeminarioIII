@@ -70,6 +70,10 @@ def _validar_porcentajes(form, cleaned):
     if rol not in ROLES_CON_COMISION:
         for campo in CAMPOS_PORCENTAJE:
             cleaned[campo] = 0
+
+    salario = cleaned.get('salario_base')
+    if salario is not None and salario < 0:
+        form.add_error('salario_base', 'El salario base no puede ser negativo.')
     return cleaned
 
 
@@ -79,7 +83,7 @@ class CrearUsuarioForm(UserCreationForm):
     class Meta(UserCreationForm.Meta):
         model = Usuario
         fields = (
-            'username', 'first_name', 'last_name', 'email', 'rol',
+            'username', 'first_name', 'last_name', 'email', 'rol', 'salario_base',
             'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
         )
 
@@ -166,7 +170,7 @@ class EditarUsuarioForm(forms.ModelForm):
     class Meta:
         model = Usuario
         fields = (
-            'first_name', 'last_name', 'email', 'rol',
+            'first_name', 'last_name', 'email', 'rol', 'salario_base',
             'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
             'is_active',
         )
