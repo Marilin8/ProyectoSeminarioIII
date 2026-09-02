@@ -1802,13 +1802,23 @@ def procesar_turno(request, ticket_id):
         return redirect('pantalla_turnos')
 
     cita = ticket.cita
-    if cita.estado not in (Cita.ESTADO_AGENDADA, Cita.ESTADO_EN_ESPERA):
-        messages.error(request, f'La cita del turno {ticket.turno} ya no está pendiente de procesar.')
-        return redirect('pantalla_turnos')
 
-    if hasattr(cita, 'orden_trabajo'):
-        messages.info(request, f'El turno {ticket.turno} ya tenía una orden de trabajo generada.')
-    else:
+    if hasattr(cita, 'orden_trabajo') or cita.estado in (
+        Cita.ESTADO_EN_PROCESO, Cita.ESTADO_PROCESADA,
+    ):
+        # La orden ya existe (se generó por otro lado o el estudio ya avanzó):
+        # solo se saca el turno de la fila.
+        messages.info(
+            request,
+            f'El turno {ticket.turno} ya tenía la orden generada. Se marcó como atendido.',
+        )
+    elif cita.estado == Cita.ESTADO_AUSENTE:
+        messages.warning(
+            request,
+            f'La cita del turno {ticket.turno} está marcada como ausente. Se sacó de la fila; '
+            'si el paciente sí llegó, reagendá la cita desde "Procesar cita".',
+        )
+    elif cita.estado in (Cita.ESTADO_AGENDADA, Cita.ESTADO_EN_ESPERA):
         OrdenTrabajo.objects.create(
             cita=cita,
             motivo=(cita.notas or ticket.motivo or 'Sin indicación clínica registrada.'),
@@ -1825,14 +1835,20 @@ def procesar_turno(request, ticket_id):
                 f'{cita.paciente} (turno {ticket.turno}, cita #{cita.id}).'
             ),
         )
+        messages.success(
+            request,
+            f'Orden enviada al técnico para {cita.paciente}. Turno {ticket.turno} atendido.',
+        )
+    else:
+        messages.error(
+            request,
+            f'La cita del turno {ticket.turno} está en un estado ({cita.get_estado_display()}) '
+            'que no se puede procesar. Se sacó de la fila.',
+        )
 
     ticket.estado = Ticket.ESTADO_ATENDIDO
     ticket.atendido_en = timezone.now()
     ticket.save(update_fields=['estado', 'atendido_en'])
-    messages.success(
-        request,
-        f'Orden enviada al técnico para {cita.paciente}. Turno {ticket.turno} atendido.',
-    )
     return redirect('pantalla_turnos')
 
 

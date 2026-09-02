@@ -522,7 +522,7 @@ class Ticket(models.Model):
         Se filtra por rango de `creado_en` en vez de `creado_en__date=fecha`
         porque el MySQL local no tiene cargadas las tablas de zonas horarias
         con nombre: con USE_TZ activo, `__date` genera un CONVERT_TZ(...,
-        'America/Lima') que devuelve NULL y la consulta no trae nada.
+        TIME_ZONE) que devuelve NULL y la consulta no trae nada.
         """
         inicio = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.min))
         return cls.objects.filter(

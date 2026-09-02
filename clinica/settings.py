@@ -124,9 +124,12 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'es-pe'
+LANGUAGE_CODE = 'es-gt'
 
-TIME_ZONE = 'America/Lima'
+# La clínica está en Guatemala (UTC-6, sin horario de verano). Antes estaba
+# en 'America/Lima' (UTC-5), por eso después de las 23:00 el sistema ya
+# mostraba el día siguiente.
+TIME_ZONE = 'America/Guatemala'
 
 USE_I18N = True
 

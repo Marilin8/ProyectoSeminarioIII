@@ -833,6 +833,23 @@ class PantallaTurnosViewTests(TestCase):
         self.assertEqual(OrdenTrabajo.objects.get(cita=cita).motivo, 'Dolor lumbar')
         self.assertEqual(ticket.estado, Ticket.ESTADO_ATENDIDO)
 
+    def test_procesar_turno_de_cita_ya_procesada_solo_saca_el_turno(self):
+        recepcion = self.usuario
+        cita = crear_cita(
+            recepcion, convenio=Cita.CONVENIO_COEX, estado=Cita.ESTADO_PROCESADA,
+            hora_llegada=timezone.now(), paciente=crear_paciente(dpi='6060606060606'),
+        )
+        ticket = Ticket.objects.create(
+            paciente=cita.paciente, cita=cita, servicio=Ticket.SERVICIO_COEX,
+            registrado_por=recepcion,
+        )
+
+        respuesta = self.client.post(reverse('procesar_turno', args=[ticket.id]))
+
+        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.estado, Ticket.ESTADO_ATENDIDO)
+
     def test_procesar_turno_de_emergencia_sin_cita_va_a_su_pantalla(self):
         ticket = Ticket.objects.create(
             paciente=crear_paciente(dpi='5050505050505'),
