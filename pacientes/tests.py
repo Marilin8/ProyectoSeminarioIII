@@ -357,6 +357,51 @@ class OrdenTrabajoModelTests(TestCase):
         self.assertEqual(orden.edad_paciente, 19)
 
 
+class CalendarioRadiologoTests(TestCase):
+    """El selector de radiólogo del calendario: al elegir uno, el calendario
+    muestra solo la agenda de ese radiólogo."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_cal', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(self.recepcion)
+        self.rad1 = crear_usuario('rad_uno', rol=Usuario.ROL_MEDICO_RADIOLOGO, first_name='Radiologo', last_name='Uno')
+        self.rad2 = crear_usuario('rad_dos', rol=Usuario.ROL_MEDICO_RADIOLOGO, first_name='Radiologo', last_name='Dos')
+        self.estudio = TipoEstudio.objects.create(nombre='RX cal')
+        manana = horarios.inicio_semana(timezone.localdate()) + datetime.timedelta(days=1)
+        self.dia = manana
+        self.cita1 = crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_COEX,
+            estado=Cita.ESTADO_AGENDADA, radiologo=self.rad1, fecha=self.dia,
+            hora=datetime.time(8, 0), paciente=crear_paciente(dpi='1112223334445'),
+        )
+        self.cita2 = crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_COEX,
+            estado=Cita.ESTADO_AGENDADA, radiologo=self.rad2, fecha=self.dia,
+            hora=datetime.time(9, 0), paciente=crear_paciente(dpi='5556667778889'),
+        )
+
+    def _celda(self, respuesta, hora):
+        for fila in respuesta.context['filas']:
+            if fila['hora'] == hora:
+                return next(c for c in fila['celdas'] if c['dia'] == self.dia)
+        raise AssertionError('hora no encontrada')
+
+    def test_sin_filtro_ve_las_citas_de_todos(self):
+        r = self.client.get(reverse('calendario_coex'), {'semana': self.dia.isoformat()})
+        self.assertTrue(self._celda(r, datetime.time(8, 0))['asignado'])
+        self.assertTrue(self._celda(r, datetime.time(9, 0))['asignado'])
+
+    def test_filtrando_por_radiologo_solo_ve_su_agenda(self):
+        r = self.client.get(reverse('calendario_coex'), {
+            'semana': self.dia.isoformat(), 'radiologo': self.rad1.id,
+        })
+        self.assertEqual(r.context['radiologo_seleccionado'], self.rad1)
+        self.assertTrue(self._celda(r, datetime.time(8, 0))['asignado'])   # cita del rad1
+        celda9 = self._celda(r, datetime.time(9, 0))
+        self.assertFalse(celda9['asignado'])   # la cita del rad2 no aparece
+        self.assertFalse(celda9['ocupado'])
+
+
 class HorariosTests(TestCase):
 
     def test_horarios_disponibles_va_de_inicio_a_fin_cada_15_minutos(self):

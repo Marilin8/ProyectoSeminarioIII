@@ -119,9 +119,27 @@
         </div>
     {% endif %}
 
+    <form method="get" class="card mb-2" style="padding:0.7rem 1rem;display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;">
+        <label for="radiologo-cal" style="margin:0;font-size:0.8rem;font-weight:600;">Ver agenda de:</label>
+        <select name="radiologo" id="radiologo-cal" onchange="this.form.submit()" style="min-width:16rem;">
+            <option value="">Toda la clínica</option>
+            {% for r in radiologos %}
+                <option value="{{ r.id }}" {% if radiologo_seleccionado.id == r.id %}selected{% endif %}>
+                    {{ r.get_full_name|default:r.username }}
+                </option>
+            {% endfor %}
+        </select>
+        {% if request.GET.semana %}<input type="hidden" name="semana" value="{{ request.GET.semana }}">{% endif %}
+        {% if reagendar_cita %}<input type="hidden" name="reagendar" value="{{ reagendar_cita.id }}">{% endif %}
+        <noscript><button type="submit" class="btn btn-primary btn-sm">Ver</button></noscript>
+        {% if radiologo_seleccionado %}
+            <span style="font-size:0.8rem;color:var(--text-muted);">Mostrando solo las citas asignadas a {{ radiologo_seleccionado.get_full_name|default:radiologo_seleccionado.username }}.</span>
+        {% endif %}
+    </form>
+
     <div class="nav-row mb-2">
         {% if mostrar_semana_anterior %}
-            <a href="?semana={{ semana_anterior|date:'Y-m-d' }}{% if reagendar_cita %}&reagendar={{ reagendar_cita.id }}{% endif %}">
+            <a href="?semana={{ semana_anterior|date:'Y-m-d' }}{% if reagendar_cita %}&reagendar={{ reagendar_cita.id }}{% endif %}{% if radiologo_seleccionado %}&radiologo={{ radiologo_seleccionado.id }}{% endif %}">
                 <svg width="14" height="14"><use href="#i-chevron-left"/></svg>
                 Semana anterior
             </a>
@@ -129,7 +147,7 @@
             <span></span>
         {% endif %}
         {% if mostrar_semana_siguiente %}
-            <a href="?semana={{ semana_siguiente|date:'Y-m-d' }}{% if reagendar_cita %}&reagendar={{ reagendar_cita.id }}{% endif %}">
+            <a href="?semana={{ semana_siguiente|date:'Y-m-d' }}{% if reagendar_cita %}&reagendar={{ reagendar_cita.id }}{% endif %}{% if radiologo_seleccionado %}&radiologo={{ radiologo_seleccionado.id }}{% endif %}">
                 Semana siguiente
                 <svg width="14" height="14"><use href="#i-chevron-right"/></svg>
             </a>
@@ -159,11 +177,11 @@
                                 {% elif reagendar_cita %}
                                     <a class="slot" href="{% url reagendar_url_name cita_id=reagendar_cita.id %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}">{{ celda.cantidad }} cita{{ celda.cantidad|pluralize }}</a>
                                 {% elif celda.ocupado %}
-                                    <a class="slot-ocupado" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}" title="Horario cruzado con una cita de {{ celda.convenios }}.">Ocupado · {{ celda.convenios }}</a>
+                                    <a class="slot-ocupado" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}{% if radiologo_seleccionado %}&radiologo={{ radiologo_seleccionado.id }}{% endif %}" title="Horario cruzado con una cita de {{ celda.convenios }}.">Ocupado · {{ celda.convenios }}</a>
                                 {% elif celda.asignado %}
-                                    <a class="slot-ocupado" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}" title="Ya hay una cita de {{ celda.convenios }} que inicia aquí.">Ocupado · {{ celda.convenios }}</a>
+                                    <a class="slot-ocupado" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}{% if radiologo_seleccionado %}&radiologo={{ radiologo_seleccionado.id }}{% endif %}" title="Ya hay una cita de {{ celda.convenios }} que inicia aquí.">Ocupado · {{ celda.convenios }}</a>
                                 {% else %}
-                                    <a class="slot-libre" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}">Libre</a>
+                                    <a class="slot-libre" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}{% if radiologo_seleccionado %}&radiologo={{ radiologo_seleccionado.id }}{% endif %}">Libre</a>
                                 {% endif %}
                             </td>
                         {% endfor %}

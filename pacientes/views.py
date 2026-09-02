@@ -663,6 +663,20 @@ def seleccionar_horario(request, convenio):
     if reagendar_cita:
         citas_semana = citas_semana.exclude(id=reagendar_cita.id)
 
+    # Selector de radiólogo: si se elige uno, el calendario muestra solo la
+    # agenda de ESE radiólogo (para ver si tiene un hueco cuando otro está
+    # lleno). Sin elegir, se ve la agenda de toda la clínica.
+    radiologos = list(
+        Usuario.objects.filter(rol=Usuario.ROL_MEDICO_RADIOLOGO, is_active=True)
+        .order_by('first_name', 'last_name', 'username')
+    )
+    radiologo_id = request.GET.get('radiologo') or ''
+    radiologo_seleccionado = next(
+        (r for r in radiologos if str(r.id) == radiologo_id), None,
+    )
+    if radiologo_seleccionado:
+        citas_semana = citas_semana.filter(radiologo=radiologo_seleccionado)
+
     # El calendario es único para toda la clínica: un turno ocupado por
     # cualquier convenio (COEX / Privado / Emergencia IGSS) se ve ocupado en
     # los tres. Se guarda la etiqueta del convenio para mostrarla en la celda.
@@ -710,6 +724,8 @@ def seleccionar_horario(request, convenio):
         'reagendar_url_name': f'confirmar_reagenda_{convenio}' if reagendar_cita else None,
         'procesar_url_name': f'procesar_citas_{convenio}',
         'maximo_emergencias_por_dia': MAXIMO_EMERGENCIAS_POR_DIA,
+        'radiologos': radiologos,
+        'radiologo_seleccionado': radiologo_seleccionado,
     }
     return render(request, 'pacientes/calendario.html', contexto)
 
@@ -744,7 +760,10 @@ def agendar_cita(request, convenio):
     if request.method == 'POST':
         form = AgendarCitaForm(request.POST, convenio=convenio)
     else:
-        form = AgendarCitaForm(initial={'fecha': fecha, 'hora': hora}, convenio=convenio)
+        inicial = {'fecha': fecha, 'hora': hora}
+        if request.GET.get('radiologo'):
+            inicial['radiologo'] = request.GET['radiologo']
+        form = AgendarCitaForm(initial=inicial, convenio=convenio)
     form.fields['fecha'].widget = forms.HiddenInput()
     form.fields['hora'].widget = forms.HiddenInput()
 
@@ -938,6 +957,8 @@ def agendar_cita_privado(request):
             inicial['fecha'] = fecha_inicial
         if hora_inicial:
             inicial['hora'] = hora_inicial
+        if request.GET.get('radiologo'):
+            inicial['radiologo'] = request.GET['radiologo']
         form = AgendarCitaPrivadoForm(initial=inicial)
         if fecha_inicial and hora_inicial:
             try:
