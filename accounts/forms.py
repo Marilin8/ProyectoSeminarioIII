@@ -200,9 +200,10 @@ class EditarUsuarioForm(forms.ModelForm):
         return usuario
 
 
-class RegistrarPagoPlanillaForm(forms.Form):
-    """Comprobante de pago de planilla: foto de la boleta o de la
-    transferencia (JPG/PNG/WEBP) o un PDF, el número de boleta y una nota.
+class RegistrarPagoForm(forms.Form):
+    """Comprobante de un pago de planilla (salario o comisiones): foto de la
+    boleta o de la transferencia (JPG/PNG/WEBP) o un PDF, el número de boleta
+    y una nota.
 
     Al validar, corre el OCR del comprobante (``accounts.verificacion_boleta``)
     y compara el monto (y el número de boleta, si se indicó) con lo que se

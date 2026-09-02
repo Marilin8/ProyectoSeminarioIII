@@ -14,35 +14,23 @@
 
 {% block extra_css %}
     <style>
-        .periodo-form {
-            display: flex;
-            gap: 1.25rem;
-            align-items: flex-end;
-            flex-wrap: wrap;
-            padding: 0.9rem 1rem;
+        .periodo-form { padding: 0.9rem 1rem; }
+        .periodo-form .modos { display: flex; gap: 0.4rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+        .periodo-form .modos a {
+            font-size: 0.8rem; font-weight: 600; padding: 0.35rem 0.9rem;
+            border-radius: 999px; text-decoration: none;
+            background: #f1f5f9; color: var(--text-muted);
         }
-        .periodo-form .campo { display: flex; flex-direction: column; gap: 0.2rem; }
+        .periodo-form .modos a.on { background: var(--primary); color: #fff; }
+        .periodo-form .fila { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; }
         .periodo-form label {
-            margin: 0;
-            font-size: 0.7rem;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-            color: var(--text-muted);
-        }
-        .periodo-form .sep {
-            align-self: center;
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            text-transform: uppercase;
+            display: block; margin: 0 0 0.2rem;
+            font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted);
         }
         .col-num { text-align: right; white-space: nowrap; }
         table tfoot td { font-weight: 700; border-top: 2px solid var(--border-light); }
-        .pago-link {
-            display: inline-block;
-            margin-left: 0.4rem;
-            font-size: 0.75rem;
-            color: var(--primary);
-        }
+        .pago-link { display: inline-block; margin-left: 0.4rem; font-size: 0.75rem; color: var(--primary); }
+        .aviso-previa { font-size: 0.72rem; color: #92400e; display: block; }
     </style>
 {% endblock %}
 
@@ -50,32 +38,60 @@
     <div class="tabs">
         <a href="{% url 'planilla' %}" class="active">Planilla</a>
         <a href="{% url 'historial_comisiones' %}">Historial de comisiones</a>
+        <a href="{% url 'historial_pagos' %}">Historial de pagos</a>
     </div>
 
     <form method="get" class="card mb-2 periodo-form">
-        <div class="campo">
-            <label for="mes">Mes</label>
-            <input type="month" name="mes" id="mes" value="{{ periodo.mes_valor }}">
+        <div class="modos">
+            <a href="?modo=mes" class="{% if periodo.modo == 'mes' %}on{% endif %}">Mes</a>
+            <a href="?modo=quincena&quincena={{ periodo.quincena_mes }}&q={{ periodo.quincena_q }}" class="{% if periodo.modo == 'quincena' %}on{% endif %}">Quincena</a>
+            <a href="?modo=semana&semana={{ periodo.semana_valor }}" class="{% if periodo.modo == 'semana' %}on{% endif %}">Semana</a>
+            <a href="?modo=rango" class="{% if periodo.modo == 'rango' %}on{% endif %}">Rango libre</a>
         </div>
-        <span class="sep">o rango</span>
-        <div class="campo">
-            <label for="desde">Desde</label>
-            <input type="date" name="desde" id="desde" value="{% if periodo.modo == 'rango' %}{{ periodo.desde|date:'Y-m-d' }}{% endif %}">
-        </div>
-        <div class="campo">
-            <label for="hasta">Hasta</label>
-            <input type="date" name="hasta" id="hasta" value="{% if periodo.modo == 'rango' %}{{ periodo.hasta|date:'Y-m-d' }}{% endif %}">
-        </div>
-        <button type="submit" class="btn btn-primary btn-sm">
-            <svg width="14" height="14"><use href="#i-search"/></svg> Ver planilla
-        </button>
-        <a class="btn btn-outline btn-sm" href="{% url 'planilla' %}">Mes actual</a>
+
+        {% if periodo.modo == 'mes' %}
+            <input type="hidden" name="modo" value="mes">
+            <div class="fila">
+                <div><label for="mes">Mes de las comisiones</label>
+                    <input type="month" name="mes" id="mes" value="{{ periodo.mes_valor }}"></div>
+                <button type="submit" class="btn btn-primary btn-sm">Ver</button>
+            </div>
+        {% elif periodo.modo == 'quincena' %}
+            <input type="hidden" name="modo" value="quincena">
+            <div class="fila">
+                <div><label for="quincena">Mes</label>
+                    <input type="month" name="quincena" id="quincena" value="{{ periodo.quincena_mes }}"></div>
+                <div><label for="q">Quincena</label>
+                    <select name="q" id="q">
+                        <option value="1" {% if periodo.quincena_q == '1' %}selected{% endif %}>1ª (1–15)</option>
+                        <option value="2" {% if periodo.quincena_q == '2' %}selected{% endif %}>2ª (16–fin)</option>
+                    </select></div>
+                <button type="submit" class="btn btn-primary btn-sm">Ver</button>
+            </div>
+        {% elif periodo.modo == 'semana' %}
+            <input type="hidden" name="modo" value="semana">
+            <div class="fila">
+                <div><label for="semana">Un día de la semana</label>
+                    <input type="date" name="semana" id="semana" value="{{ periodo.semana_valor }}"></div>
+                <button type="submit" class="btn btn-primary btn-sm">Ver</button>
+            </div>
+        {% else %}
+            <input type="hidden" name="modo" value="rango">
+            <div class="fila">
+                <div><label for="desde">Desde</label>
+                    <input type="date" name="desde" id="desde" value="{{ periodo.desde|date:'Y-m-d' }}"></div>
+                <div><label for="hasta">Hasta</label>
+                    <input type="date" name="hasta" id="hasta" value="{{ periodo.hasta|date:'Y-m-d' }}"></div>
+                <button type="submit" class="btn btn-primary btn-sm">Ver</button>
+            </div>
+        {% endif %}
     </form>
 
     <p class="text-muted text-sm mb-2">
-        Período: <strong>{{ periodo.etiqueta }}</strong>
+        Comisiones del período: <strong>{{ periodo.etiqueta }}</strong>
         ({{ periodo.desde|date:'d/m/Y' }} – {{ periodo.hasta|date:'d/m/Y' }}).
-        Las comisiones se calculan sobre las citas <strong>procesadas</strong> del período.
+        El <strong>salario base</strong> se paga por el mes de <strong>{{ mes_salario_etiqueta }}</strong>.
+        Solo se muestran las comisiones que <strong>todavía no se pagaron</strong>.
     </p>
 
     <div class="card">
@@ -86,10 +102,9 @@
                         <th>Empleado</th>
                         <th>Rol</th>
                         <th class="col-num">Salario base</th>
-                        <th class="col-num">Comisiones</th>
-                        <th class="col-num">Total a pagar</th>
-                        <th>Pago del mes</th>
-                        <th></th>
+                        <th>Pago salario ({{ mes_salario_etiqueta }})</th>
+                        <th class="col-num">Comisiones pendientes</th>
+                        <th>Pago comisiones</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -98,56 +113,52 @@
                             <td>{{ fila.usuario.get_full_name|default:fila.usuario.username }}</td>
                             <td><span class="badge badge-muted">{{ fila.usuario.get_rol_display }}</span></td>
                             <td class="col-num">Q{{ fila.salario_base|floatformat:2 }}</td>
+                            <td style="white-space:nowrap;">
+                                {% if fila.pago_salario %}
+                                    <span class="badge badge-success">Pagado</span>
+                                    {% if fila.pago_salario.verificado %}
+                                        <span class="badge badge-muted">✓ verificado</span>
+                                    {% else %}
+                                        <span class="badge badge-warning">sin verificar</span>
+                                    {% endif %}
+                                    <a class="pago-link" href="{{ fila.pago_salario.comprobante.url }}" target="_blank" rel="noopener">ver boleta</a>
+                                    <a class="pago-link" href="{% url 'registrar_pago_salario' fila.usuario.id %}?{{ query }}">reemplazar</a>
+                                {% elif fila.salario_base > 0 %}
+                                    <a class="btn btn-primary btn-sm" href="{% url 'registrar_pago_salario' fila.usuario.id %}?{{ query }}">
+                                        <svg width="14" height="14"><use href="#i-upload"/></svg> Pagar salario
+                                    </a>
+                                {% else %}
+                                    <span class="text-muted text-xs">sin salario</span>
+                                {% endif %}
+                            </td>
                             <td class="col-num">
                                 Q{{ fila.comisiones|floatformat:2 }}
-                                {% if fila.cantidad_comisiones %}
-                                    <span class="text-muted text-xs">({{ fila.cantidad_comisiones }})</span>
-                                {% endif %}
-                            </td>
-                            <td class="col-num text-bold">Q{{ fila.total|floatformat:2 }}</td>
-                            <td style="white-space:nowrap;">
-                                {% if not puede_pagar %}
-                                    <span class="text-muted text-xs">elegí un mes</span>
-                                {% elif fila.pago %}
-                                    <span class="badge badge-success">Pagado</span>
-                                    {% if fila.pago.verificado %}
-                                        <span class="badge badge-muted" title="{{ fila.pago.verificacion_nota }}">✓ verificado</span>
-                                    {% else %}
-                                        <span class="badge badge-warning" title="{{ fila.pago.verificacion_nota }}">sin verificar</span>
-                                    {% endif %}
-                                    <a class="pago-link" href="{{ fila.pago.comprobante.url }}" target="_blank" rel="noopener">ver comprobante</a>
-                                    <a class="pago-link" href="{% url 'registrar_pago_planilla' fila.usuario.id %}{% if query_detalle %}?{{ query_detalle }}{% endif %}">reemplazar</a>
-                                {% elif fila.total > 0 %}
-                                    <a class="btn btn-primary btn-sm" href="{% url 'registrar_pago_planilla' fila.usuario.id %}{% if query_detalle %}?{{ query_detalle }}{% endif %}">
-                                        <svg width="14" height="14"><use href="#i-upload"/></svg>
-                                        Pagar
-                                    </a>
-                                {% else %}
-                                    <span class="text-muted text-xs">—</span>
+                                {% if fila.cantidad_comisiones %}<span class="text-muted text-xs">({{ fila.cantidad_comisiones }})</span>{% endif %}
+                                {% if fila.comisiones_previas > 0 %}
+                                    <span class="aviso-previa">+ Q{{ fila.comisiones_previas|floatformat:2 }} sin pagar de antes</span>
                                 {% endif %}
                             </td>
                             <td style="white-space:nowrap;">
-                                {% if fila.cantidad_comisiones %}
-                                    <a class="btn btn-ghost btn-sm" href="{% url 'planilla_empleado' fila.usuario.id %}{% if query_detalle %}?{{ query_detalle }}{% endif %}">
-                                        <svg width="14" height="14"><use href="#i-file-text"/></svg>
-                                        Ver comisiones
+                                {% if fila.comisiones > 0 %}
+                                    <a class="btn btn-primary btn-sm" href="{% url 'registrar_pago_comision' fila.usuario.id %}?{{ query }}">
+                                        <svg width="14" height="14"><use href="#i-upload"/></svg> Pagar comisiones
                                     </a>
+                                    <a class="pago-link" href="{% url 'planilla_empleado' fila.usuario.id %}?{{ query }}">ver detalle</a>
                                 {% else %}
-                                    <span class="text-muted text-xs">sin comisiones</span>
+                                    <span class="text-muted text-xs">nada pendiente</span>
                                 {% endif %}
                             </td>
                         </tr>
                     {% empty %}
-                        <tr><td colspan="7" class="text-muted text-center" style="padding:2rem 0;">No hay empleados activos.</td></tr>
+                        <tr><td colspan="6" class="text-muted text-center" style="padding:2rem 0;">No hay empleados activos.</td></tr>
                     {% endfor %}
                 </tbody>
                 <tfoot>
                     <tr>
                         <td colspan="2">Totales</td>
                         <td class="col-num">Q{{ totales.salario_base|floatformat:2 }}</td>
-                        <td class="col-num">Q{{ totales.comisiones|floatformat:2 }}</td>
-                        <td class="col-num">Q{{ totales.total|floatformat:2 }}</td>
                         <td></td>
+                        <td class="col-num">Q{{ totales.comisiones|floatformat:2 }}</td>
                         <td></td>
                     </tr>
                 </tfoot>

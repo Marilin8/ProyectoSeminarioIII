@@ -35,7 +35,9 @@ urlpatterns = [
     path('comisiones/historial/', views.historial_comisiones, name='historial_comisiones'),
     path('planilla/', views.planilla, name='planilla'),
     path('planilla/<int:usuario_id>/', views.planilla_empleado, name='planilla_empleado'),
-    path('planilla/<int:usuario_id>/pagar/', views.registrar_pago_planilla, name='registrar_pago_planilla'),
+    path('planilla/<int:usuario_id>/pagar-salario/', views.registrar_pago_salario, name='registrar_pago_salario'),
+    path('planilla/<int:usuario_id>/pagar-comisiones/', views.registrar_pago_comision, name='registrar_pago_comision'),
+    path('pagos/historial/', views.historial_pagos, name='historial_pagos'),
     path('bitacora/', views.bitacora, name='bitacora'),
     path('pantalla/<slug:clave>/', views.pantalla_placeholder, name='pantalla_placeholder'),
 ]

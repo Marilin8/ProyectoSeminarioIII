@@ -26,9 +26,9 @@ from .forms import (
     EditarUsuarioForm,
     LoginForm,
     PerfilForm,
-    RegistrarPagoPlanillaForm,
+    RegistrarPagoForm,
 )
-from .models import Bitacora, HistorialComision, PagoPlanilla, Usuario
+from .models import Bitacora, HistorialComision, PagoSalario, Usuario
 from .pantallas import buscar_pantalla, pantallas_de
 
 
@@ -283,196 +283,223 @@ def lista_usuarios(request, rol):
     })
 
 
-def _periodo_planilla(request):
-    """Resuelve el período de la planilla a partir del querystring:
-
-    - ?desde=YYYY-MM-DD&hasta=YYYY-MM-DD  -> rango libre (hasta inclusive)
-    - ?mes=YYYY-MM                        -> ese mes completo
-    - sin parámetros                      -> el mes actual
-
-    Devuelve (desde, hasta_exclusivo, contexto_para_el_template).
-    """
-    from .planilla import rango_mes
-
-    hoy = timezone.localdate()
-    desde_txt = (request.GET.get('desde') or '').strip()
-    hasta_txt = (request.GET.get('hasta') or '').strip()
-    desde = parse_date(desde_txt) if desde_txt else None
-    hasta = parse_date(hasta_txt) if hasta_txt else None
-
-    if desde and hasta and desde <= hasta:
-        return desde, hasta + datetime.timedelta(days=1), {
-            'modo': 'rango',
-            'desde': desde,
-            'hasta': hasta,
-            'mes_valor': hoy.strftime('%Y-%m'),
-            'etiqueta': f'{desde:%d/%m/%Y} — {hasta:%d/%m/%Y}',
-        }
-
-    mes_txt = (request.GET.get('mes') or '').strip()
-    anio, mes = hoy.year, hoy.month
-    if mes_txt:
-        try:
-            anio, mes = (int(p) for p in mes_txt.split('-')[:2])
-            datetime.date(anio, mes, 1)
-        except (ValueError, TypeError):
-            anio, mes = hoy.year, hoy.month
-
-    inicio, fin = rango_mes(anio, mes)
-    MESES = [
-        '', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
-        'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
-    ]
-    return inicio, fin, {
-        'modo': 'mes',
-        'desde': inicio,
-        'hasta': fin - datetime.timedelta(days=1),
-        'mes_valor': f'{anio:04d}-{mes:02d}',
-        'etiqueta': f'{MESES[mes]} {anio}',
-    }
+def _mes_de(periodo):
+    """(año, mes) del salario que corresponde al período (el mes del primer
+    día del período)."""
+    return periodo['desde'].year, periodo['desde'].month
 
 
 @login_required
 @user_passes_test(es_administrador)
 def planilla(request):
-    """Planilla del período: todos los empleados activos con su salario
-    base, el total de comisiones que ganaron y el total a pagar. Cada fila
-    enlaza al detalle de sus comisiones."""
+    """Planilla: por cada empleado activo, su salario base mensual (con su
+    pago del mes) y las comisiones del período que todavía no se pagaron
+    (con la posibilidad de registrar ese pago)."""
+    from .periodos import querystring, resolver_periodo
+    from .models import etiqueta_mes as _et_mes
     from .planilla import planilla as calcular_planilla
 
-    desde, hasta, periodo = _periodo_planilla(request)
-    usuarios = Usuario.objects.filter(is_active=True).order_by(
-        'first_name', 'last_name', 'username',
+    periodo = resolver_periodo(request)
+    anio, mes = _mes_de(periodo)
+    usuarios = list(
+        Usuario.objects.filter(is_active=True).order_by('first_name', 'last_name', 'username')
     )
-    filas = calcular_planilla(desde, hasta, usuarios)
+    filas = calcular_planilla(periodo['desde'], periodo['hasta'], usuarios)
 
-    # Solo se puede registrar el pago cuando se está viendo un mes concreto
-    # (no un rango de fechas): el pago se guarda por (empleado, mes).
-    anio_mes = _mes_del_periodo(periodo)
-    if anio_mes:
-        pagos = {
-            pago.usuario_id: pago
-            for pago in PagoPlanilla.objects.filter(
-                anio=anio_mes[0], mes=anio_mes[1],
-            ).select_related('registrado_por')
-        }
-        for fila in filas:
-            fila['pago'] = pagos.get(fila['usuario'].id)
+    pagos_salario = {
+        p.usuario_id: p for p in PagoSalario.objects.filter(anio=anio, mes=mes)
+    }
+    for fila in filas:
+        fila['pago_salario'] = pagos_salario.get(fila['usuario'].id)
 
     totales = {
         'salario_base': sum((f['salario_base'] for f in filas), Decimal('0.00')),
         'comisiones': sum((f['comisiones'] for f in filas), Decimal('0.00')),
-        'total': sum((f['total'] for f in filas), Decimal('0.00')),
     }
     return render(request, 'accounts/planilla.html', {
         'filas': filas,
         'totales': totales,
         'periodo': periodo,
-        'puede_pagar': anio_mes is not None,
-        'query_detalle': request.GET.urlencode(),
+        'mes_salario_etiqueta': _et_mes(anio, mes),
+        'query': querystring(periodo),
     })
 
 
-def _mes_del_periodo(periodo):
-    """(anio, mes) si el período de la planilla es un mes concreto; None si
-    es un rango de fechas libre (en ese caso no se registran pagos)."""
-    if periodo.get('modo') != 'mes':
-        return None
-    anio, mes = (int(parte) for parte in periodo['mes_valor'].split('-'))
-    return anio, mes
+def _guardar_pago(pago, form, *, empleado, concepto, periodo_etiqueta, request):
+    """Rellena y guarda un pago (salario o comisión) con los datos del form
+    y su verificación de comprobante, y lo registra en la bitácora."""
+    verificacion = form.verificacion
+    pago.monto = form.monto_esperado
+    pago.comprobante = form.cleaned_data['comprobante']
+    pago.numero_boleta = form.cleaned_data['numero_boleta']
+    pago.notas = form.cleaned_data['notas']
+    pago.verificado = bool(verificacion and verificacion.ok)
+    pago.verificacion_nota = verificacion.mensaje if verificacion else ''
+    pago.registrado_por = request.user
+    pago.save()
+    Bitacora.registrar(
+        request=request, usuario=request.user,
+        accion=Bitacora.ACCION_REGISTRAR_PAGO_PLANILLA,
+        descripcion=(
+            f'Registró el pago de {concepto} de "{empleado.username}" — '
+            f'{periodo_etiqueta} (Q{pago.monto}, '
+            f'{"verificado" if pago.verificado else "SIN verificar"}).'
+        ),
+    )
+    nombre = empleado.get_full_name() or empleado.username
+    if pago.verificado:
+        messages.success(request, f'Pago de {concepto} de {nombre} registrado y verificado.')
+    else:
+        messages.warning(
+            request,
+            f'Pago de {concepto} de {nombre} registrado, pero sin verificar: {pago.verificacion_nota}',
+        )
+    return pago
 
 
 @login_required
 @user_passes_test(es_administrador)
-def registrar_pago_planilla(request, usuario_id):
-    """Registra (o reemplaza) el pago de planilla de un empleado para el mes
-    seleccionado, guardando la foto de la boleta / transferencia como
-    comprobante."""
-    from .planilla import planilla as calcular_planilla
+def registrar_pago_salario(request, usuario_id):
+    """Pago del salario base de un empleado por el mes del período elegido."""
+    from .periodos import querystring, resolver_periodo
+    from .models import etiqueta_mes as _et_mes
 
     empleado = get_object_or_404(Usuario, id=usuario_id)
-    desde, hasta, periodo = _periodo_planilla(request)
-    volver = f"{reverse('planilla')}?{request.GET.urlencode()}"
+    periodo = resolver_periodo(request)
+    anio, mes = _mes_de(periodo)
+    volver = f"{reverse('planilla')}?{querystring(periodo)}"
 
-    anio_mes = _mes_del_periodo(periodo)
-    if anio_mes is None:
-        messages.error(request, 'Para registrar un pago elegí un mes, no un rango de fechas.')
+    if empleado.salario_base <= 0:
+        messages.error(request, f'{empleado.username} no tiene salario base configurado.')
         return redirect(volver)
-    anio, mes = anio_mes
 
-    fila = calcular_planilla(desde, hasta, [empleado])[0]
-    pago = PagoPlanilla.objects.filter(usuario=empleado, anio=anio, mes=mes).first()
+    etiqueta = _et_mes(anio, mes)
+    pago = PagoSalario.objects.filter(usuario=empleado, anio=anio, mes=mes).first()
 
     if request.method == 'POST':
-        form = RegistrarPagoPlanillaForm(
-            request.POST, request.FILES, monto_esperado=fila['total'],
-        )
+        form = RegistrarPagoForm(request.POST, request.FILES, monto_esperado=empleado.salario_base)
         if form.is_valid():
-            if pago is None:
-                pago = PagoPlanilla(usuario=empleado, anio=anio, mes=mes)
-            verificacion = form.verificacion
-            pago.salario_base = fila['salario_base']
-            pago.comisiones = fila['comisiones']
-            pago.total = fila['total']
-            pago.comprobante = form.cleaned_data['comprobante']
-            pago.numero_boleta = form.cleaned_data['numero_boleta']
-            pago.notas = form.cleaned_data['notas']
-            pago.verificado = bool(verificacion and verificacion.ok)
-            pago.verificacion_nota = verificacion.mensaje if verificacion else ''
-            pago.registrado_por = request.user
-            pago.save()
-            estado_txt = 'verificado' if pago.verificado else 'SIN verificar'
-            Bitacora.registrar(
-                request=request, usuario=request.user,
-                accion=Bitacora.ACCION_REGISTRAR_PAGO_PLANILLA,
-                descripcion=(
-                    f'Registró el pago de planilla de "{empleado.username}" — '
-                    f'{periodo["etiqueta"]} (Q{pago.total}, {estado_txt}). '
-                    f'{pago.verificacion_nota}'
-                ),
+            _guardar_pago(
+                pago or PagoSalario(usuario=empleado, anio=anio, mes=mes), form,
+                empleado=empleado, concepto='salario base',
+                periodo_etiqueta=etiqueta, request=request,
             )
-            if pago.verificado:
-                messages.success(
-                    request,
-                    f'Pago de {periodo["etiqueta"]} registrado y verificado para '
-                    f'{empleado.get_full_name() or empleado.username}.',
-                )
-            else:
-                messages.warning(
-                    request,
-                    f'Pago de {periodo["etiqueta"]} registrado para '
-                    f'{empleado.get_full_name() or empleado.username}, pero sin verificar: '
-                    f'{pago.verificacion_nota}',
-                )
             return redirect(volver)
     else:
-        form = RegistrarPagoPlanillaForm(monto_esperado=fila['total'])
+        form = RegistrarPagoForm(monto_esperado=empleado.salario_base)
 
-    return render(request, 'accounts/registrar_pago_planilla.html', {
-        'empleado': empleado,
-        'periodo': periodo,
-        'fila': fila,
-        'pago': pago,
-        'form': form,
-        'query': request.GET.urlencode(),
+    return render(request, 'accounts/registrar_pago.html', {
+        'empleado': empleado, 'form': form, 'pago': pago,
+        'concepto': 'salario base', 'periodo_etiqueta': etiqueta,
+        'monto': empleado.salario_base, 'query': querystring(periodo),
+        'detalle': None,
+    })
+
+
+@login_required
+@user_passes_test(es_administrador)
+def registrar_pago_comision(request, usuario_id):
+    """Pago de las comisiones pendientes de un empleado en el período."""
+    from .periodos import querystring, resolver_periodo
+    from .planilla import lineas_pendientes_de
+    from .models import PagoComision, PagoComisionLinea
+
+    empleado = get_object_or_404(Usuario, id=usuario_id)
+    periodo = resolver_periodo(request)
+    volver = f"{reverse('planilla')}?{querystring(periodo)}"
+
+    pendientes = lineas_pendientes_de(empleado, periodo['desde'], periodo['hasta'])
+    monto = sum((l['comision'] for l in pendientes), Decimal('0.00'))
+
+    if not pendientes:
+        messages.info(request, f'{empleado.username} no tiene comisiones sin pagar en este período.')
+        return redirect(volver)
+
+    if request.method == 'POST':
+        form = RegistrarPagoForm(request.POST, request.FILES, monto_esperado=monto)
+        if form.is_valid():
+            pago = PagoComision(
+                usuario=empleado, desde=periodo['desde'], hasta=periodo['hasta'],
+            )
+            _guardar_pago(
+                pago, form, empleado=empleado, concepto='comisiones',
+                periodo_etiqueta=periodo['etiqueta'], request=request,
+            )
+            PagoComisionLinea.objects.bulk_create([
+                PagoComisionLinea(
+                    pago=pago, cita_id=l['cita_id'],
+                    rol_en_cita=l['rol_en_cita'], monto=l['comision'],
+                )
+                for l in pendientes
+            ])
+            return redirect(volver)
+    else:
+        form = RegistrarPagoForm(monto_esperado=monto)
+
+    return render(request, 'accounts/registrar_pago.html', {
+        'empleado': empleado, 'form': form, 'pago': None,
+        'concepto': 'comisiones', 'periodo_etiqueta': periodo['etiqueta'],
+        'monto': monto, 'query': querystring(periodo),
+        'detalle': pendientes,
+    })
+
+
+@login_required
+@user_passes_test(es_administrador)
+def historial_pagos(request):
+    """Todos los pagos de planilla (salario y comisiones): a quién, de qué
+    fecha a qué fecha, tipo y comprobante."""
+    from .models import PagoComision, PagoSalario
+
+    salarios = [
+        {
+            'tipo': 'Salario base', 'empleado': p.usuario, 'desde': p.desde, 'hasta': p.hasta,
+            'monto': p.monto, 'comprobante': p.comprobante, 'verificado': p.verificado,
+            'registrado_por': p.registrado_por, 'creado_en': p.creado_en, 'notas': p.notas,
+        }
+        for p in PagoSalario.objects.select_related('usuario', 'registrado_por')
+    ]
+    comisiones = [
+        {
+            'tipo': 'Comisiones', 'empleado': p.usuario, 'desde': p.desde, 'hasta': p.hasta,
+            'monto': p.monto, 'comprobante': p.comprobante, 'verificado': p.verificado,
+            'registrado_por': p.registrado_por, 'creado_en': p.creado_en, 'notas': p.notas,
+        }
+        for p in PagoComision.objects.select_related('usuario', 'registrado_por')
+    ]
+    pagos = sorted(salarios + comisiones, key=lambda x: x['creado_en'], reverse=True)
+
+    busqueda = (request.GET.get('q') or '').strip()
+    if busqueda:
+        b = busqueda.lower()
+        pagos = [
+            x for x in pagos
+            if b in (x['empleado'].get_full_name() or x['empleado'].username).lower()
+        ]
+
+    return render(request, 'accounts/historial_pagos.html', {
+        'pagos': pagos,
+        'busqueda': busqueda,
+        'total': sum((x['monto'] for x in pagos), Decimal('0.00')),
     })
 
 
 @login_required
 @user_passes_test(es_administrador)
 def planilla_empleado(request, usuario_id):
-    """Detalle de las comisiones de un empleado en el período: un resumen
-    agrupado (cuántos estudios de cada tipo/horario y a qué %) y el detalle
-    línea por línea (fecha, hora, paciente, estudio, comisión)."""
+    """Detalle de las comisiones de un empleado en el período: resumen
+    agrupado de lo pendiente y detalle línea por línea (marcando lo que ya
+    se pagó)."""
+    from .periodos import querystring, resolver_periodo
     from .planilla import detalle_empleado
 
     usuario = get_object_or_404(Usuario, id=usuario_id)
-    desde, hasta, periodo = _periodo_planilla(request)
-    datos = detalle_empleado(desde, hasta, usuario)
+    periodo = resolver_periodo(request)
+    datos = detalle_empleado(periodo['desde'], periodo['hasta'], usuario)
     return render(request, 'accounts/planilla_empleado.html', {
         'empleado': usuario,
         'periodo': periodo,
-        'query': request.GET.urlencode(),
+        'query': querystring(periodo),
         **datos,
     })
 

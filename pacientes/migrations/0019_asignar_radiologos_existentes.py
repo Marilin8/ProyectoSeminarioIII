@@ -26,6 +26,9 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('pacientes', '0018_tipoestudio_radiologos'),
+        # La migración de datos consulta Usuario.rol, así que necesita que el
+        # campo ya exista.
+        ('accounts', '0003_usuario_rol'),
     ]
 
     operations = [
