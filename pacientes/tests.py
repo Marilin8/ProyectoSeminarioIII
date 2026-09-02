@@ -505,7 +505,7 @@ class RegistrarTicketEmergenciaViewTests(TestCase):
         ticket = Ticket.objects.get()
         self.assertEqual(ticket.paciente_id, paciente_existente.id)
 
-    def test_registrar_ticket_no_pisa_datos_ya_guardados_pero_completa_los_vacios(self):
+    def test_registrar_ticket_no_pisa_nombre_pero_actualiza_contacto_y_completa_vacios(self):
         crear_paciente(
             dpi='6666666666666', nombre='Nombre Viejo', telefono='00000000',
             sexo='', fecha_nacimiento=None,
@@ -514,9 +514,10 @@ class RegistrarTicketEmergenciaViewTests(TestCase):
         self.client.post(reverse('registrar_ticket_emergencia'), self.datos_formulario)
 
         paciente = Paciente.objects.get(dpi='6666666666666')
-        # Lo que ya estaba guardado NO se cambia, aunque el form traiga otra cosa.
+        # El nombre ya guardado NO se cambia, aunque el form traiga otra cosa.
         self.assertEqual(paciente.nombre, 'Nombre Viejo')
-        self.assertEqual(paciente.telefono, '00000000')
+        # El teléfono SÍ se corrige.
+        self.assertEqual(paciente.telefono, '55551234')
         # Lo que estaba vacío SÍ se completa.
         self.assertEqual(paciente.sexo, Paciente.SEXO_MASCULINO)
         self.assertEqual(paciente.fecha_nacimiento, datetime.date(1985, 3, 10))
@@ -607,21 +608,22 @@ class AgendarCitaViewTests(TestCase):
         cita = Cita.objects.get(paciente__dpi='2020202020202')
         self.assertEqual(cita.paciente_id, paciente_existente.id)
 
-    def test_agendar_cita_no_pisa_datos_ya_guardados_pero_completa_los_vacios(self):
+    def test_agendar_cita_no_pisa_datos_ya_guardados_pero_actualiza_contacto(self):
         crear_paciente(
             dpi='2020202020202', nombre='Nombre Viejo', telefono='00000000',
-            sexo='', fecha_nacimiento=None, correo=None,
+            sexo='', fecha_nacimiento=None, correo='viejo@correo.com',
         )
 
         self.client.post(self._url(), self.datos_formulario)
 
         paciente = Paciente.objects.get(dpi='2020202020202')
-        # Datos ya guardados: intactos.
+        # Nombre/apellido ya guardados: intactos.
         self.assertEqual(paciente.nombre, 'Nombre Viejo')
-        self.assertEqual(paciente.telefono, '00000000')
-        # Datos que estaban vacíos: se completan desde el formulario.
-        self.assertEqual(paciente.sexo, Paciente.SEXO_MASCULINO)
+        # Teléfono y correo SÍ se corrigen desde el formulario.
+        self.assertEqual(paciente.telefono, '55599999')
         self.assertEqual(paciente.correo, 'luis.marroquin@correo.com')
+        # Datos que estaban vacíos: se completan.
+        self.assertEqual(paciente.sexo, Paciente.SEXO_MASCULINO)
 
 
 class PantallaTurnosViewTests(TestCase):

@@ -100,6 +100,7 @@
             var dpi = document.getElementById('id_dpi');
             var aviso = document.getElementById('aviso-paciente-existente');
             var campos = ['nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento'];
+            var CONTACTO_EDITABLE = ['telefono', 'correo'];
             var timer = null;
             var ultimo = '';
 
@@ -121,9 +122,11 @@
                             var el = document.getElementById('id_' + c);
                             if (!el) return;
                             el.value = d[c] || '';
-                            // Los datos que el paciente YA tiene guardados no se
-                            // pueden cambiar acá; solo se pueden completar los vacíos.
-                            bloquear(el, !!d[c]);
+                            // El teléfono y el correo quedan editables para
+                            // corregirlos; el resto de datos ya guardados no se
+                            // cambian acá (solo se completan los vacíos).
+                            var editable = CONTACTO_EDITABLE.indexOf(c) !== -1;
+                            bloquear(el, !editable && !!d[c]);
                         });
                         aviso.style.display = 'block';
                     });

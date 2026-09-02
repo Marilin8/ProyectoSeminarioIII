@@ -43,7 +43,7 @@
             {{ form.dpi.errors }}
             <p class="ayuda ayuda-dpi-incompleto" id="ayuda-dpi-incompleto" style="display:none;"></p>
             <div class="aviso-paciente" id="aviso-paciente-existente">
-                Paciente ya registrado — se completaron sus datos automáticamente.
+                Paciente ya registrado — se cargaron sus datos. Podés corregir el teléfono y el correo si cambiaron.
                 <a href="#" id="btn-buscar-otro">No es este paciente</a>
             </div>
 
@@ -190,6 +190,7 @@
             var camposAutocompletables = [
                 'nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento', 'carnet_igss',
             ];
+            var CAMPOS_CONTACTO_EDITABLES = ['telefono', 'correo'];
             var temporizadorBusqueda = null;
             var ultimoDpiBuscado = '';
 
@@ -241,10 +242,12 @@
                             var elemento = document.getElementById('id_' + nombreCampo);
                             if (elemento) {
                                 elemento.value = datos[nombreCampo];
-                                // Un dato que el paciente ya tiene guardado no se
-                                // puede modificar al agendar; solo se completan los
-                                // que están vacíos.
-                                bloquearCampo(elemento, !!datos[nombreCampo]);
+                                // Teléfono y correo quedan editables para poder
+                                // corregirlos; el resto de datos ya guardados no
+                                // se tocan al agendar (solo se completan si están
+                                // vacíos).
+                                var editable = CAMPOS_CONTACTO_EDITABLES.indexOf(nombreCampo) !== -1;
+                                bloquearCampo(elemento, !editable && !!datos[nombreCampo]);
                             }
                         });
                         aviso.style.display = 'block';

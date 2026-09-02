@@ -222,17 +222,19 @@ def _notificar_reporte_enviado(reporte, enviado_por):
 
 
 CAMPOS_DATOS_PACIENTE = ('nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento')
+# Datos de contacto que SÍ se pueden corregir al agendar una cita de un
+# paciente ya registrado (el resto solo se completa si estaba vacío).
+CAMPOS_CONTACTO_EDITABLES = ('telefono', 'correo')
 
 
 def obtener_o_actualizar_paciente(cd):
     """Reutiliza el paciente si el DPI ya existe (evita duplicar el registro).
 
-    Para un paciente que YA está registrado, la pantalla de agendar solo
-    puede COMPLETAR datos que estén vacíos (sexo, teléfono, fecha de
-    nacimiento, correo, carné IGSS) — nunca sobrescribe un dato ya guardado,
-    aunque el recepcionista lo edite en el formulario. Las correcciones de
-    datos existentes se hacen desde la pantalla dedicada de "Completar datos
-    del paciente" (o el admin), no al agendar una cita."""
+    Para un paciente que YA está registrado, la pantalla de agendar completa
+    los datos que estén vacíos (nombre, apellido, sexo, fecha de nacimiento,
+    carné IGSS) y además permite CORREGIR el teléfono y el correo
+    (`CAMPOS_CONTACTO_EDITABLES`), porque son los que más cambian. El resto de
+    correcciones se hacen desde "Completar datos del paciente" o el admin."""
     carnet_igss = cd.get('carnet_igss') or None
     paciente, creado = Paciente.objects.get_or_create(
         dpi=cd['dpi'],
@@ -242,8 +244,13 @@ def obtener_o_actualizar_paciente(cd):
         cambiados = []
         for campo in CAMPOS_DATOS_PACIENTE:
             valor_nuevo = cd[campo]
-            # Solo se rellena si el paciente NO tiene ya ese dato guardado.
-            if valor_nuevo and not getattr(paciente, campo):
+            if campo in CAMPOS_CONTACTO_EDITABLES:
+                # Teléfono y correo: se actualizan si viene un valor distinto.
+                if valor_nuevo and valor_nuevo != getattr(paciente, campo):
+                    setattr(paciente, campo, valor_nuevo)
+                    cambiados.append(campo)
+            elif valor_nuevo and not getattr(paciente, campo):
+                # El resto solo se rellena si el paciente NO tiene ese dato.
                 setattr(paciente, campo, valor_nuevo)
                 cambiados.append(campo)
         if carnet_igss and not paciente.carnet_igss:
