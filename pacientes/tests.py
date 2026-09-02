@@ -82,6 +82,25 @@ class FlujoPrivadoTests(TestCase):
         self.assertEqual(cita.estado, Cita.ESTADO_AGENDADA)
         self.assertEqual(cita.radiologo, self.radiologo)
 
+    def test_agendar_privado_con_varios_radiologos_exige_elegir(self):
+        otro = crear_usuario('rad_priv_2', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.estudio.radiologos.add(otro)
+
+        respuesta = self._agendar()
+        self.assertContains(respuesta, 'varios radiólogos')
+        self.assertFalse(Cita.objects.filter(paciente__dpi='9090909090901').exists())
+
+        self.client.force_login(self.recepcionista)
+        self.client.post(reverse('agendar_cita_privado'), {
+            'dpi': '9090909090901', 'nombre': 'Marco', 'apellido': 'Privado',
+            'sexo': Paciente.SEXO_MASCULINO, 'telefono': '55551234', 'correo': '',
+            'fecha_nacimiento': '1990-01-01', 'tipo_estudio': self.estudio.id,
+            'radiologo': otro.id, 'fecha': self.fecha.isoformat(), 'hora': '10:00',
+            'motivo': 'Control',
+        })
+        cita = Cita.objects.get(paciente__dpi='9090909090901')
+        self.assertEqual(cita.radiologo, otro)
+
     def test_privado_no_aparece_en_solicitudes_del_radiologo(self):
         self._agendar()
         self.client.force_login(self.radiologo)
@@ -624,6 +643,36 @@ class AgendarCitaViewTests(TestCase):
         self.assertEqual(paciente.correo, 'luis.marroquin@correo.com')
         # Datos que estaban vacíos: se completan.
         self.assertEqual(paciente.sexo, Paciente.SEXO_MASCULINO)
+
+    def test_estudio_con_un_solo_radiologo_se_asigna_solo(self):
+        datos = dict(self.datos_formulario, radiologo='')
+        self.client.post(self._url(), datos)
+        cita = Cita.objects.get(paciente__dpi='2020202020202')
+        self.assertEqual(cita.radiologo, self.radiologo)
+
+    def test_estudio_con_varios_radiologos_exige_elegir_uno(self):
+        otro = crear_usuario('radiologa_2', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.tipo_estudio.radiologos.add(otro)
+
+        datos = dict(self.datos_formulario, radiologo='')
+        respuesta = self.client.post(self._url(), datos)
+
+        self.assertFalse(Cita.objects.filter(paciente__dpi='2020202020202').exists())
+        self.assertContains(respuesta, 'varios radiólogos')
+
+        datos['radiologo'] = otro.id
+        self.client.post(self._url(), datos)
+        cita = Cita.objects.get(paciente__dpi='2020202020202')
+        self.assertEqual(cita.radiologo, otro)
+
+    def test_estudio_sin_radiologos_no_se_puede_agendar(self):
+        sin_rad = TipoEstudio.objects.create(nombre='Estudio sin radiologo')
+        datos = dict(self.datos_formulario, tipo_estudio=sin_rad.id, radiologo='')
+
+        respuesta = self.client.post(self._url(), datos)
+
+        self.assertFalse(Cita.objects.filter(paciente__dpi='2020202020202').exists())
+        self.assertContains(respuesta, 'no tiene radiólogos asignados')
 
 
 class PantallaTurnosViewTests(TestCase):

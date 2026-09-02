@@ -879,9 +879,10 @@ def agendar_cita_privado(request):
             hay_conflicto = _hay_conflicto_horario(
                 cd['fecha'], cd['hora'], cd['tipo_estudio'].duracion_minutos,
             )
-            radiologo = (
-                cd['tipo_estudio'].radiologos.filter(is_active=True).order_by('username').first()
-            )
+            # El radiólogo lo resuelve el form (resolver_radiologo_para_estudio):
+            # si el estudio tiene uno solo se asigna solo, si tiene varios lo
+            # eligió la secretaria.
+            radiologo = cd.get('radiologo')
 
             paciente = obtener_o_actualizar_paciente(cd)
             cita = Cita.objects.create(

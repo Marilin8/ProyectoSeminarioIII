@@ -14,9 +14,13 @@ NOMBRE_REGEX = re.compile(r'^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]+$')
 
 
 class TipoEstudioSelect(forms.Select):
-    """Select de tipo de estudio que agrega precio (hábil e inhábil) y
-    duración como atributos data-* de cada <option>, para que el formulario
-    los muestre en pantalla sin pedirlos de nuevo al servidor."""
+    """Select de tipo de estudio que agrega precio (hábil e inhábil),
+    duración y modalidad como atributos data-* de cada <option>, para que el
+    formulario los muestre / filtre en pantalla sin pedirlos de nuevo al
+    servidor.
+
+    `detalles` es {str(pk): (precio_habil, precio_inhabil, duracion[, modalidad])}.
+    """
 
     detalles = {}
 
@@ -27,12 +31,73 @@ class TipoEstudioSelect(forms.Select):
             option['attrs']['data-precio-habil'] = str(detalle[0])
             option['attrs']['data-precio-inhabil'] = str(detalle[1])
             option['attrs']['data-duracion'] = str(detalle[2])
+            if len(detalle) > 3 and detalle[3]:
+                option['attrs']['data-modalidad'] = str(detalle[3])
         return option
+
+
+def _detalles_tipo_estudio(queryset, convenio):
+    """Diccionario {pk: (precio_hábil, precio_inhábil, duración, modalidad)}
+    para alimentar TipoEstudioSelect."""
+    return {
+        str(te.pk): (
+            te.precio_para(convenio, True),
+            te.precio_para(convenio, False),
+            te.duracion_minutos,
+            te.modalidad,
+        )
+        for te in queryset
+    }
 
 
 def validar_fecha_nacimiento_no_futura(fecha):
     if fecha and fecha > timezone.localdate():
         raise forms.ValidationError('La fecha de nacimiento no puede ser una fecha futura.')
+
+
+def _radiologos_disponibles():
+    return Usuario.objects.filter(
+        rol=Usuario.ROL_MEDICO_RADIOLOGO, is_active=True,
+    ).order_by('username')
+
+
+def resolver_radiologo_para_estudio(form, cleaned):
+    """Reglas comunes al agendar (COEX y Privado) para asignar el radiólogo
+    según los que tenga habilitados el estudio elegido:
+
+    - estudio sin radiólogos  -> error (no se puede agendar)
+    - exactamente 1 radiólogo -> se asigna solo
+    - más de 1                -> hay que elegir cuál
+    - el elegido debe realizar ese estudio
+
+    Deja el radiólogo resuelto en ``cleaned['radiologo']``.
+    """
+    tipo_estudio = cleaned.get('tipo_estudio')
+    radiologo = cleaned.get('radiologo')
+    if not tipo_estudio:
+        return cleaned
+
+    radiologos = list(tipo_estudio.radiologos.filter(is_active=True))
+    if not radiologos:
+        form.add_error(
+            'tipo_estudio',
+            f'"{tipo_estudio}" no tiene radiólogos asignados. Asigná al menos uno '
+            'desde "Usuarios activos → Radiólogos" antes de agendar este estudio.',
+        )
+    elif radiologo is None:
+        if len(radiologos) == 1:
+            cleaned['radiologo'] = radiologos[0]
+        else:
+            form.add_error(
+                'radiologo',
+                'Este estudio lo realizan varios radiólogos: elegí a cuál asignar la cita.',
+            )
+    elif radiologo not in radiologos:
+        form.add_error(
+            'radiologo',
+            f'{radiologo.get_full_name() or radiologo.username} no realiza estudios de "{tipo_estudio}".',
+        )
+    return cleaned
 
 
 def limpiar_carnet_igss(carnet, *, dpi, requerido):
@@ -104,11 +169,16 @@ class AgendarCitaForm(forms.Form):
         queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
         widget=TipoEstudioSelect(),
     )
+    modalidad = forms.ChoiceField(
+        label='Grupo de estudio',
+        choices=[('', 'Todos los grupos')] + list(TipoEstudio.MODALIDAD_CHOICES),
+        required=False,
+        help_text='Elegí el grupo para ver solo los estudios de ese tipo.',
+    )
     radiologo = forms.ModelChoiceField(
         label='Radiólogo asignado',
-        queryset=Usuario.objects.filter(
-            rol=Usuario.ROL_MEDICO_RADIOLOGO, is_active=True
-        ).order_by('username'),
+        required=False,
+        queryset=_radiologos_disponibles(),
     )
     medico_referente = forms.CharField(
         label='Médico referente',
@@ -128,16 +198,11 @@ class AgendarCitaForm(forms.Form):
         super().__init__(*args, **kwargs)
         self.fields['fecha_nacimiento'].widget.attrs['max'] = timezone.localdate().isoformat()
         self.fields['tipo_estudio'].queryset = (
-            self.fields['tipo_estudio'].queryset.prefetch_related('precios')
+            self.fields['tipo_estudio'].queryset.prefetch_related('precios', 'radiologos')
         )
-        self.fields['tipo_estudio'].widget.detalles = {
-            str(te.pk): (
-                te.precio_para(convenio, True),
-                te.precio_para(convenio, False),
-                te.duracion_minutos,
-            )
-            for te in self.fields['tipo_estudio'].queryset
-        }
+        self.fields['tipo_estudio'].widget.detalles = _detalles_tipo_estudio(
+            self.fields['tipo_estudio'].queryset, convenio,
+        )
         self.convenio = convenio
         if convenio in CONVENIOS_QUE_REQUIEREN_CARNET_IGSS:
             self.fields['carnet_igss'].widget.attrs['required'] = True
@@ -181,14 +246,7 @@ class AgendarCitaForm(forms.Form):
 
     def clean(self):
         cleaned = super().clean()
-        tipo_estudio = cleaned.get('tipo_estudio')
-        radiologo = cleaned.get('radiologo')
-        if tipo_estudio and radiologo and not tipo_estudio.radiologos.filter(id=radiologo.id).exists():
-            self.add_error(
-                'radiologo',
-                f'{radiologo.get_full_name() or radiologo.username} no realiza estudios de "{tipo_estudio}".',
-            )
-        return cleaned
+        return resolver_radiologo_para_estudio(self, cleaned)
 
 
 class AgendarCitaPrivadoForm(forms.Form):
@@ -242,6 +300,17 @@ class AgendarCitaPrivadoForm(forms.Form):
         queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
         widget=TipoEstudioSelect(),
     )
+    modalidad = forms.ChoiceField(
+        label='Grupo de estudio',
+        choices=[('', 'Todos los grupos')] + list(TipoEstudio.MODALIDAD_CHOICES),
+        required=False,
+        help_text='Elegí el grupo para ver solo los estudios de ese tipo.',
+    )
+    radiologo = forms.ModelChoiceField(
+        label='Radiólogo asignado',
+        required=False,
+        queryset=_radiologos_disponibles(),
+    )
     fecha = forms.DateField(widget=forms.DateInput(attrs={'type': 'date'}))
     hora = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}))
     motivo = forms.CharField(
@@ -256,14 +325,9 @@ class AgendarCitaPrivadoForm(forms.Form):
         self.fields['fecha_nacimiento'].widget.attrs['max'] = timezone.localdate().isoformat()
         queryset = self.fields['tipo_estudio'].queryset.prefetch_related('precios')
         self.fields['tipo_estudio'].queryset = queryset
-        self.fields['tipo_estudio'].widget.detalles = {
-            str(te.pk): (
-                te.precio_para(Cita.CONVENIO_PRIVADO, True),
-                te.precio_para(Cita.CONVENIO_PRIVADO, False),
-                te.duracion_minutos,
-            )
-            for te in queryset
-        }
+        self.fields['tipo_estudio'].widget.detalles = _detalles_tipo_estudio(
+            queryset, Cita.CONVENIO_PRIVADO,
+        )
 
     def clean_dpi(self):
         dpi = self.cleaned_data['dpi'].strip()
@@ -294,6 +358,10 @@ class AgendarCitaPrivadoForm(forms.Form):
         fecha = self.cleaned_data['fecha_nacimiento']
         validar_fecha_nacimiento_no_futura(fecha)
         return fecha
+
+    def clean(self):
+        cleaned = super().clean()
+        return resolver_radiologo_para_estudio(self, cleaned)
 
 
 class RegistrarTicketForm(forms.Form):

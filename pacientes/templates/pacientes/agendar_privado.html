@@ -70,10 +70,20 @@
 
             <div class="seccion-titulo">Cita</div>
 
+            <label for="{{ form.modalidad.id_for_label }}">Grupo de estudio</label>
+            {{ form.modalidad }}
+
             <label for="{{ form.tipo_estudio.id_for_label }}">Tipo de estudio</label>
             {{ form.tipo_estudio }}
             {{ form.tipo_estudio.errors }}
             <div class="previa-estudio" id="previa-estudio"></div>
+
+            <div id="bloque-radiologo" style="display:none;">
+                <label for="{{ form.radiologo.id_for_label }}">Radiólogo asignado</label>
+                {{ form.radiologo }}
+                <p class="ayuda" id="ayuda-radiologo" style="display:none;"></p>
+                {{ form.radiologo.errors }}
+            </div>
 
             <label for="{{ form.fecha.id_for_label }}">Fecha</label>
             {{ form.fecha }}
@@ -176,6 +186,87 @@
             select.addEventListener('change', actualizar);
             if (hora) hora.addEventListener('change', actualizar);
             actualizar();
+        })();
+
+        // Filtra "Tipo de estudio" por el grupo/modalidad elegido.
+        (function () {
+            var grupo = document.getElementById('id_modalidad');
+            var estudio = document.getElementById('id_tipo_estudio');
+            if (!grupo || !estudio) return;
+
+            function filtrar() {
+                var valor = grupo.value;
+                var sigueVisible = false;
+                Array.prototype.forEach.call(estudio.options, function (op) {
+                    if (!op.value) return;
+                    var visible = !valor || op.getAttribute('data-modalidad') === valor;
+                    op.hidden = !visible;
+                    op.disabled = !visible;
+                    if (visible && op.value === estudio.value) sigueVisible = true;
+                });
+                if (!sigueVisible) {
+                    estudio.value = '';
+                    estudio.dispatchEvent(new Event('change'));
+                }
+            }
+
+            grupo.addEventListener('change', filtrar);
+            if (grupo.value) filtrar();
+        })();
+
+        // Cuadro de radiólogo: aparece al elegir el estudio.
+        //  0 radiólogos: aviso · 1: se asigna solo · varios: hay que elegir.
+        (function () {
+            var estudio = document.getElementById('id_tipo_estudio');
+            var radiologo = document.getElementById('id_radiologo');
+            var bloque = document.getElementById('bloque-radiologo');
+            var ayuda = document.getElementById('ayuda-radiologo');
+            if (!estudio || !radiologo || !bloque) return;
+
+            function pintar(lista, seleccion) {
+                radiologo.innerHTML = '';
+                radiologo.style.display = '';
+                ayuda.style.display = 'none';
+
+                if (!lista || lista.length === 0) {
+                    radiologo.innerHTML = '<option value="">Este estudio no tiene radiólogos asignados</option>';
+                    ayuda.textContent = 'Asigná radiólogos a este estudio antes de agendarlo.';
+                    ayuda.style.display = 'block';
+                    return;
+                }
+                if (lista.length > 1) {
+                    var ph = document.createElement('option');
+                    ph.value = ''; ph.textContent = '— Elegí un radiólogo —';
+                    radiologo.appendChild(ph);
+                    ayuda.textContent = 'Este estudio lo realizan varios radiólogos: elegí a cuál asignar la cita.';
+                    ayuda.style.display = 'block';
+                }
+                lista.forEach(function (r) {
+                    var op = document.createElement('option');
+                    op.value = r.id; op.textContent = r.texto;
+                    if (String(r.id) === String(seleccion)) op.selected = true;
+                    radiologo.appendChild(op);
+                });
+                if (lista.length === 1) {
+                    radiologo.value = lista[0].id;
+                    radiologo.style.display = 'none';
+                    ayuda.textContent = 'Radiólogo asignado: ' + lista[0].texto + ' (único que realiza este estudio).';
+                    ayuda.style.display = 'block';
+                }
+            }
+
+            function actualizar(preservar) {
+                var id = estudio.value;
+                var sel = preservar ? radiologo.value : '';
+                if (!id) { bloque.style.display = 'none'; return; }
+                bloque.style.display = '';
+                fetch('{% url "radiologos_por_estudio" %}?tipo_estudio=' + encodeURIComponent(id))
+                    .then(function (r) { return r.json(); })
+                    .then(function (d) { pintar(d.radiologos, sel); });
+            }
+
+            estudio.addEventListener('change', function () { actualizar(false); });
+            actualizar(true);
         })();
     </script>
 {% endblock %}

@@ -104,14 +104,21 @@
             {{ form.fecha }}
             {{ form.hora }}
 
+            <label for="{{ form.modalidad.id_for_label }}">Grupo de estudio</label>
+            {{ form.modalidad }}
+            <p class="ayuda">Elegí el grupo para que abajo aparezcan solo los estudios de ese tipo.</p>
+
             <label for="{{ form.tipo_estudio.id_for_label }}">Tipo de estudio</label>
             {{ form.tipo_estudio }}
             {{ form.tipo_estudio.errors }}
             <p class="ayuda" id="previa-tipo-estudio" style="display:none;"></p>
 
-            <label for="{{ form.radiologo.id_for_label }}">Radiólogo asignado</label>
-            {{ form.radiologo }}
-            {{ form.radiologo.errors }}
+            <div id="bloque-radiologo">
+                <label for="{{ form.radiologo.id_for_label }}">Radiólogo asignado</label>
+                {{ form.radiologo }}
+                <p class="ayuda" id="ayuda-radiologo" style="display:none;"></p>
+                {{ form.radiologo.errors }}
+            </div>
 
             <label for="{{ form.notas.id_for_label }}">Notas</label>
             {{ form.notas }}
@@ -290,60 +297,102 @@
             });
         })();
 
-        // Filtra el combo de radiólogo según el tipo de estudio elegido:
-        // solo deja elegir entre los radiólogos que realmente lo realizan
-        // (ej. Celeste solo hace Ultrasonido y Rayos X).
+        // Filtra el <select> de "Tipo de estudio" por el grupo/modalidad
+        // elegido arriba, para que la secretaria no tenga que buscar entre
+        // toda la lista.
+        (function () {
+            var modalidadSelect = document.getElementById('id_modalidad');
+            var tipoEstudioSelect = document.getElementById('id_tipo_estudio');
+            if (!modalidadSelect || !tipoEstudioSelect) return;
+
+            function aplicarFiltro() {
+                var grupo = modalidadSelect.value;
+                var seleccionadoSigueVisible = false;
+                Array.prototype.forEach.call(tipoEstudioSelect.options, function (op) {
+                    if (!op.value) { return; }
+                    var visible = !grupo || op.getAttribute('data-modalidad') === grupo;
+                    op.hidden = !visible;
+                    op.disabled = !visible;
+                    if (visible && op.value === tipoEstudioSelect.value) {
+                        seleccionadoSigueVisible = true;
+                    }
+                });
+                if (!seleccionadoSigueVisible) {
+                    tipoEstudioSelect.value = '';
+                    tipoEstudioSelect.dispatchEvent(new Event('change'));
+                }
+            }
+
+            modalidadSelect.addEventListener('change', aplicarFiltro);
+            if (modalidadSelect.value) { aplicarFiltro(); }
+        })();
+
+        // Muestra el "cuadro" de radiólogo según el tipo de estudio:
+        //  - sin radiólogos: aviso, no se puede agendar
+        //  - un solo radiólogo: se asigna solo (queda informado, sin elegir)
+        //  - varios radiólogos: aparece el <select> para elegir a cuál asignar
         (function () {
             var tipoEstudioSelect = document.getElementById('id_tipo_estudio');
             var radiologoSelect = document.getElementById('id_radiologo');
+            var bloque = document.getElementById('bloque-radiologo');
+            var ayuda = document.getElementById('ayuda-radiologo');
 
-            function actualizarRadiologos(preservarSeleccion) {
-                var tipoEstudioId = tipoEstudioSelect.value;
-                var seleccionActual = preservarSeleccion ? radiologoSelect.value : '';
+            function pintar(radiologos, seleccionActual) {
+                radiologoSelect.innerHTML = '';
+                ayuda.style.display = 'none';
+                radiologoSelect.style.display = '';
 
-                if (!tipoEstudioId) {
-                    radiologoSelect.innerHTML = '<option value="">---------</option>';
+                if (!radiologos || radiologos.length === 0) {
+                    var vacia = document.createElement('option');
+                    vacia.value = '';
+                    vacia.textContent = 'Este estudio no tiene radiólogos asignados';
+                    radiologoSelect.appendChild(vacia);
+                    ayuda.textContent = 'Asigná radiólogos a este estudio antes de agendarlo.';
+                    ayuda.style.display = 'block';
                     return;
                 }
 
-                fetch(
-                    '{% url "radiologos_por_estudio" %}?tipo_estudio=' + encodeURIComponent(tipoEstudioId)
-                )
-                    .then(function (respuesta) { return respuesta.json(); })
-                    .then(function (datos) {
-                        radiologoSelect.innerHTML = '';
-                        if (datos.radiologos.length === 0) {
-                            var vacia = document.createElement('option');
-                            vacia.value = '';
-                            vacia.textContent = 'Ningún radiólogo realiza este estudio';
-                            radiologoSelect.appendChild(vacia);
-                            return;
-                        }
-                        var placeholder = document.createElement('option');
-                        placeholder.value = '';
-                        placeholder.textContent = '---------';
-                        radiologoSelect.appendChild(placeholder);
-                        datos.radiologos.forEach(function (radiologo) {
-                            var opcion = document.createElement('option');
-                            opcion.value = radiologo.id;
-                            opcion.textContent = radiologo.texto;
-                            if (String(radiologo.id) === seleccionActual) {
-                                opcion.selected = true;
-                            }
-                            radiologoSelect.appendChild(opcion);
-                        });
-                    });
+                if (radiologos.length > 1) {
+                    var placeholder = document.createElement('option');
+                    placeholder.value = '';
+                    placeholder.textContent = '— Elegí un radiólogo —';
+                    radiologoSelect.appendChild(placeholder);
+                    ayuda.textContent = 'Este estudio lo realizan varios radiólogos: elegí a cuál asignar la cita.';
+                    ayuda.style.display = 'block';
+                }
+
+                radiologos.forEach(function (r) {
+                    var op = document.createElement('option');
+                    op.value = r.id;
+                    op.textContent = r.texto;
+                    if (String(r.id) === String(seleccionActual)) { op.selected = true; }
+                    radiologoSelect.appendChild(op);
+                });
+
+                if (radiologos.length === 1) {
+                    radiologoSelect.value = radiologos[0].id;
+                    radiologoSelect.style.display = 'none';
+                    ayuda.textContent = 'Radiólogo asignado: ' + radiologos[0].texto + ' (único que realiza este estudio).';
+                    ayuda.style.display = 'block';
+                }
             }
 
-            tipoEstudioSelect.addEventListener('change', function () {
-                actualizarRadiologos(false);
-            });
-
-            // Si el formulario vuelve a mostrarse con errores, conserva el
-            // tipo de estudio y el radiólogo que ya se habían elegido.
-            if (tipoEstudioSelect.value) {
-                actualizarRadiologos(true);
+            function actualizar(preservarSeleccion) {
+                var tipoEstudioId = tipoEstudioSelect.value;
+                var seleccionActual = preservarSeleccion ? radiologoSelect.value : '';
+                if (!tipoEstudioId) {
+                    bloque.style.display = 'none';
+                    radiologoSelect.innerHTML = '<option value="">---------</option>';
+                    return;
+                }
+                bloque.style.display = '';
+                fetch('{% url "radiologos_por_estudio" %}?tipo_estudio=' + encodeURIComponent(tipoEstudioId))
+                    .then(function (r) { return r.json(); })
+                    .then(function (d) { pintar(d.radiologos, seleccionActual); });
             }
+
+            tipoEstudioSelect.addEventListener('change', function () { actualizar(false); });
+            actualizar(true);
         })();
 
         // Muestra cuánto dura y cuánto cuesta el estudio elegido, para que la
