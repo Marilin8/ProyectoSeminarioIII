@@ -563,9 +563,13 @@ def ver_estudio_historial(request, cita_id):
     informe, tal como quedaron al terminar el proceso."""
     cita = get_object_or_404(Cita, id=cita_id, estado=Cita.ESTADO_PROCESADA)
     orden = get_object_or_404(OrdenTrabajo, cita=cita)
+    # Se excluyen las imágenes sin archivo cargado: acceder a `.url` de un
+    # FileField vacío revienta el render de la plantilla.
+    imagenes = orden.imagenes.exclude(archivo='').order_by('subida_en')
     return render(request, 'pacientes/ver_estudio_historial.html', {
         'cita': cita,
         'orden': orden,
+        'imagenes': imagenes,
         'edad': orden.edad_paciente,
         'volver_url': reverse('historial_paciente', args=[cita.paciente_id]),
     })
