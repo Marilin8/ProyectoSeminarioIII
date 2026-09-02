@@ -401,6 +401,23 @@ class CalendarioRadiologoTests(TestCase):
         self.assertFalse(celda9['asignado'])   # la cita del rad2 no aparece
         self.assertFalse(celda9['ocupado'])
 
+    def test_celda_ocupada_trae_el_detalle_de_las_citas(self):
+        # otra cita a la misma hora que cita1 (8:00), otro paciente/estudio
+        crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
+            estado=Cita.ESTADO_AGENDADA, radiologo=self.rad2, fecha=self.dia,
+            hora=datetime.time(8, 0), paciente=crear_paciente(dpi='7778889990001'),
+        )
+        r = self.client.get(reverse('calendario_coex'), {'semana': self.dia.isoformat()})
+        celda = self._celda(r, datetime.time(8, 0))
+        self.assertEqual(len(celda['citas']), 2)
+        estudios = {c['estudio'] for c in celda['citas']}
+        self.assertEqual(estudios, {'RX cal'})
+        radiologos = {c['radiologo'] for c in celda['citas']}
+        self.assertEqual(radiologos, {'Radiologo Uno', 'Radiologo Dos'})
+        clave = f"{self.dia.isoformat()}|08:00"
+        self.assertIn(clave, r.context['slots_detalle'])
+
 
 class HorariosTests(TestCase):
 

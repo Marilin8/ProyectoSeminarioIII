@@ -658,7 +658,7 @@ def seleccionar_horario(request, convenio):
     citas_semana = (
         Cita.objects.filter(fecha__gte=dias[0], fecha__lte=dias[-1])
         .exclude(estado=Cita.ESTADO_RECHAZADA)
-        .select_related('tipo_estudio')
+        .select_related('tipo_estudio', 'paciente', 'radiologo')
     )
     if reagendar_cita:
         citas_semana = citas_semana.exclude(id=reagendar_cita.id)
@@ -679,21 +679,37 @@ def seleccionar_horario(request, convenio):
 
     # El calendario es único para toda la clínica: un turno ocupado por
     # cualquier convenio (COEX / Privado / Emergencia IGSS) se ve ocupado en
-    # los tres. Se guarda la etiqueta del convenio para mostrarla en la celda.
-    ocupados_por_dia = {}   # fecha -> [(rango, etiqueta_convenio), ...]
+    # los tres. Se guarda además la lista de citas de cada franja para poder
+    # mostrar (al hacer clic en un horario ocupado) a quién está asignada y
+    # qué estudio es, y decidir si cabe una cita más.
+    citas_por_dia = {}   # fecha -> [(rango, cita), ...]
     asignados_por_dia = {}  # fecha -> {hora: {etiquetas}}
     for cita in citas_semana:
         etiqueta = ETIQUETA_CONVENIO_CORTA.get(cita.convenio, cita.convenio)
         rango = rango_ocupado_por(cita.fecha, cita.hora, cita.tipo_estudio.duracion_minutos)
-        ocupados_por_dia.setdefault(cita.fecha, []).append((rango, etiqueta))
+        citas_por_dia.setdefault(cita.fecha, []).append((rango, cita))
         asignados_por_dia.setdefault(cita.fecha, {}).setdefault(cita.hora, set()).add(etiqueta)
+
+    def _resumen_cita(cita):
+        radiologo = cita.radiologo
+        return {
+            'hora': cita.hora.strftime('%H:%M'),
+            'paciente': f'{cita.paciente.nombre} {cita.paciente.apellido}',
+            'estudio': cita.tipo_estudio.nombre,
+            'convenio': cita.get_convenio_display(),
+            'radiologo': (
+                (radiologo.get_full_name() or radiologo.username) if radiologo else 'Sin asignar'
+            ),
+        }
 
     def _celda(dia, hora):
         asignados = asignados_por_dia.get(dia, {})
+        franja = rango_ocupado_por(dia, hora, PASO_MINUTOS)
         cruces = [
-            et for rango, et in ocupados_por_dia.get(dia, [])
-            if se_cruzan(rango_ocupado_por(dia, hora, PASO_MINUTOS), rango)
+            cita for rango, cita in citas_por_dia.get(dia, [])
+            if se_cruzan(franja, rango)
         ]
+        etiquetas = sorted({ETIQUETA_CONVENIO_CORTA.get(c.convenio, c.convenio) for c in cruces})
         return {
             'dia': dia,
             'hora': hora,
@@ -701,14 +717,18 @@ def seleccionar_horario(request, convenio):
             'fuera_rango': fuera_de_ventana(dia),
             'asignado': hora in asignados,
             'ocupado': hora not in asignados and bool(cruces),
-            'convenios': ', '.join(sorted(asignados[hora])) if hora in asignados
-            else ', '.join(sorted(set(cruces))),
+            'convenios': ', '.join(etiquetas),
+            'citas': [_resumen_cita(c) for c in sorted(cruces, key=lambda c: c.hora)],
         }
 
     filas = [
         {'hora': hora, 'celdas': [_celda(dia, hora) for dia in dias]}
         for hora in horarios_disponibles()
     ]
+    slots_detalle = {
+        f"{celda['dia'].isoformat()}|{celda['hora'].strftime('%H:%M')}": celda['citas']
+        for fila in filas for celda in fila['celdas'] if celda['citas']
+    }
 
     contexto = {
         'convenio': convenio,
@@ -726,6 +746,7 @@ def seleccionar_horario(request, convenio):
         'maximo_emergencias_por_dia': MAXIMO_EMERGENCIAS_POR_DIA,
         'radiologos': radiologos,
         'radiologo_seleccionado': radiologo_seleccionado,
+        'slots_detalle': slots_detalle,
     }
     return render(request, 'pacientes/calendario.html', contexto)
 

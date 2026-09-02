@@ -56,20 +56,49 @@
             color: #94a3b8;
             font-size: 0.8rem;
         }
-        a.slot-ocupado {
+        a.slot-ocupado, button.slot-ocupado {
             display: block;
+            width: 100%;
             padding: 0.4rem;
             border-radius: var(--radius);
+            border: none;
             text-decoration: none;
             background: var(--danger-light);
             color: #991b1b;
+            font-family: inherit;
             font-weight: 600;
             font-size: 0.8rem;
+            cursor: pointer;
             transition: background var(--transition);
         }
-        a.slot-ocupado:hover {
+        a.slot-ocupado:hover, button.slot-ocupado:hover {
             background: #fca5a5;
         }
+        .cal-modal-overlay {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(15, 23, 42, 0.45);
+            z-index: 1000;
+            align-items: center; justify-content: center;
+            padding: 1rem;
+        }
+        .cal-modal-overlay.abierto { display: flex; }
+        .cal-modal {
+            background: white; border-radius: var(--radius);
+            max-width: 460px; width: 100%;
+            padding: 1.25rem 1.4rem;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+        }
+        .cal-modal h3 { margin: 0 0 0.25rem; font-size: 1rem; }
+        .cal-modal .subt { color: var(--text-muted); font-size: 0.82rem; margin-bottom: 0.9rem; }
+        .cal-modal ul { list-style: none; margin: 0 0 1rem; padding: 0; }
+        .cal-modal li {
+            border: 1px solid var(--border-light); border-radius: 8px;
+            padding: 0.5rem 0.65rem; margin-bottom: 0.4rem; font-size: 0.85rem;
+        }
+        .cal-modal li .paciente { font-weight: 700; }
+        .cal-modal li .meta { color: var(--text-muted); font-size: 0.78rem; margin-top: 0.15rem; }
+        .cal-modal .acciones { display: flex; gap: 0.5rem; justify-content: flex-end; }
         a.slot-libre {
             display: block;
             padding: 0.4rem;
@@ -176,10 +205,13 @@
                                     <span class="pasado">No disponible</span>
                                 {% elif reagendar_cita %}
                                     <a class="slot" href="{% url reagendar_url_name cita_id=reagendar_cita.id %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}">{{ celda.cantidad }} cita{{ celda.cantidad|pluralize }}</a>
-                                {% elif celda.ocupado %}
-                                    <a class="slot-ocupado" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}{% if radiologo_seleccionado %}&radiologo={{ radiologo_seleccionado.id }}{% endif %}" title="Horario cruzado con una cita de {{ celda.convenios }}.">Ocupado · {{ celda.convenios }}</a>
-                                {% elif celda.asignado %}
-                                    <a class="slot-ocupado" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}{% if radiologo_seleccionado %}&radiologo={{ radiologo_seleccionado.id }}{% endif %}" title="Ya hay una cita de {{ celda.convenios }} que inicia aquí.">Ocupado · {{ celda.convenios }}</a>
+                                {% elif celda.ocupado or celda.asignado %}
+                                    <button type="button" class="slot-ocupado"
+                                            data-slot="{{ celda.dia|date:'Y-m-d' }}|{{ celda.hora|time:'H:i' }}"
+                                            data-fecha="{{ celda.dia|date:'Y-m-d' }}"
+                                            data-hora="{{ celda.hora|time:'H:i' }}">
+                                        Ocupado · {{ celda.convenios }}
+                                    </button>
                                 {% else %}
                                     <a class="slot-libre" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}{% if radiologo_seleccionado %}&radiologo={{ radiologo_seleccionado.id }}{% endif %}">Libre</a>
                                 {% endif %}
@@ -192,6 +224,72 @@
     </div>
 
     <p class="leyenda">
-        <span style="background:#bfdbfe;"></span> Disponible — el número es solo referencia, no hay límite de cupo
+        <span style="background:#86efac;"></span> Libre &nbsp;
+        <span style="background:#fca5a5;"></span> Ocupado — hacé clic para ver a quién está asignado y agendar otra cita si cabe
     </p>
+
+    {{ slots_detalle|json_script:"slots-detalle" }}
+
+    <div class="cal-modal-overlay" id="cal-modal-overlay">
+        <div class="cal-modal" role="dialog" aria-modal="true">
+            <h3 id="cal-modal-titulo">Citas a esta hora</h3>
+            <p class="subt" id="cal-modal-subt"></p>
+            <ul id="cal-modal-lista"></ul>
+            <div class="acciones">
+                <button type="button" class="btn btn-outline btn-sm" id="cal-modal-cerrar">Cerrar</button>
+                <a class="btn btn-primary btn-sm" id="cal-modal-agendar">
+                    <svg width="14" height="14"><use href="#i-plus"/></svg>
+                    Agendar otra a esta hora
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function () {
+        var detalle = {};
+        try { detalle = JSON.parse(document.getElementById('slots-detalle').textContent) || {}; }
+        catch (e) { detalle = {}; }
+
+        var overlay = document.getElementById('cal-modal-overlay');
+        var titulo = document.getElementById('cal-modal-titulo');
+        var subt = document.getElementById('cal-modal-subt');
+        var lista = document.getElementById('cal-modal-lista');
+        var btnAgendar = document.getElementById('cal-modal-agendar');
+        var AGENDAR_URL = "{% url agendar_url_name %}";
+        var RADIOLOGO = "{% if radiologo_seleccionado %}{{ radiologo_seleccionado.id }}{% endif %}";
+
+        function abrir(fecha, hora) {
+            var citas = detalle[fecha + '|' + hora] || [];
+            titulo.textContent = 'Citas del ' + fecha.split('-').reverse().join('/') + ' a las ' + hora;
+            subt.textContent = citas.length + ' cita' + (citas.length === 1 ? '' : 's') + ' en esta franja';
+            lista.innerHTML = '';
+            citas.forEach(function (c) {
+                var li = document.createElement('li');
+                var p = document.createElement('div');
+                p.className = 'paciente';
+                p.textContent = c.hora + ' · ' + c.paciente;
+                var m = document.createElement('div');
+                m.className = 'meta';
+                m.textContent = c.estudio + ' · ' + c.convenio + ' · Radiólogo: ' + c.radiologo;
+                li.appendChild(p); li.appendChild(m);
+                lista.appendChild(li);
+            });
+            var url = AGENDAR_URL + '?fecha=' + encodeURIComponent(fecha) + '&hora=' + encodeURIComponent(hora);
+            if (RADIOLOGO) { url += '&radiologo=' + encodeURIComponent(RADIOLOGO); }
+            btnAgendar.href = url;
+            overlay.classList.add('abierto');
+        }
+        function cerrar() { overlay.classList.remove('abierto'); }
+
+        document.querySelectorAll('button.slot-ocupado').forEach(function (b) {
+            b.addEventListener('click', function () {
+                abrir(b.getAttribute('data-fecha'), b.getAttribute('data-hora'));
+            });
+        });
+        document.getElementById('cal-modal-cerrar').addEventListener('click', cerrar);
+        overlay.addEventListener('click', function (e) { if (e.target === overlay) cerrar(); });
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') cerrar(); });
+    })();
+    </script>
 {% endblock %}
