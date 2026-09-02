@@ -1718,6 +1718,84 @@ def avanzar_turno(request, ticket_id):
 
 @login_required
 @user_passes_test(es_recepcionista)
+@require_POST
+def mover_turno(request, ticket_id):
+    """Sube o baja un turno una posición en la fila de espera (respetando la
+    prioridad). `direccion` = 'subir' | 'bajar'."""
+    ticket = get_object_or_404(Ticket, id=ticket_id, estado=Ticket.ESTADO_EN_ESPERA)
+    direccion = request.POST.get('direccion')
+    if direccion == 'subir':
+        ticket.mover(-1)
+    elif direccion == 'bajar':
+        ticket.mover(1)
+    else:
+        return redirect('pantalla_turnos')
+    Bitacora.registrar(
+        request=request, usuario=request.user,
+        accion=Bitacora.ACCION_ADELANTAR_TICKET,
+        descripcion=(
+            f'Movió el turno {ticket.turno} ({ticket.paciente}) '
+            f'{"hacia arriba" if direccion == "subir" else "hacia abajo"} en la fila.'
+        ),
+    )
+    return redirect('pantalla_turnos')
+
+
+@login_required
+@user_passes_test(es_recepcionista)
+@require_POST
+def procesar_turno(request, ticket_id):
+    """Genera de una vez la orden de trabajo del turno y la manda al técnico.
+    Para los turnos de COEX/Privado usa la cita que ya existe; los de
+    Emergencia IGSS (sin cita) van a la pantalla que pide el tipo de estudio."""
+    ticket = get_object_or_404(Ticket, id=ticket_id, estado=Ticket.ESTADO_EN_ESPERA)
+
+    if not ticket.cita_id:
+        if ticket.servicio == Ticket.SERVICIO_EMERGENCIA_IGSS:
+            return redirect('procesar_ticket_emergencia', ticket_id=ticket.id)
+        messages.error(
+            request,
+            f'El turno {ticket.turno} no tiene una cita asociada, no se puede procesar desde acá.',
+        )
+        return redirect('pantalla_turnos')
+
+    cita = ticket.cita
+    if cita.estado not in (Cita.ESTADO_AGENDADA, Cita.ESTADO_EN_ESPERA):
+        messages.error(request, f'La cita del turno {ticket.turno} ya no está pendiente de procesar.')
+        return redirect('pantalla_turnos')
+
+    if hasattr(cita, 'orden_trabajo'):
+        messages.info(request, f'El turno {ticket.turno} ya tenía una orden de trabajo generada.')
+    else:
+        OrdenTrabajo.objects.create(
+            cita=cita,
+            motivo=(cita.notas or ticket.motivo or 'Sin indicación clínica registrada.'),
+            creada_por=request.user,
+        )
+        cita.estado = Cita.ESTADO_EN_PROCESO
+        cita.save(update_fields=['estado'])
+        _notificar_orden_pendiente(cita)
+        Bitacora.registrar(
+            request=request, usuario=request.user,
+            accion=Bitacora.ACCION_GENERAR_ORDEN,
+            descripcion=(
+                f'Generó la orden de trabajo desde la Pantalla de turnos para '
+                f'{cita.paciente} (turno {ticket.turno}, cita #{cita.id}).'
+            ),
+        )
+
+    ticket.estado = Ticket.ESTADO_ATENDIDO
+    ticket.atendido_en = timezone.now()
+    ticket.save(update_fields=['estado', 'atendido_en'])
+    messages.success(
+        request,
+        f'Orden enviada al técnico para {cita.paciente}. Turno {ticket.turno} atendido.',
+    )
+    return redirect('pantalla_turnos')
+
+
+@login_required
+@user_passes_test(es_recepcionista)
 def procesar_ticket_emergencia(request, ticket_id):
     """Convierte el ticket en una cita EN_PROCESO + orden de trabajo, lista
     para que el técnico la vea en 'Órdenes pendientes'. Se salta agendado y

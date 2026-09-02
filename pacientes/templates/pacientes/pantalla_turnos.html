@@ -30,6 +30,13 @@
             color: var(--text-muted);
             margin-top: 0.15rem;
         }
+        .acciones-turno { display: flex; gap: 0.35rem; align-items: center; }
+        .acciones-turno form { display: inline; margin: 0; }
+        .btn-mover {
+            width: 30px; height: 30px; padding: 0; line-height: 1;
+            font-size: 1rem; font-weight: 700;
+        }
+        .btn-mover[disabled] { opacity: 0.35; cursor: default; }
     </style>
 {% endblock %}
 
@@ -94,11 +101,28 @@
                                     <td><span class="estado estado-{{ ticket.estado }}">{{ ticket.get_estado_display }}</span></td>
                                 {% endif %}
                                 <td>
-                                    {% if ticket.servicio == 'emergencia_igss' and ticket.estado == 'en_espera' %}
-                                        <a class="btn btn-primary btn-sm" href="{% url 'procesar_ticket_emergencia' ticket.id %}">
-                                            <svg width="14" height="14"><use href="#i-file-medical"/></svg>
-                                            Procesar
-                                        </a>
+                                    {% if es_hoy and ticket.estado == 'en_espera' %}
+                                        <div class="acciones-turno">
+                                            <form method="post" action="{% url 'mover_turno' ticket.id %}">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="direccion" value="subir">
+                                                <button type="submit" class="btn btn-outline btn-sm btn-mover"
+                                                        title="Subir un lugar" {% if forloop.first %}disabled{% endif %}>&uarr;</button>
+                                            </form>
+                                            <form method="post" action="{% url 'mover_turno' ticket.id %}">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="direccion" value="bajar">
+                                                <button type="submit" class="btn btn-outline btn-sm btn-mover"
+                                                        title="Bajar un lugar" {% if forloop.last %}disabled{% endif %}>&darr;</button>
+                                            </form>
+                                            <form method="post" action="{% url 'procesar_turno' ticket.id %}">
+                                                {% csrf_token %}
+                                                <button type="submit" class="btn btn-primary btn-sm">
+                                                    <svg width="14" height="14"><use href="#i-file-medical"/></svg>
+                                                    Procesar
+                                                </button>
+                                            </form>
+                                        </div>
                                     {% else %}
                                         —
                                     {% endif %}

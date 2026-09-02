@@ -260,12 +260,14 @@ class Cita(models.Model):
     @classmethod
     def marcar_ausentes_vencidas(cls):
         """Pasa a AUSENTE toda cita AGENDADA cuyo día ya pasó, o que es de hoy
-        pero ya son las 18:00 y nadie la marcó ausente/llegada."""
+        pero ya son las 18:00 y nadie la marcó ausente/llegada. No toca las
+        citas donde el paciente sí llegó (`hora_llegada`): esas siguen su
+        curso aunque se procesen después de las 18:00."""
         ahora = timezone.localtime()
         hoy = ahora.date()
         fecha_limite = hoy if ahora.time() >= datetime.time(18, 0) else hoy - datetime.timedelta(days=1)
         return cls.objects.filter(
-            estado=cls.ESTADO_AGENDADA, fecha__lte=fecha_limite
+            estado=cls.ESTADO_AGENDADA, fecha__lte=fecha_limite, hora_llegada__isnull=True,
         ).update(estado=cls.ESTADO_AUSENTE)
 
     @property
@@ -547,13 +549,14 @@ class Ticket(models.Model):
             self.orden = self.numero
             super().save(*args, **kwargs)
 
-    def adelantar(self, posiciones):
-        """Adelanta este ticket `posiciones` lugares dentro de la fila de
-        espera del día, sin tocar su número de turno oficial (`turno`) — solo
-        reordena la posición en que aparece en la Pantalla de turnos. Nunca
-        lo deja delante de un ticket de mayor prioridad (ej. no puede pasar
-        delante de un ticket de Emergencia IGSS)."""
-        if posiciones <= 0 or not self.pk:
+    def mover(self, posiciones):
+        """Mueve este ticket `posiciones` lugares dentro de la fila de espera
+        del día (negativo = adelantar, positivo = atrasar), sin tocar su
+        número de turno oficial (`turno`) — solo reordena la posición en que
+        aparece en la Pantalla de turnos. Nunca cruza tickets de otra
+        prioridad (no adelanta a uno de mayor prioridad ni atrasa detrás de
+        uno de menor)."""
+        if not posiciones or not self.pk:
             return
 
         hoy = timezone.localdate()
@@ -568,8 +571,9 @@ class Ticket(models.Model):
                 return
 
             idx = cola.index(self)
-            limite = sum(1 for t in cola if t.prioridad > self.prioridad)
-            nuevo_idx = max(limite, idx - posiciones)
+            limite_arriba = sum(1 for t in cola if t.prioridad > self.prioridad)
+            limite_abajo = len(cola) - 1 - sum(1 for t in cola if t.prioridad < self.prioridad)
+            nuevo_idx = min(max(idx + posiciones, limite_arriba), limite_abajo)
             if nuevo_idx == idx:
                 return
 
@@ -579,6 +583,11 @@ class Ticket(models.Model):
                 if ticket.orden != posicion:
                     Ticket.objects.filter(pk=ticket.pk).update(orden=posicion)
                     ticket.orden = posicion
+
+    def adelantar(self, posiciones):
+        """Atajo histórico: adelanta `posiciones` lugares (positivo)."""
+        if posiciones > 0:
+            self.mover(-posiciones)
 
 
 class Notificacion(models.Model):

@@ -173,6 +173,8 @@ urlpatterns = [
     ),
     path('turnos/', views.pantalla_turnos, name='pantalla_turnos'),
     path('turnos/<int:ticket_id>/siguiente/', views.avanzar_turno, name='avanzar_turno'),
+    path('turnos/<int:ticket_id>/mover/', views.mover_turno, name='mover_turno'),
+    path('turnos/<int:ticket_id>/procesar/', views.procesar_turno, name='procesar_turno'),
     path('notificaciones/pendientes/', views.notificaciones_pendientes, name='notificaciones_pendientes'),
     path(
         'notificaciones/<int:notificacion_id>/marcar-leida/',

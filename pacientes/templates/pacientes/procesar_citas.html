@@ -117,12 +117,7 @@
                                     {% endif %}
                                 {% elif cita.estado == 'agendada' and cita.hora_llegada %}
                                     <span class="llego-a">Llegó a las {{ cita.hora_llegada|time:'H:i' }}</span>
-                                    <div class="acciones">
-                                        <a class="btn btn-primary btn-sm" href="{% url generar_orden_url_name cita_id=cita.id %}">
-                                            <svg width="14" height="14"><use href="#i-file-medical"/></svg>
-                                            Procesar estudio
-                                        </a>
-                                    </div>
+                                    <p class="ayuda" style="margin:0.25rem 0 0;">El estudio se procesa desde la <a href="{% url 'pantalla_turnos' %}">Pantalla de turnos</a>.</p>
                                 {% elif cita.estado == 'en_proceso' %}
                                     <span class="llego-a">Orden enviada al técnico</span>
                                 {% elif cita.estado == 'ausente' %}

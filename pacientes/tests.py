@@ -731,6 +731,57 @@ class PantallaTurnosViewTests(TestCase):
         respuesta = self.client.get(reverse('pantalla_turnos'))
         self.assertEqual(respuesta.context['actual'], ticket_2)
 
+    def test_mover_turno_sube_y_baja_una_posicion(self):
+        p1, p2, p3 = (crear_paciente(dpi=f'{n:013d}') for n in (30, 31, 32))
+        t1 = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
+        t2 = Ticket.objects.create(paciente=p2, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
+        t3 = Ticket.objects.create(paciente=p3, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
+
+        self.client.post(reverse('mover_turno', args=[t3.id]), {'direccion': 'subir'})
+        cola = list(Ticket.objects.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden'))
+        self.assertEqual(cola, [t1, t3, t2])
+
+        self.client.post(reverse('mover_turno', args=[t3.id]), {'direccion': 'bajar'})
+        cola = list(Ticket.objects.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden'))
+        self.assertEqual(cola, [t1, t2, t3])
+
+    def test_procesar_turno_de_cita_genera_orden_y_marca_atendido(self):
+        recepcion = self.usuario
+        radiologo = crear_usuario('rad_turno', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        estudio = TipoEstudio.objects.create(nombre='RX turno')
+        estudio.radiologos.add(radiologo)
+        cita = crear_cita(
+            recepcion, tipo_estudio=estudio, convenio=Cita.CONVENIO_COEX,
+            estado=Cita.ESTADO_AGENDADA, radiologo=radiologo, notas='Dolor lumbar',
+            hora_llegada=timezone.now(),
+            paciente=crear_paciente(dpi='4040404040404'),
+        )
+        ticket = Ticket.objects.create(
+            paciente=cita.paciente, cita=cita, servicio=Ticket.SERVICIO_COEX,
+            registrado_por=recepcion,
+        )
+
+        respuesta = self.client.post(reverse('procesar_turno', args=[ticket.id]))
+
+        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
+        cita.refresh_from_db()
+        ticket.refresh_from_db()
+        self.assertEqual(cita.estado, Cita.ESTADO_EN_PROCESO)
+        self.assertTrue(OrdenTrabajo.objects.filter(cita=cita).exists())
+        self.assertEqual(OrdenTrabajo.objects.get(cita=cita).motivo, 'Dolor lumbar')
+        self.assertEqual(ticket.estado, Ticket.ESTADO_ATENDIDO)
+
+    def test_procesar_turno_de_emergencia_sin_cita_va_a_su_pantalla(self):
+        ticket = Ticket.objects.create(
+            paciente=crear_paciente(dpi='5050505050505'),
+            servicio=Ticket.SERVICIO_EMERGENCIA_IGSS, registrado_por=self.usuario,
+        )
+        respuesta = self.client.post(reverse('procesar_turno', args=[ticket.id]))
+        self.assertRedirects(
+            respuesta, reverse('procesar_ticket_emergencia', args=[ticket.id]),
+            target_status_code=200,
+        )
+
 
 class ProcesarTicketEmergenciaViewTests(TestCase):
 
