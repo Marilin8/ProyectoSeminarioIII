@@ -12,8 +12,29 @@
 {% endblock %}
 
 {% block content %}
+    <form method="get" class="card mb-2" style="padding:0.85rem 1rem;display:flex;gap:0.6rem;align-items:flex-end;flex-wrap:wrap;">
+        <div style="display:flex;flex-direction:column;gap:0.2rem;">
+            <label for="q" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Buscar</label>
+            <input type="text" name="q" id="q" value="{{ busqueda }}" placeholder="Nombre del estudio" style="min-width:16rem;">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:0.2rem;">
+            <label for="modalidad" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Categoría</label>
+            <select name="modalidad" id="modalidad">
+                <option value="">Todas</option>
+                {% for valor, texto in modalidades %}
+                    <option value="{{ valor }}" {% if modalidad == valor %}selected{% endif %}>{{ texto }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">
+            <svg width="14" height="14"><use href="#i-search"/></svg> Buscar
+        </button>
+        {% if busqueda or modalidad %}<a class="btn btn-outline btn-sm" href="{% url 'lista_estudios' %}">Limpiar</a>{% endif %}
+    </form>
+
     <div class="card">
-        <div class="card-header" style="display: flex; justify-content: flex-end;">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items:center;">
+            <span class="text-muted text-sm">{{ pagina.paginator.count }} estudio{{ pagina.paginator.count|pluralize }}</span>
             <a class="btn btn-primary" href="{% url 'crear_estudio' %}">
                 <svg width="14" height="14"><use href="#i-plus"/></svg>
                 Nuevo estudio
@@ -50,8 +71,24 @@
                     </tbody>
                 </table>
             {% else %}
-                <p class="text-muted text-center" style="padding: 2rem 0;">Todavía no hay estudios creados.</p>
+                <p class="text-muted text-center" style="padding: 2rem 0;">
+                    {% if busqueda or modalidad %}Ningún estudio coincide con el filtro.{% else %}Todavía no hay estudios creados.{% endif %}
+                </p>
             {% endif %}
         </div>
+        {% if pagina.paginator.num_pages > 1 %}
+            <div class="flex-between" style="padding:0.75rem 1rem;border-top:1px solid var(--border-light);font-size:0.82rem;">
+                <span class="text-muted">{{ pagina.start_index }}–{{ pagina.end_index }} de {{ pagina.paginator.count }}</span>
+                <span class="flex gap-1" style="align-items:center;">
+                    {% if pagina.has_previous %}
+                        <a class="btn btn-outline btn-sm" href="?{% if filtros_qs %}{{ filtros_qs }}&{% endif %}page={{ pagina.previous_page_number }}">Anterior</a>
+                    {% endif %}
+                    <span class="text-muted">Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+                    {% if pagina.has_next %}
+                        <a class="btn btn-outline btn-sm" href="?{% if filtros_qs %}{{ filtros_qs }}&{% endif %}page={{ pagina.next_page_number }}">Siguiente</a>
+                    {% endif %}
+                </span>
+            </div>
+        {% endif %}
     </div>
 {% endblock %}

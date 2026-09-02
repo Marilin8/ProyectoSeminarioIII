@@ -419,6 +419,36 @@ class CalendarioRadiologoTests(TestCase):
         self.assertIn(clave, r.context['slots_detalle'])
 
 
+class ListaEstudiosTests(TestCase):
+    """Lista de estudios del admin: buscador, filtro por categoría y
+    paginación de 20 por hoja."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_estudios', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.client.force_login(self.admin)
+        # (la migración de catálogo ya deja ~131 estudios en la BD de test)
+        for i in range(25):
+            TipoEstudio.objects.create(nombre=f'ZZTEST RX {i:02d}', modalidad=TipoEstudio.MODALIDAD_RX)
+
+    def test_pagina_muestra_maximo_20(self):
+        r = self.client.get(reverse('lista_estudios'))
+        self.assertEqual(len(r.context['pagina'].object_list), 20)
+
+    def test_filtro_y_buscador_combinados_pagina_de_20(self):
+        r = self.client.get(reverse('lista_estudios'), {'q': 'ZZTEST', 'modalidad': TipoEstudio.MODALIDAD_RX})
+        self.assertEqual(r.context['pagina'].paginator.count, 25)
+        self.assertEqual(len(r.context['pagina'].object_list), 20)
+        self.assertEqual(r.context['pagina'].paginator.num_pages, 2)
+
+    def test_buscador_por_nombre_exacto(self):
+        r = self.client.get(reverse('lista_estudios'), {'q': 'ZZTEST RX 03'})
+        self.assertEqual(r.context['pagina'].paginator.count, 1)
+
+    def test_segunda_pagina_del_filtro(self):
+        r = self.client.get(reverse('lista_estudios'), {'q': 'ZZTEST', 'page': '2'})
+        self.assertEqual(len(r.context['pagina'].object_list), 5)
+
+
 class HorariosTests(TestCase):
 
     def test_horarios_disponibles_va_de_inicio_a_fin_cada_15_minutos(self):

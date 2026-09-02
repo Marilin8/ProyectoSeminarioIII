@@ -9,6 +9,7 @@ from django import forms
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.files.base import ContentFile
+from django.core.paginator import Paginator
 from django.db.models import Q
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -605,15 +606,33 @@ def crear_estudio(request):
     return render(request, 'pacientes/crear_estudio.html', {'form': form, 'editando': None})
 
 
+ESTUDIOS_POR_PAGINA = 20
+
+
 @login_required
 @user_passes_test(es_administrador)
 def lista_estudios(request):
-    estudios = (
-        TipoEstudio.objects.all()
-        .prefetch_related('precios')
-        .order_by('modalidad', 'nombre')
-    )
-    return render(request, 'pacientes/lista_estudios.html', {'estudios': estudios})
+    busqueda = (request.GET.get('q') or '').strip()
+    modalidad = (request.GET.get('modalidad') or '').strip()
+
+    estudios = TipoEstudio.objects.all().prefetch_related('precios').order_by('modalidad', 'nombre')
+    if busqueda:
+        estudios = estudios.filter(nombre__icontains=busqueda)
+    if modalidad in dict(TipoEstudio.MODALIDAD_CHOICES):
+        estudios = estudios.filter(modalidad=modalidad)
+
+    pagina = Paginator(estudios, ESTUDIOS_POR_PAGINA).get_page(request.GET.get('page'))
+
+    filtros = request.GET.copy()
+    filtros.pop('page', None)
+    return render(request, 'pacientes/lista_estudios.html', {
+        'estudios': pagina,
+        'pagina': pagina,
+        'busqueda': busqueda,
+        'modalidad': modalidad,
+        'modalidades': TipoEstudio.MODALIDAD_CHOICES,
+        'filtros_qs': filtros.urlencode(),
+    })
 
 
 @login_required
