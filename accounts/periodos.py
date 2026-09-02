@@ -79,9 +79,12 @@ def resolver_periodo(request):
     if modo == 'rango':
         desde = parse_date(request.GET.get('desde', ''))
         hasta = parse_date(request.GET.get('hasta', ''))
-        if desde and hasta and desde <= hasta:
-            etiqueta = f'{desde:%d/%m/%Y} al {hasta:%d/%m/%Y}'
-            return _base('rango', desde, hasta, etiqueta, hoy)
+        if not (desde and hasta and desde <= hasta):
+            # Todavía no eligió fechas: se muestra el modo rango con el mes
+            # actual como valores iniciales para que aparezcan los campos.
+            desde, hasta = _rango_mes(hoy.year, hoy.month)
+        etiqueta = f'{desde:%d/%m/%Y} al {hasta:%d/%m/%Y}'
+        return _base('rango', desde, hasta, etiqueta, hoy)
 
     # Por defecto: mes (el indicado o el actual).
     mes_txt = request.GET.get('mes') or ''
