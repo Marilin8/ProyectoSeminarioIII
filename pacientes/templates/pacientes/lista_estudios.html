@@ -12,7 +12,7 @@
 {% endblock %}
 
 {% block content %}
-    <form method="get" class="card mb-2" style="padding:0.85rem 1rem;display:flex;gap:0.6rem;align-items:flex-end;flex-wrap:wrap;">
+    <form method="get" data-buscar-vivo class="card mb-2" style="padding:0.85rem 1rem;display:flex;gap:0.6rem;align-items:flex-end;flex-wrap:wrap;">
         <div style="display:flex;flex-direction:column;gap:0.2rem;">
             <label for="q" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Buscar</label>
             <input type="text" name="q" id="q" value="{{ busqueda }}" placeholder="Nombre del estudio" style="min-width:16rem;">
