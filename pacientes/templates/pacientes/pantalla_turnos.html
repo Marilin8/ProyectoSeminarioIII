@@ -81,6 +81,7 @@
                         <tr>
                             <th>Turno</th>
                             <th>Paciente</th>
+                            <th>Estudio / Radiólogo</th>
                             <th>Prioridad</th>
                             <th>Hora de llegada</th>
                             {% if not es_hoy %}<th>Estado</th>{% endif %}
@@ -95,6 +96,20 @@
                                     <span class="turno-origen">{{ ticket.get_servicio_display }}</span>
                                 </td>
                                 <td>{{ ticket.paciente.nombre }} {{ ticket.paciente.apellido }}</td>
+                                <td>
+                                    {% if ticket.cita %}
+                                        {{ ticket.cita.tipo_estudio.nombre }}
+                                        <span class="turno-origen">
+                                            {% if ticket.cita.radiologo %}
+                                                {{ ticket.cita.radiologo.get_full_name|default:ticket.cita.radiologo.username }}
+                                            {% else %}
+                                                Sin radiólogo asignado
+                                            {% endif %}
+                                        </span>
+                                    {% else %}
+                                        <span class="text-muted">Sin cita (se define al procesar)</span>
+                                    {% endif %}
+                                </td>
                                 <td><span class="badge prioridad-{{ ticket.prioridad }}">{{ ticket.get_prioridad_display }}</span></td>
                                 <td>{{ ticket.creado_en|time:'H:i' }}</td>
                                 {% if not es_hoy %}
