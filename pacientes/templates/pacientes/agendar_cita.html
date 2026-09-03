@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 {% extends 'base.html' %}
 
 {% block title %}Agendar cita — Clínica de Imágenes{% endblock %}
@@ -38,201 +37,12 @@
             {% endif %}
 
             <h2 style="font-size:0.95rem;color:var(--text);margin:1.5rem 0 0.25rem;border-bottom:1px solid var(--border-light);padding-bottom:0.3rem;font-weight:600;">Paciente</h2>
-=======
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Agendar cita - Clínica de Imágenes</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f1f5f9;
-            margin: 0;
-            padding: 2rem;
-        }
-        .topbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-        }
-        h1 {
-            color: #0f172a;
-            font-size: 1.4rem;
-        }
-        a.volver {
-            color: #2563eb;
-            text-decoration: none;
-            font-size: 0.85rem;
-        }
-        .card {
-            background: white;
-            border-radius: 12px;
-            padding: 2rem;
-            max-width: 640px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-        }
-        h2 {
-            font-size: 1rem;
-            color: #334155;
-            margin: 1.5rem 0 0.25rem;
-            border-bottom: 1px solid #e2e8f0;
-            padding-bottom: 0.25rem;
-        }
-        h2:first-child {
-            margin-top: 0;
-        }
-        label {
-            display: block;
-            font-size: 0.85rem;
-            color: #334155;
-            margin-bottom: 0.25rem;
-            margin-top: 1rem;
-        }
-        input, select, textarea {
-            width: 100%;
-            padding: 0.5rem;
-            border: 1px solid #cbd5e1;
-            border-radius: 6px;
-            box-sizing: border-box;
-            font-family: inherit;
-        }
-        .errorlist {
-            color: #dc2626;
-            font-size: 0.8rem;
-            list-style: none;
-            padding: 0;
-            margin: 0.25rem 0 0;
-        }
-        .ayuda {
-            font-size: 0.75rem;
-            color: #64748b;
-            margin-top: 0.25rem;
-        }
-        button {
-            margin-top: 1.5rem;
-            width: 100%;
-            padding: 0.6rem;
-            background: #2563eb;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        button:hover {
-            background: #1d4ed8;
-        }
-        .horario {
-            background: #eff6ff;
-            border: 1px solid #bfdbfe;
-            border-radius: 6px;
-            padding: 0.6rem 0.75rem;
-            font-size: 0.85rem;
-            color: #1e3a8a;
-        }
-        .horario a {
-            color: #2563eb;
-            margin-left: 0.5rem;
-        }
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(15, 23, 42, 0.55);
-            align-items: center;
-            justify-content: center;
-            z-index: 50;
-        }
-        .modal-overlay.abierto {
-            display: flex;
-        }
-        .modal-card {
-            background: white;
-            border-radius: 12px;
-            padding: 1.5rem 2rem;
-            max-width: 480px;
-            width: 90%;
-            max-height: 80vh;
-            overflow-y: auto;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.25);
-        }
-        .modal-card h2 {
-            margin-top: 0;
-            font-size: 1.1rem;
-            color: #0f172a;
-            border-bottom: none;
-            padding-bottom: 0;
-        }
-        .modal-resumen dt {
-            font-size: 0.75rem;
-            color: #64748b;
-            margin-top: 0.6rem;
-        }
-        .modal-resumen dd {
-            font-size: 0.9rem;
-            color: #0f172a;
-            margin: 0.1rem 0 0;
-        }
-        .modal-botones {
-            display: flex;
-            gap: 0.75rem;
-            margin-top: 1.5rem;
-        }
-        .modal-botones button {
-            margin-top: 0;
-            flex: 1;
-        }
-        .btn-editar {
-            background: #e2e8f0 !important;
-            color: #334155 !important;
-        }
-        .btn-editar:hover {
-            background: #cbd5e1 !important;
-        }
-        .aviso-paciente {
-            display: none;
-            margin-top: 0.75rem;
-            padding: 0.6rem 0.75rem;
-            border-radius: 6px;
-            font-size: 0.85rem;
-        }
-        .aviso-paciente.encontrado {
-            background: #dcfce7;
-            color: #166534;
-            border: 1px solid #bbf7d0;
-        }
-        .aviso-paciente a {
-            color: inherit;
-            font-weight: bold;
-            margin-left: 0.5rem;
-        }
-    </style>
-</head>
-<body>
-{% include 'includes/notificaciones.html' %}
-    <div class="topbar">
-        <h1>Agendar cita — {{ convenio_nombre }}</h1>
-        <a class="volver" href="{% url 'dashboard' %}">&larr; Volver al panel</a>
-    </div>
-    <div class="card">
-        <form method="post" id="form-agendar-cita">
-            {% csrf_token %}
-            {{ form.non_field_errors }}
-
-            <h2>Paciente</h2>
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
             <label for="{{ form.dpi.id_for_label }}">DPI</label>
             {{ form.dpi }}
             {{ form.dpi.errors }}
-<<<<<<< HEAD
             <p class="ayuda ayuda-dpi-incompleto" id="ayuda-dpi-incompleto" style="display:none;"></p>
             <div class="aviso-paciente" id="aviso-paciente-existente">
-=======
-            <div class="aviso-paciente encontrado" id="aviso-paciente-existente">
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
                 Paciente ya registrado — se completaron sus datos automáticamente.
                 <a href="#" id="btn-buscar-otro">No es este paciente</a>
             </div>
@@ -253,13 +63,10 @@
             {{ form.telefono }}
             {{ form.telefono.errors }}
 
-<<<<<<< HEAD
             <label for="{{ form.correo.id_for_label }}">Correo electrónico</label>
             {{ form.correo }}
             {{ form.correo.errors }}
 
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             <label for="{{ form.fecha_nacimiento.id_for_label }}">Fecha de nacimiento (opcional)</label>
             {{ form.fecha_nacimiento }}
             {{ form.fecha_nacimiento.errors }}
@@ -274,7 +81,6 @@
             {{ form.carnet_igss }}
             {{ form.carnet_igss.errors }}
 
-<<<<<<< HEAD
             <h2 style="font-size:0.95rem;color:var(--text);margin:1.5rem 0 0.25rem;border-bottom:1px solid var(--border-light);padding-bottom:0.3rem;font-weight:600;">Cita</h2>
 
             <div class="horario">
@@ -295,24 +101,15 @@
             {% else %}
                 <div style="display:none;">{{ form.es_emergencia }}</div>
             {% endif %}
-=======
-            <h2>Cita</h2>
-
-            <div class="horario">
-                Horario elegido: <strong>{{ fecha_valor }} — {{ hora_valor }}</strong>
-                <a href="{{ calendario_url }}">Cambiar horario</a>
-            </div>
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             {{ form.fecha }}
             {{ form.hora }}
 
+            <label for="filtro-tipo-estudio">Buscar tipo de estudio</label>
+            <input type="search" id="filtro-tipo-estudio" placeholder="Escriba para filtrar estudios…" autocomplete="off">
             <label for="{{ form.tipo_estudio.id_for_label }}">Tipo de estudio</label>
             {{ form.tipo_estudio }}
             {{ form.tipo_estudio.errors }}
-<<<<<<< HEAD
             <p class="ayuda" id="previa-tipo-estudio" style="display:none;"></p>
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
             <label for="{{ form.radiologo.id_for_label }}">Radiólogo asignado</label>
             {{ form.radiologo }}
@@ -322,13 +119,9 @@
             {{ form.notas }}
             {{ form.notas.errors }}
 
-<<<<<<< HEAD
             <button type="submit" class="btn btn-primary btn-block btn-lg mt-2">
                 <svg width="14" height="14"><use href="#i-check-circle"/></svg> Agendar cita
             </button>
-=======
-            <button type="submit">Agendar cita</button>
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         </form>
     </div>
 
@@ -337,23 +130,17 @@
             <h2>Verificá los datos antes de enviar la solicitud</h2>
             <dl class="modal-resumen" id="modal-resumen"></dl>
             <div class="modal-botones">
-<<<<<<< HEAD
                 <button type="button" class="btn btn-outline btn-editar" id="btn-editar">
                     <svg width="14" height="14"><use href="#i-edit"/></svg> Editar
                 </button>
                 <button type="button" class="btn btn-primary btn-confirmar" id="btn-confirmar">
                     <svg width="14" height="14"><use href="#i-check"/></svg> Confirmar y enviar
                 </button>
-=======
-                <button type="button" class="btn-editar" id="btn-editar">Editar</button>
-                <button type="button" id="btn-confirmar">Confirmar y enviar</button>
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             </div>
         </div>
     </div>
 
     <script>
-<<<<<<< HEAD
     (function() {
         var STORAGE_KEY = 'agendar_cita_draft';
         var form = document.getElementById('form-agendar-cita');
@@ -395,27 +182,19 @@
         restaurarDraft();
     })();
 
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         // Autocompleta los datos del paciente si el DPI ya está registrado,
         // para no volver a escribir nombre/apellido/sexo/teléfono/fecha de
         // nacimiento cada vez.
         (function () {
             var dpiInput = document.getElementById('id_dpi');
             var aviso = document.getElementById('aviso-paciente-existente');
-<<<<<<< HEAD
             var ayudaIncompleto = document.getElementById('ayuda-dpi-incompleto');
             var camposAutocompletables = [
                 'nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento', 'carnet_igss',
-=======
-            var camposAutocompletables = [
-                'nombre', 'apellido', 'sexo', 'telefono', 'fecha_nacimiento', 'carnet_igss',
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             ];
             var temporizadorBusqueda = null;
             var ultimoDpiBuscado = '';
 
-<<<<<<< HEAD
             // Quita en el momento cualquier caracter que no sea número
             // (letras, guiones, espacios, etc.), para que sea imposible
             // escribir algo distinto de dígitos en este campo.
@@ -449,10 +228,6 @@
 
             function buscarPaciente() {
                 var dpi = sanearDpi();
-=======
-            function buscarPaciente() {
-                var dpi = dpiInput.value.trim();
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
                 if (dpi.length !== 13 || dpi === ultimoDpiBuscado) {
                     return;
                 }
@@ -468,7 +243,6 @@
                             var elemento = document.getElementById('id_' + nombreCampo);
                             if (elemento) {
                                 elemento.value = datos[nombreCampo];
-<<<<<<< HEAD
                                 // Un dato que el paciente ya tiene guardado no se
                                 // puede modificar al agendar; solo se completan los
                                 // que están vacíos.
@@ -482,11 +256,6 @@
                         // interrumpe el formulario: el recepcionista puede seguir
                         // escribiendo los datos a mano.
                         aviso.style.display = 'none';
-=======
-                            }
-                        });
-                        aviso.style.display = 'block';
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
                     });
             }
 
@@ -494,13 +263,9 @@
             // salir del campo, para no depender de un solo evento.
             dpiInput.addEventListener('input', function () {
                 clearTimeout(temporizadorBusqueda);
-<<<<<<< HEAD
                 var dpi = sanearDpi();
                 actualizarAyudaIncompleto(dpi);
                 if (dpi.length !== 13) {
-=======
-                if (dpiInput.value.trim().length !== 13) {
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
                     aviso.style.display = 'none';
                     ultimoDpiBuscado = '';
                     return;
@@ -515,10 +280,7 @@
                     var elemento = document.getElementById('id_' + nombreCampo);
                     if (elemento) {
                         elemento.value = '';
-<<<<<<< HEAD
                         bloquearCampo(elemento, false);
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
                     }
                 });
                 aviso.style.display = 'none';
@@ -538,14 +300,15 @@
                 var tipoEstudioId = tipoEstudioSelect.value;
                 var seleccionActual = preservarSeleccion ? radiologoSelect.value : '';
 
-                if (!tipoEstudioId) {
-                    radiologoSelect.innerHTML = '<option value="">---------</option>';
-                    return;
+                // Sin estudio elegido todavía se muestra todo el equipo de
+                // radiólogos activos, para que la recepcionista pueda elegir
+                // al médico primero y luego el estudio que realiza.
+                var url = '{% url "radiologos_por_estudio" %}';
+                if (tipoEstudioId) {
+                    url += '?tipo_estudio=' + encodeURIComponent(tipoEstudioId);
                 }
 
-                fetch(
-                    '{% url "radiologos_por_estudio" %}?tipo_estudio=' + encodeURIComponent(tipoEstudioId)
-                )
+                fetch(url)
                     .then(function (respuesta) { return respuesta.json(); })
                     .then(function (datos) {
                         radiologoSelect.innerHTML = '';
@@ -576,14 +339,69 @@
                 actualizarRadiologos(false);
             });
 
-            // Si el formulario vuelve a mostrarse con errores, conserva el
-            // tipo de estudio y el radiólogo que ya se habían elegido.
-            if (tipoEstudioSelect.value) {
-                actualizarRadiologos(true);
-            }
+            // Al cargar la página se muestran todos los radiólogos activos
+            // (estudio aún vacío). Si el formulario vuelve con errores,
+            // conserva el tipo de estudio y el radiólogo ya elegidos.
+            actualizarRadiologos(!!tipoEstudioSelect.value);
         })();
 
-<<<<<<< HEAD
+        // Filtro inverso: al elegir un radiólogo, solo quedan visibles los
+        // estudios que realmente realiza. Se resuelve en el navegador con el
+        // atributo data-radiologos que el servidor pone en cada <option>
+        // (ver TipoEstudioSelect.create_option); el clean() del formulario
+        // sigue siendo el respaldo de seguridad del lado del servidor.
+        (function () {
+            var tipoEstudioSelect = document.getElementById('id_tipo_estudio');
+            var radiologoSelect = document.getElementById('id_radiologo');
+            var estudios = Array.prototype.slice.call(tipoEstudioSelect.options);
+            var filtro = document.getElementById('filtro-tipo-estudio');
+
+            function aplicarBusqueda() {
+                var texto = (filtro.value || '').toLowerCase().trim();
+                estudios.forEach(function (opcion) {
+                    if (!opcion.value) return;
+                    var visible = !texto || opcion.textContent.toLowerCase().indexOf(texto) !== -1;
+                    opcion.dataset.busquedaVisible = visible ? '1' : '0';
+                    opcion.style.display = visible ? '' : 'none';
+                });
+            }
+
+            function filtrarEstudios() {
+                var radiologoId = radiologoSelect.value;
+                var seleccionActual = tipoEstudioSelect.value;
+                var seleccionSigueValida = false;
+
+                estudios.forEach(function (opcion) {
+                    var visible;
+                    if (!opcion.value) {
+                        visible = true; // el placeholder siempre se ve
+                    } else if (!radiologoId) {
+                        visible = true; // sin radiólogo elegido, todos los estudios
+                    } else {
+                        var ids = (opcion.getAttribute('data-radiologos') || '').split(',');
+                        visible = ids.indexOf(radiologoId) !== -1;
+                    }
+                    opcion.style.display = visible ? '' : 'none';
+                    if (opcion.value && opcion.dataset.busquedaVisible === '0') {
+                        opcion.style.display = 'none';
+                    }
+                    if (visible && opcion.value === seleccionActual) {
+                        seleccionSigueValida = true;
+                    }
+                });
+
+                // Si el estudio elegido ya no lo realiza el radiólogo
+                // seleccionado, se limpia para no enviar una combinación
+                // inválida (el servidor también la rechazaría).
+                if (!seleccionSigueValida) {
+                    tipoEstudioSelect.value = '';
+                }
+            }
+
+            radiologoSelect.addEventListener('change', filtrarEstudios);
+            filtro.addEventListener('input', aplicarBusqueda);
+        })();
+
         // Muestra cuánto dura y cuánto cuesta el estudio elegido, para que la
         // recepcionista sepa de una vez cuánto tiempo va a ocupar en el
         // calendario (esos datos ya vienen en cada <option> como data-*).
@@ -630,8 +448,6 @@
             actualizarPrevia();
         })();
 
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         (function () {
             var form = document.getElementById('form-agendar-cita');
             var modal = document.getElementById('modal-confirmar');
@@ -643,10 +459,7 @@
                 ['id_apellido', 'Apellido'],
                 ['id_sexo', 'Sexo'],
                 ['id_telefono', 'Teléfono'],
-<<<<<<< HEAD
                 ['id_correo', 'Correo electrónico'],
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
                 ['id_fecha_nacimiento', 'Fecha de nacimiento'],
                 ['id_carnet_igss', 'Carné de afiliación IGSS'],
                 ['id_fecha', 'Fecha de la cita'],
@@ -654,7 +467,6 @@
                 ['id_tipo_estudio', 'Tipo de estudio'],
                 ['id_radiologo', 'Radiólogo asignado'],
                 ['id_notas', 'Notas'],
-<<<<<<< HEAD
                 {% if hay_conflicto %}['id_es_emergencia', 'Cita de emergencia (horario ocupado)'],{% endif %}
             ];
 
@@ -672,19 +484,12 @@
                 if (!form.reportValidity()) {
                     return;
                 }
-=======
-            ];
-
-            form.addEventListener('submit', function (evento) {
-                evento.preventDefault();
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
                 resumen.innerHTML = '';
                 campos.forEach(function (campo) {
                     var elemento = document.getElementById(campo[0]);
                     if (!elemento) {
                         return;
                     }
-<<<<<<< HEAD
                     var valor;
                     if (elemento.tagName === 'SELECT') {
                         valor = elemento.options[elemento.selectedIndex].text;
@@ -693,11 +498,6 @@
                     } else {
                         valor = elemento.value;
                     }
-=======
-                    var valor = elemento.tagName === 'SELECT'
-                        ? elemento.options[elemento.selectedIndex].text
-                        : elemento.value;
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
                     var dt = document.createElement('dt');
                     dt.textContent = campo[1];
                     var dd = document.createElement('dd');
@@ -711,17 +511,7 @@
             document.getElementById('btn-editar').addEventListener('click', function () {
                 modal.classList.remove('abierto');
             });
-<<<<<<< HEAD
             document.getElementById('btn-confirmar').addEventListener('click', enviarFormulario);
         })();
     </script>
 {% endblock %}
-=======
-            document.getElementById('btn-confirmar').addEventListener('click', function () {
-                form.submit();
-            });
-        })();
-    </script>
-</body>
-</html>
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

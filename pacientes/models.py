@@ -1,9 +1,6 @@
 import datetime
-<<<<<<< HEAD
 import uuid
 from decimal import Decimal
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
 from django.conf import settings
 from django.db import models, transaction
@@ -11,7 +8,6 @@ from django.utils import timezone
 
 MINUTOS_TOLERANCIA_LLEGADA = 15
 
-<<<<<<< HEAD
 # A partir de esta hora, las citas de convenio privado y de emergencia IGSS
 # cobran tarifa "inhábil" (ver PrecioEstudio y Cita.horario_habil). COEX
 # siempre se factura en tarifa hábil.
@@ -35,8 +31,6 @@ def es_horario_habil(convenio, hora):
         return False
     return True
 
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
 class Paciente(models.Model):
     SEXO_MASCULINO = 'M'
@@ -57,10 +51,7 @@ class Paciente(models.Model):
     apellido = models.CharField(max_length=100)
     sexo = models.CharField(max_length=1, choices=SEXO_CHOICES, blank=True)
     telefono = models.CharField(max_length=20, blank=True)
-<<<<<<< HEAD
     correo = models.EmailField(max_length=254, blank=True, null=True)
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     fecha_nacimiento = models.DateField(null=True, blank=True)
 
     # Campos que se pueden dejar sin llenar al registrar al paciente (ej. en
@@ -99,7 +90,6 @@ class Paciente(models.Model):
 
 
 class TipoEstudio(models.Model):
-<<<<<<< HEAD
     MODALIDAD_RX = 'rx'
     MODALIDAD_RX_CONTRASTE = 'rx_contraste'
     MODALIDAD_TAC = 'tac'
@@ -119,10 +109,6 @@ class TipoEstudio(models.Model):
         max_length=20, choices=MODALIDAD_CHOICES, default=MODALIDAD_RX,
         help_text='Agrupa el estudio por equipo/sala y define qué técnico y radiólogo pueden atenderlo.',
     )
-=======
-    nombre = models.CharField(max_length=50, unique=True)
-    precio = models.DecimalField(max_digits=8, decimal_places=2, default=0)
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     duracion_minutos = models.PositiveIntegerField(
         default=30,
         verbose_name='duración (minutos)',
@@ -144,7 +130,6 @@ class TipoEstudio(models.Model):
     def __str__(self):
         return self.nombre
 
-<<<<<<< HEAD
     def precio_para(self, convenio, horario_habil=True):
         """Precio de este estudio para un convenio y tipo de horario.
         Si no hay tarifa inhábil cargada, cae a la hábil; si no hay ninguna,
@@ -190,6 +175,63 @@ class PrecioEstudio(models.Model):
         return f'{self.tipo_estudio.nombre} · {self.get_convenio_display()} {horario}: Q{self.precio}'
 
 
+class Combo(models.Model):
+    """Agrupación de estudios relacionados (ej. variantes de tórax) que se
+    ofrecen como una misma opción, con descuento opcional.
+
+    El precio se calcula al vuelo: suma de los precios de los estudios que lo
+    integran, menos el descuento si aplica. Coherente con el patrón del
+    proyecto (nada se guarda, todo se deriva). Es solo administrativo:
+    agrupa el catálogo, no maneja transacciones monetarias."""
+
+    nombre = models.CharField(max_length=120, unique=True)
+    estudios = models.ManyToManyField(
+        TipoEstudio, related_name='combos', blank=True, verbose_name='estudios del combo',
+    )
+    activo = models.BooleanField(default=True)
+    aplica_descuento = models.BooleanField(
+        default=False, verbose_name='aplicar descuento',
+        help_text='Si se activa, el total se calcula restando el porcentaje de descuento.',
+    )
+    porcentaje_descuento = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        verbose_name='% de descuento',
+        help_text='Solo se usa si "aplicar descuento" está marcado.',
+    )
+
+    class Meta:
+        db_table = 'combos'
+        verbose_name = 'combo'
+        verbose_name_plural = 'combos'
+        ordering = ['nombre']
+
+    def __str__(self):
+        return self.nombre
+
+    def total_bruto_para(self, convenio, horario_habil=True):
+        """Suma de los precios de los estudios del combo para un convenio y
+        tipo de horario, sin aplicar descuento."""
+        return sum(
+            (estudio.precio_para(convenio, horario_habil) for estudio in self.estudios.all()),
+            start=Decimal('0.00'),
+        )
+
+    def total_para(self, convenio, horario_habil=True):
+        """Precio final del combo para un convenio y horario: la suma de sus
+        estudios menos el descuento (si aplica y es válido)."""
+        bruto = self.total_bruto_para(convenio, horario_habil)
+        pct = Decimal('0') if not self.aplica_descuento else (self.porcentaje_descuento or Decimal('0'))
+        if pct <= 0 or pct > 100:
+            return bruto
+        descuento = (bruto * pct / Decimal('100')).quantize(Decimal('0.01'))
+        return (bruto - descuento).quantize(Decimal('0.01'))
+
+    @property
+    def precio_referencia(self):
+        """Precio orientativo para listados: privado en horario hábil."""
+        return self.total_para('privado', True)
+
+
 class Cita(models.Model):
     # Los valores viven a nivel de módulo (los usa también PrecioEstudio, que
     # se define antes que Cita); acá se reexponen para no romper el código
@@ -202,22 +244,6 @@ class Cita(models.Model):
     ESTADO_PENDIENTE = 'pendiente'
     ESTADO_AGENDADA = 'agendada'
     ESTADO_EN_ESPERA = 'en_espera'
-=======
-
-class Cita(models.Model):
-    CONVENIO_COEX = 'coex'
-    CONVENIO_PRIVADO = 'privado'
-    CONVENIO_EMERGENCIA_IGSS = 'emergencia_igss'
-
-    CONVENIO_CHOICES = [
-        (CONVENIO_COEX, 'COEX'),
-        (CONVENIO_PRIVADO, 'Privado'),
-        (CONVENIO_EMERGENCIA_IGSS, 'Emergencia IGSS'),
-    ]
-
-    ESTADO_PENDIENTE = 'pendiente'
-    ESTADO_AGENDADA = 'agendada'
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     ESTADO_EN_PROCESO = 'en_proceso'
     ESTADO_PROCESADA = 'procesada'
     ESTADO_AUSENTE = 'ausente'
@@ -226,10 +252,7 @@ class Cita(models.Model):
     ESTADO_CHOICES = [
         (ESTADO_PENDIENTE, 'Pendiente de confirmación'),
         (ESTADO_AGENDADA, 'Agendada'),
-<<<<<<< HEAD
         (ESTADO_EN_ESPERA, 'En espera'),
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         (ESTADO_EN_PROCESO, 'En proceso'),
         (ESTADO_PROCESADA, 'Procesada'),
         (ESTADO_AUSENTE, 'Ausente'),
@@ -255,7 +278,6 @@ class Cita(models.Model):
     hora_sugerida = models.TimeField(null=True, blank=True)
     hora_llegada = models.DateTimeField(null=True, blank=True)
     notas = models.TextField(blank=True)
-<<<<<<< HEAD
     es_emergencia_forzada = models.BooleanField(
         default=False,
         verbose_name='agendada como emergencia',
@@ -264,8 +286,6 @@ class Cita(models.Model):
             'horario ya ocupado, por tratarse de una emergencia.'
         ),
     )
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     creada_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='citas_creadas'
     )
@@ -321,7 +341,6 @@ class Cita(models.Model):
         el reporte diario pero no suman al total del día."""
         return self.estado != self.ESTADO_AUSENTE
 
-<<<<<<< HEAD
     @property
     def horario_habil(self):
         """True si esta cita se factura en tarifa hábil (ver es_horario_habil)."""
@@ -332,8 +351,66 @@ class Cita(models.Model):
         """Precio de la cita según su estudio, convenio y horario."""
         return self.tipo_estudio.precio_para(self.convenio, self.horario_habil)
 
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
+
+class Cobro(models.Model):
+    """Registro administrativo de "cobro/pago" de un estudio (relacionado a
+    su cita). El sistema NO maneja transacciones monetarias reales: solo
+    registra si la recepcionista marcó que ya hubo cobro o si sigue
+    pendiente. Un cobro sin registrar como pagado bloquea únicamente el
+    envío de resultados al paciente; no afecta la orden de trabajo ni el
+    trabajo del técnico."""
+
+    ESTADO_PENDIENTE = 'pendiente'
+    ESTADO_PAGADO = 'pagado'
+    FORMA_EFECTIVO = 'efectivo'
+    FORMA_TARJETA = 'tarjeta'
+    FORMA_TRANSFERENCIA = 'transferencia'
+
+    ESTADO_CHOICES = [
+        (ESTADO_PENDIENTE, 'Pendiente de cobro'),
+        (ESTADO_PAGADO, 'Cobrado'),
+    ]
+    FORMA_PAGO_CHOICES = [
+        (FORMA_EFECTIVO, 'Efectivo'),
+        (FORMA_TARJETA, 'Tarjeta'),
+        (FORMA_TRANSFERENCIA, 'Transferencia'),
+    ]
+
+    cita = models.OneToOneField(Cita, on_delete=models.PROTECT, related_name='cobro')
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=ESTADO_PENDIENTE)
+    pagado_en = models.DateTimeField(null=True, blank=True, verbose_name='pagado el')
+    cobrado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='cobros_registrados',
+    )
+    notas = models.CharField(max_length=255, blank=True)
+    forma_pago = models.CharField(max_length=20, choices=FORMA_PAGO_CHOICES, blank=True)
+    numero_boleta = models.CharField(max_length=60, blank=True, verbose_name='número de boleta / referencia')
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'cobros'
+        verbose_name = 'cobro'
+        verbose_name_plural = 'cobros'
+
+    def __str__(self):
+        return f'Cobro de {self.cita} — {self.get_estado_display()}'
+
+    @property
+    def pagado(self):
+        return self.estado == self.ESTADO_PAGADO
+
+    def marcar_pagado(self, usuario, notas=''):
+        """Marca el cobro como pagado y guarda quién y cuándo."""
+        self.estado = self.ESTADO_PAGADO
+        self.pagado_en = timezone.now()
+        self.cobrado_por = usuario
+        if notas:
+            self.notas = notas
+        self.save(
+            update_fields=['estado', 'pagado_en', 'cobrado_por', 'notas'],
+        )
+
 
 class ReporteDiario(models.Model):
     """Un reporte por convenio y fecha. Se crea automáticamente (en estado
@@ -346,7 +423,7 @@ class ReporteDiario(models.Model):
     ESTADO_ENVIADO = 'enviado'
 
     ESTADO_CHOICES = [
-        (ESTADO_BORRADOR, 'Borrador'),
+        (ESTADO_BORRADOR, 'Pendiente'),
         (ESTADO_ENVIADO, 'Enviado'),
     ]
 
@@ -374,22 +451,14 @@ class ReporteDiario(models.Model):
             Cita.objects.filter(convenio=self.convenio, fecha=self.fecha)
             .exclude(estado__in=(Cita.ESTADO_PENDIENTE, Cita.ESTADO_RECHAZADA))
             .select_related('paciente', 'tipo_estudio', 'radiologo')
-<<<<<<< HEAD
             .prefetch_related('tipo_estudio__precios')
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             .order_by('hora')
         )
 
     def total(self):
         return sum(
-<<<<<<< HEAD
             (cita.precio for cita in self.citas() if cita.cuenta_en_total_reporte),
             start=Decimal('0.00'),
-=======
-            (cita.tipo_estudio.precio for cita in self.citas() if cita.cuenta_en_total_reporte),
-            start=0,
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         )
 
 
@@ -411,7 +480,6 @@ class OrdenTrabajo(models.Model):
     )
     informe_creado_en = models.DateTimeField(null=True, blank=True)
 
-<<<<<<< HEAD
     # El envío de resultados al paciente ya no ocurre automáticamente cuando
     # la radióloga adjunta el informe: ahora lo dispara la recepcionista
     # manualmente desde "Estudios realizados" (botón "Enviar estudio").
@@ -430,8 +498,6 @@ class OrdenTrabajo(models.Model):
             self.save(update_fields=['token_publico'])
         return self.token_publico
 
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     @property
     def tiene_informe(self):
         return bool(self.informe_texto or self.informe_archivo)
@@ -457,7 +523,6 @@ class OrdenTrabajo(models.Model):
 class ImagenEstudio(models.Model):
     orden = models.ForeignKey(OrdenTrabajo, on_delete=models.CASCADE, related_name='imagenes')
     archivo = models.FileField(upload_to='imagenes_estudio/%Y/%m/')
-<<<<<<< HEAD
     # Cuando el técnico sube un DICOM, "archivo" queda con el JPG ya
     # convertido (para poder mostrarlo en el navegador) y acá se conserva el
     # .dcm original tal cual se subió, para que la radióloga pueda
@@ -465,21 +530,16 @@ class ImagenEstudio(models.Model):
     archivo_original = models.FileField(
         upload_to='imagenes_estudio/dicom_original/%Y/%m/', null=True, blank=True,
     )
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     subida_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='imagenes_subidas'
     )
     subida_en = models.DateTimeField(auto_now_add=True)
-<<<<<<< HEAD
     # La radióloga cura la galería (ver_imagenes_jpg): las que deja
     # marcadas son las que se siguen mostrando y las que se adjuntan en el
     # correo al paciente. Al descartar una, se le borra el JPG (queda
     # seleccionada=False y "archivo" vacío) pero "archivo_original" (el
     # DICOM) nunca se toca — se conserva completo pase lo que pase.
     seleccionada = models.BooleanField(default=True)
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
     class Meta:
         db_table = 'imagenes_estudio'
@@ -492,10 +552,12 @@ class ImagenEstudio(models.Model):
 
 
 class Ticket(models.Model):
-    """Turno de la fila de recepción para pacientes que llegan sin cita
-    agendada (walk-in). Por ahora solo se usa desde la pantalla de
-    Emergencia IGSS, pero el campo `servicio` queda abierto para reusar
-    este mismo sistema de turnos en COEX/Privado más adelante."""
+    """Turno de la fila de recepción. Se genera al marcar la llegada de una
+    cita agendada (COEX/Privado) o al hacer check-in de un paciente sin cita
+    (Emergencia IGSS). La "Pantalla de turnos" une los tres servicios en una
+    sola fila de espera, numerada con un contador compartido por día (ver
+    `save`) — así el turno 001, 002, 003... es único sin importar de qué
+    servicio venga."""
 
     SERVICIO_COEX = 'coex'
     SERVICIO_PRIVADO = 'privado'
@@ -507,11 +569,10 @@ class Ticket(models.Model):
         (SERVICIO_EMERGENCIA_IGSS, 'Emergencia IGSS'),
     ]
 
-    PREFIJO_TURNO = {
-        SERVICIO_COEX: 'COEX',
-        SERVICIO_PRIVADO: 'PRIV',
-        SERVICIO_EMERGENCIA_IGSS: 'EMER',
-    }
+    # Clave usada en DailySequence para el contador de turnos: es la misma
+    # para los tres servicios a propósito, así el número de turno es
+    # correlativo entre COEX/Privado/Emergencia IGSS (no uno por servicio).
+    SECUENCIA_TURNOS = 'turnos_recepcion'
 
     PRIORIDAD_NORMAL = 1
     PRIORIDAD_URGENTE = 2
@@ -545,6 +606,14 @@ class Ticket(models.Model):
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=ESTADO_EN_ESPERA)
     numero = models.PositiveIntegerField(editable=False, default=0)
     turno = models.CharField(max_length=20, editable=False, blank=True)
+    orden = models.PositiveIntegerField(
+        default=0, editable=False,
+        help_text=(
+            'Posición dentro de la fila de espera del día. Normalmente coincide '
+            'con el número de turno, pero puede adelantarse (ver `adelantar`) '
+            'sin que eso cambie el número oficial del turno.'
+        ),
+    )
     motivo = models.CharField(max_length=255, blank=True, verbose_name='motivo de la visita')
     registrado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='tickets_registrados',
@@ -556,28 +625,155 @@ class Ticket(models.Model):
         db_table = 'tickets'
         verbose_name = 'ticket'
         verbose_name_plural = 'tickets'
-        ordering = ['-prioridad', 'creado_en']
+        ordering = ['-prioridad', 'orden']
 
     def __str__(self):
         return f'{self.turno} - {self.paciente}'
+
+    @classmethod
+    def del_dia(cls, fecha):
+        """Tickets creados durante el día local `fecha`.
+
+        Se filtra por rango de `creado_en` en vez de `creado_en__date=fecha`
+        porque el MySQL local no tiene cargadas las tablas de zonas horarias
+        con nombre: con USE_TZ activo, `__date` genera un CONVERT_TZ(...,
+        '<TIME_ZONE>') que devuelve NULL y la consulta no trae nada.
+        """
+        inicio = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.min))
+        return cls.objects.filter(
+            creado_en__gte=inicio, creado_en__lt=inicio + datetime.timedelta(days=1),
+        )
 
     def save(self, *args, **kwargs):
         if self.turno:
             super().save(*args, **kwargs)
             return
 
+        # Los tickets de Emergencia IGSS siempre se atienden primero: se les
+        # asigna la prioridad máxima (Crítica) al crearse, sin depender de
+        # quién los registre. La fila ordena por ``-prioridad, orden``, así
+        # que cada emergencia queda al frente de COEX/Privado (Normal) y
+        # respeta el orden (FIFO) entre las propias emergencias/críticos.
+        if self.servicio == self.SERVICIO_EMERGENCIA_IGSS:
+            self.prioridad = self.PRIORIDAD_CRITICA
+
         fecha = timezone.localdate()
         with transaction.atomic():
-            # DailySequence garantiza un solo contador por (servicio, fecha),
-            # incluso si dos recepcionistas registran un ticket al mismo tiempo.
+            # DailySequence garantiza un solo contador por fecha, compartido
+            # entre los tres servicios, incluso si dos recepcionistas
+            # registran un ticket al mismo tiempo.
             secuencia, _ = DailySequence.objects.select_for_update().get_or_create(
-                servicio=self.servicio, fecha=fecha,
+                servicio=self.SECUENCIA_TURNOS, fecha=fecha,
             )
             secuencia.ultimo += 1
             secuencia.save(update_fields=['ultimo'])
             self.numero = secuencia.ultimo
-            self.turno = f'{self.PREFIJO_TURNO.get(self.servicio, self.servicio.upper())}-{self.numero:03d}'
+            self.turno = f'{self.numero:03d}'
+            self.orden = self.numero
             super().save(*args, **kwargs)
+
+    def _cola_espera(self, bloqueo=False):
+        """Fila de espera del día, solo tickets en espera, ordenada por
+        prioridad y posición (`-prioridad, orden`). Con `bloqueo=True` la
+        recupera con lock de fila para reordenar dentro de una transacción
+        (select_for_update exige estar dentro de un atomic)."""
+        queryset = (
+            Ticket.del_dia(timezone.localdate())
+            .filter(estado=self.ESTADO_EN_ESPERA)
+            .order_by('-prioridad', 'orden')
+        )
+        if bloqueo:
+            queryset = queryset.select_for_update()
+        return list(queryset)
+
+    def _limites_grupo(self, cola, idx):
+        """Índices (inicio, fin) del bloque de tickets con la MISMA prioridad
+        que este ticket dentro de la cola. Como la cola está ordenada por
+        `-prioridad`, todas las prioridades iguales son contiguas. Un ticket
+        solo se puede reordenar dentro de su propio bloque: nunca delante de
+        un ticket de mayor prioridad ni detrás de uno de menor prioridad."""
+        prioridad = self.prioridad
+        inicio = idx
+        while inicio > 0 and cola[inicio - 1].prioridad == prioridad:
+            inicio -= 1
+        fin = idx
+        while fin < len(cola) - 1 and cola[fin + 1].prioridad == prioridad:
+            fin += 1
+        return inicio, fin
+
+    def _mover_a(self, nuevo_idx):
+        """Mueve este ticket a `nuevo_idx` dentro de la cola del día y
+        reescribe el campo `orden` de los tickets afectados para que queden
+        correlativos (1, 2, 3...). Devuelve True si realmente se movió."""
+        if not self.pk:
+            return False
+
+        with transaction.atomic():
+            cola = self._cola_espera(bloqueo=True)
+            if self not in cola:
+                return False
+            idx = cola.index(self)
+            nuevo_idx = max(0, min(len(cola) - 1, nuevo_idx))
+            if nuevo_idx == idx:
+                return False
+
+            cola.pop(idx)
+            cola.insert(nuevo_idx, self)
+            for posicion, ticket in enumerate(cola, start=1):
+                Ticket.objects.filter(pk=ticket.pk).update(orden=posicion)
+                ticket.orden = posicion
+        return True
+
+    def _reordenar(self, posiciones=0, subir=False, bajar=False, tope=False):
+        """Motor común de reordenamiento de la fila. Calcula el índice de
+        destino según la operación pedida (siempre dentro de su bloque de
+        prioridad) y delega el movimiento a `_mover_a`."""
+        posiciones = max(0, posiciones)
+        if posiciones == 0 and not (subir or bajar or tope):
+            return False
+
+        cola = self._cola_espera()
+        if self not in cola:
+            return False
+        idx = cola.index(self)
+        inicio, fin = self._limites_grupo(cola, idx)
+
+        if tope:
+            nuevo_idx = inicio
+        elif subir:
+            nuevo_idx = max(inicio, idx - 1)
+        elif bajar:
+            nuevo_idx = min(fin, idx + 1)
+        else:
+            nuevo_idx = max(inicio, idx - posiciones)
+
+        return self._mover_a(nuevo_idx)
+
+    def adelantar(self, posiciones):
+        """Adelanta este ticket `posiciones` lugares dentro de la fila de
+        espera del día, sin tocar su número de turno oficial (`turno`) — solo
+        reordena la posición en que aparece en la Pantalla de turnos. Nunca
+        lo deja delante de un ticket de mayor prioridad (ej. no puede pasar
+        delante de un ticket de Emergencia IGSS)."""
+        return self._reordenar(posiciones=posiciones)
+
+    def subir(self):
+        """Sube este ticket un lugar dentro de su bloque de prioridad (queda
+        antes del que le seguía con la misma prioridad). No puede pasarse de
+        un ticket de mayor prioridad."""
+        return self._reordenar(subir=True)
+
+    def bajar(self):
+        """Baja este ticket un lugar dentro de su bloque de prioridad (queda
+        después del que le antecedía con la misma prioridad). No puede caer
+        detrás de un ticket de menor prioridad."""
+        return self._reordenar(bajar=True)
+
+    def ir_al_tope(self):
+        """Lleva este ticket al frente de su bloque de prioridad (delante de
+        todos sus iguales, pero jamás delante de un ticket de mayor
+        prioridad)."""
+        return self._reordenar(tope=True)
 
 
 class Notificacion(models.Model):

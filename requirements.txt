@@ -1,19 +1,14 @@
 asgiref==3.12.1
 Django==5.2.16
-<<<<<<< HEAD
 django-otp==1.6.1
 mysqlclient==2.2.8
 numpy==2.4.6
 openpyxl==3.1.5
 Pillow==12.3.0
 pydicom==3.0.2
+pytesseract==0.3.13
 python-decouple==3.8
 qrcode==8.2
-=======
-mysqlclient==2.2.8
-openpyxl==3.1.5
-python-decouple==3.8
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 reportlab==4.2.5
 sqlparse==0.5.5
 tzdata==2026.3

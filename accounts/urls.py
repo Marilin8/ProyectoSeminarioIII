@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 from django.contrib.auth.views import LogoutView
 from django.urls import path
 
@@ -34,18 +33,11 @@ urlpatterns = [
     path('usuarios/<int:usuario_id>/editar/', views.editar_usuario, name='editar_usuario'),
     path('usuarios/<int:usuario_id>/estado/', views.cambiar_estado_usuario, name='cambiar_estado_usuario'),
     path('comisiones/historial/', views.historial_comisiones, name='historial_comisiones'),
-=======
-from django.contrib.auth.views import LoginView, LogoutView
-from django.urls import path
-
-from . import views
-
-urlpatterns = [
-    path('', LoginView.as_view(), name='login'),
-    path('logout/', LogoutView.as_view(), name='logout'),
-    path('dashboard/', views.dashboard, name='dashboard'),
-    path('usuarios/nuevo/', views.crear_usuario, name='crear_usuario'),
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
+    path('planilla/', views.planilla, name='planilla'),
+    path('planilla/<int:usuario_id>/', views.planilla_empleado, name='planilla_empleado'),
+    path('planilla/<int:usuario_id>/pagar/', views.registrar_pago_planilla, name='registrar_pago_planilla'),
+    path('mi/historial-pagos/', views.mi_historial_pagos, name='mi_historial_pagos'),
+    path('pagos/<int:pago_id>/constancia/', views.constancia_pago_pdf, name='constancia_pago_pdf'),
     path('bitacora/', views.bitacora, name='bitacora'),
     path('pantalla/<slug:clave>/', views.pantalla_placeholder, name='pantalla_placeholder'),
 ]

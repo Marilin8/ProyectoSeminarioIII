@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+
+{% block title %}Mi historial de pagos - Clínica de Imágenes{% endblock %}
+{% block page_title %}Mi historial de pagos{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .col-num { text-align: right; white-space: nowrap; }
+    </style>
+{% endblock %}
+
+{% block content %}
+    <p class="text-muted text-sm mb-2">
+        Los {{ pagos|length }} pago{{ pagos|pluralize }} de planilla registrados a tu nombre.
+        Descargá la constancia de cada mes desde la fila correspondiente.
+    </p>
+
+    <div class="card">
+        <div class="card-body" style="padding:0;overflow-x:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Período</th>
+                        <th class="col-num">Salario base</th>
+                        <th class="col-num">Comisiones</th>
+                        <th class="col-num">Total pagado</th>
+                        <th>Verificación</th>
+                        <th>Registrado por</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for pago in pagos %}
+                        <tr>
+                            <td>{{ pago.periodo_etiqueta }}</td>
+                            <td class="col-num">Q{{ pago.salario_base|floatformat:2 }}</td>
+                            <td class="col-num">Q{{ pago.comisiones|floatformat:2 }}</td>
+                            <td class="col-num text-bold">Q{{ pago.total|floatformat:2 }}</td>
+                            <td>
+                                {% if pago.verificado %}
+                                    <span class="badge badge-success">✓ verificado</span>
+                                {% else %}
+                                    <span class="badge badge-warning" title="{{ pago.verificacion_nota }}">sin verificar</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ pago.registrado_por.get_full_name|default:pago.registrado_por.username }}</td>
+                            <td style="white-space:nowrap;">
+                                <a class="btn btn-outline btn-sm" href="{% url 'constancia_pago_pdf' pago.id %}">
+                                    <svg width="14" height="14"><use href="#i-file-text"/></svg>
+                                    Constancia PDF
+                                </a>
+                            </td>
+                        </tr>
+                    {% empty %}
+                        <tr>
+                            <td colspan="7" class="text-muted text-center" style="padding:2rem 0;">
+                                No tiene pagos de planilla registrados todavía.
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+{% endblock %}

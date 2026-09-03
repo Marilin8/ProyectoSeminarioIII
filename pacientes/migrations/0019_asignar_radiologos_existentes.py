@@ -26,6 +26,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('pacientes', '0018_tipoestudio_radiologos'),
+        ('accounts', '0003_usuario_rol'),
     ]
 
     operations = [

@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+{% block title %}Pagos de estudios{% endblock %}
+{% block page_title %}Pagos de estudios{% endblock %}
+{% block content %}
+<div class="card mb-2"><div class="card-body">
+  <form method="get" class="flex flex-wrap gap-2" style="align-items:flex-end;">
+    <div><label for="q">Buscar paciente, DPI</label><input id="q" name="q" value="{{ busqueda }}"></div>
+    <div><label for="desde">Desde</label><input id="desde" name="desde" type="date" value="{{ desde|date:'Y-m-d' }}"></div>
+    <div><label for="hasta">Hasta</label><input id="hasta" name="hasta" type="date" value="{{ hasta|date:'Y-m-d' }}"></div>
+    <div><label for="estado">Estado</label><select id="estado" name="estado">
+      <option value="pendiente" {% if estado == 'pendiente' %}selected{% endif %}>Pendientes de pago</option>
+      <option value="pagado" {% if estado == 'pagado' %}selected{% endif %}>Pagados</option>
+      <option value="" {% if not estado %}selected{% endif %}>Todos</option>
+    </select></div>
+    <div><label for="convenio">Convenio</label><select id="convenio" name="convenio">
+      <option value="">Todos</option>
+      {% for valor, etiqueta in convenios %}<option value="{{ valor }}" {% if convenio == valor %}selected{% endif %}>{{ etiqueta }}</option>{% endfor %}
+    </select></div>
+    <div><label for="tipo_estudio">Tipo de estudio</label><select id="tipo_estudio" name="tipo_estudio">
+      <option value="">Todos</option>
+      {% for tipo in tipos_estudio %}<option value="{{ tipo.id }}" {% if tipo_estudio == tipo.id|stringformat:'s' %}selected{% endif %}>{{ tipo.nombre }}</option>{% endfor %}
+    </select></div>
+    <button class="btn btn-primary" type="submit">Filtrar</button>
+  </form>
+</div></div>
+{% for cobro in pagina %}
+<div class="card mb-1"><div class="card-body flex-between">
+  <div>
+    <strong>{{ cobro.cita.paciente.nombre }} {{ cobro.cita.paciente.apellido }}</strong>
+    <div class="text-muted text-sm">DPI {{ cobro.cita.paciente.dpi }} · {{ cobro.cita.tipo_estudio.nombre }} · {{ cobro.cita.get_convenio_display }}</div>
+    <div class="text-muted text-sm">Creado {{ cobro.creado_en|date:"d/m/Y H:i" }} · Q{{ cobro.cita.precio }}</div>
+    {% if cobro.estado == 'pagado' %}<span class="badge badge-success">Pagado{% if cobro.forma_pago %} · {{ cobro.get_forma_pago_display }}{% endif %}</span>
+    {% else %}<span class="badge badge-warning">Pendiente de pago</span>{% endif %}
+  </div>
+  {% if cobro.estado != 'pagado' %}
+  <form method="post" action="{% url 'marcar_cobrado' cita_id=cobro.cita_id %}" class="flex gap-1" style="align-items:flex-end;">
+    {% csrf_token %}
+    <select name="forma_pago" required><option value="">Forma de pago</option><option value="efectivo">Efectivo</option><option value="tarjeta">Tarjeta</option><option value="transferencia">Transferencia</option></select>
+    <input name="numero_boleta" placeholder="Boleta / referencia">
+    <button class="btn btn-primary" type="submit">Generar boleta y marcar pagado</button>
+  </form>
+  {% else %}<div class="flex gap-1" style="align-items:center;">
+    <span class="text-muted text-sm">Ref.: {{ cobro.numero_boleta|default:"-" }}</span>
+    <a class="btn btn-outline btn-sm" href="{% url 'boleta_pago_pdf' cobro_id=cobro.id %}" target="_blank">Ver boleta PDF</a>
+  </div>{% endif %}
+</div></div>
+{% empty %}<div class="card"><div class="empty-state"><p>No hay órdenes para los filtros seleccionados.</p></div></div>{% endfor %}
+{% if pagina.has_other_pages %}<div class="flex gap-2" style="margin-top:1rem;">
+  {% if pagina.has_previous %}<a class="btn btn-outline" href="?q={{ busqueda|urlencode }}&estado={{ estado }}&convenio={{ convenio }}&tipo_estudio={{ tipo_estudio }}&desde={{ desde|date:'Y-m-d' }}&hasta={{ hasta|date:'Y-m-d' }}&page={{ pagina.previous_page_number }}">Anterior</a>{% endif %}
+  <span class="text-muted">Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+  {% if pagina.has_next %}<a class="btn btn-outline" href="?q={{ busqueda|urlencode }}&estado={{ estado }}&convenio={{ convenio }}&tipo_estudio={{ tipo_estudio }}&desde={{ desde|date:'Y-m-d' }}&hasta={{ hasta|date:'Y-m-d' }}&page={{ pagina.next_page_number }}">Siguiente</a>{% endif %}
+</div>{% endif %}
+{% endblock %}

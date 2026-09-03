@@ -5,9 +5,11 @@ from .models import Cita
 
 urlpatterns = [
     path('estudios/nuevo/', views.crear_estudio, name='crear_estudio'),
-<<<<<<< HEAD
     path('estudios/', views.lista_estudios, name='lista_estudios'),
     path('estudios/<int:estudio_id>/editar/', views.editar_estudio, name='editar_estudio'),
+    path('combos/nuevo/', views.crear_combo, name='crear_combo'),
+    path('combos/', views.lista_combos, name='lista_combos'),
+    path('combos/<int:combo_id>/editar/', views.editar_combo, name='editar_combo'),
     # Visor web público del estudio (link estilo PACS que se manda por correo:
     # /visor/?studyId=<id>&tab=images&ac=<token base64>).
     path('visor/', views.visor_estudio, name='visor_estudio'),
@@ -20,8 +22,6 @@ urlpatterns = [
     path('visor/<int:orden_id>/dicom.zip', views.visor_dicom, name='visor_dicom'),
     path('visor/<int:orden_id>/imagenes.zip', views.visor_jpg, name='visor_jpg'),
 
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     path('pacientes/buscar-por-dpi/', views.buscar_paciente_por_dpi, name='buscar_paciente_por_dpi'),
     path(
         'pacientes/completar-datos/<int:paciente_id>/',
@@ -31,13 +31,14 @@ urlpatterns = [
     path('estudios/radiologos-por-estudio/', views.radiologos_por_estudio, name='radiologos_por_estudio'),
     path('pacientes/historial/', views.historial_pacientes, name='historial_pacientes'),
     path('pacientes/historial/<int:paciente_id>/', views.historial_paciente, name='historial_paciente'),
+    path('pagos/', views.pagos_pendientes, name='pagos_pendientes'),
+    path('pagos/<int:cobro_id>/boleta/', views.boleta_pago_pdf, name='boleta_pago_pdf'),
     path(
         'pacientes/historial/estudio/<int:cita_id>/',
         views.ver_estudio_historial,
         name='ver_estudio_historial',
     ),
     path(
-<<<<<<< HEAD
         'pacientes/historial/estudio/<int:cita_id>/enviar/',
         views.enviar_estudio,
         name='enviar_estudio',
@@ -48,8 +49,11 @@ urlpatterns = [
         name='ingresar_correo_envio',
     ),
     path(
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
+        'pacientes/historial/estudio/<int:cita_id>/cobrar/',
+        views.marcar_cobrado,
+        name='marcar_cobrado',
+    ),
+    path(
         'citas/calendario/coex/',
         views.seleccionar_horario,
         {'convenio': Cita.CONVENIO_COEX},
@@ -75,12 +79,7 @@ urlpatterns = [
     ),
     path(
         'citas/agendar/privado/',
-<<<<<<< HEAD
         views.agendar_cita_privado,
-=======
-        views.agendar_cita,
-        {'convenio': Cita.CONVENIO_PRIVADO},
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         name='agendar_cita_privado',
     ),
     path(
@@ -119,7 +118,6 @@ urlpatterns = [
         {'convenio': Cita.CONVENIO_COEX},
         name='confirmar_reagenda_coex',
     ),
-<<<<<<< HEAD
     path(
         'citas/procesar/privado/',
         views.procesar_citas,
@@ -150,13 +148,10 @@ urlpatterns = [
         {'convenio': Cita.CONVENIO_PRIVADO},
         name='confirmar_reagenda_privado',
     ),
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     path('citas/solicitudes/', views.solicitudes_pendientes, name='solicitudes_pendientes'),
     path('citas/solicitudes/<int:cita_id>/revisar/', views.revisar_solicitud, name='revisar_solicitud'),
     path('ordenes/pendientes/', views.ordenes_pendientes, name='ordenes_pendientes'),
     path('ordenes/pendientes/<int:orden_id>/imagenes/', views.adjuntar_imagenes, name='adjuntar_imagenes'),
-<<<<<<< HEAD
     path(
         'ordenes/pendientes/<int:orden_id>/imagenes/lote/',
         views.adjuntar_imagenes_lote,
@@ -180,27 +175,15 @@ urlpatterns = [
         views.descargar_dicom_orden,
         name='descargar_dicom_orden',
     ),
-=======
-    path('citas/procesadas/', views.citas_procesadas, name='citas_procesadas'),
-    path('citas/procesadas/<int:cita_id>/informe/', views.adjuntar_informe, name='adjuntar_informe'),
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     path('emergencia/tickets/nuevo/', views.registrar_ticket_emergencia, name='registrar_ticket_emergencia'),
-    path('emergencia/tickets/', views.pantalla_turnos_emergencia, name='pantalla_turnos_emergencia'),
     path(
         'emergencia/tickets/<int:ticket_id>/procesar/',
         views.procesar_ticket_emergencia,
         name='procesar_ticket_emergencia',
     ),
-<<<<<<< HEAD
-    path('privado/tickets/nuevo/', views.registrar_ticket_privado, name='registrar_ticket_privado'),
-    path('privado/tickets/', views.pantalla_turnos_privado, name='pantalla_turnos_privado'),
-    path(
-        'privado/tickets/<int:ticket_id>/procesar/',
-        views.procesar_ticket_privado,
-        name='procesar_ticket_privado',
-    ),
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
+    path('turnos/', views.pantalla_turnos, name='pantalla_turnos'),
+    path('turnos/<int:ticket_id>/siguiente/', views.avanzar_turno, name='avanzar_turno'),
+    path('turnos/<int:ticket_id>/reordenar/<str:direccion>/', views.reordenar_turno, name='reordenar_turno'),
     path('notificaciones/pendientes/', views.notificaciones_pendientes, name='notificaciones_pendientes'),
     path(
         'notificaciones/<int:notificacion_id>/marcar-leida/',

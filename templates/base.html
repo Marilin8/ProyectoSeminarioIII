@@ -29,6 +29,9 @@
                 <a href="{% url 'pantalla_placeholder' clave='usuarios_activos' %}" class="{% block nav_usuarios %}{% endblock %}">
                     <svg width="16" height="16"><use href="#i-users"/></svg> Usuarios activos
                 </a>
+                <a href="{% url 'planilla' %}" class="{% block nav_planilla %}{% endblock %}">
+                    <svg width="16" height="16"><use href="#i-file-text"/></svg> Planilla
+                </a>
             {% endif %}
             {% block sidebar_extra %}{% endblock %}
         </nav>

@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 {% extends 'base.html' %}
 
 {% block title %}Registrar Ticket - Emergencia IGSS{% endblock %}
@@ -18,7 +17,8 @@
             <div class="alert alert-danger">
                 <svg style="width:16px;height:16px;vertical-align:middle;margin-right:0.3rem;"><use href="#i-alert-triangle"/></svg>
                 Este registro es para pacientes que llegan sin cita agendada. Se le asignará un
-                turno numerado y quedará en la fila de la <a href="{% url 'pantalla_turnos_emergencia' %}">pantalla de turnos</a>.
+                turno numerado con prioridad <strong>Crítica</strong> y quedará primero en la fila
+                de la <a href="{% url 'pantalla_turnos' %}">Pantalla de turnos</a>.
             </div>
 
             <form method="post">
@@ -66,10 +66,6 @@
                 {{ form.carnet_igss }}
                 {{ form.carnet_igss.errors }}
 
-                <label for="{{ form.prioridad.id_for_label }}">Prioridad</label>
-                {{ form.prioridad }}
-                {{ form.prioridad.errors }}
-
                 <label for="{{ form.motivo.id_for_label }}">Motivo de la visita</label>
                 {{ form.motivo }}
                 {{ form.motivo.errors }}
@@ -80,191 +76,6 @@
                 </button>
             </form>
         </div>
-=======
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Registrar Ticket - Emergencia IGSS</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f1f5f9;
-            margin: 0;
-            padding: 2rem;
-        }
-        .topbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-        }
-        h1 {
-            color: #0f172a;
-            font-size: 1.4rem;
-        }
-        a.volver {
-            color: #2563eb;
-            text-decoration: none;
-            font-size: 0.85rem;
-        }
-        .card {
-            background: white;
-            border-radius: 12px;
-            padding: 2rem;
-            max-width: 640px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-        }
-        .aviso {
-            background: #fee2e2;
-            color: #991b1b;
-            border: 1px solid #fecaca;
-            padding: 0.6rem 0.75rem;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            margin-bottom: 1.25rem;
-        }
-        .mensajes {
-            list-style: none;
-            padding: 0;
-        }
-        .mensajes li {
-            background: #dcfce7;
-            color: #166534;
-            padding: 0.5rem 0.75rem;
-            border-radius: 6px;
-            margin-bottom: 1rem;
-            font-size: 0.85rem;
-        }
-        .aviso-paciente {
-            display: none;
-            margin-top: 0.5rem;
-            padding: 0.6rem 0.75rem;
-            border-radius: 6px;
-            font-size: 0.85rem;
-            background: #dcfce7;
-            color: #166534;
-            border: 1px solid #bbf7d0;
-        }
-        .aviso-paciente a {
-            color: inherit;
-            font-weight: bold;
-            margin-left: 0.5rem;
-        }
-        label {
-            display: block;
-            font-size: 0.85rem;
-            color: #334155;
-            margin-bottom: 0.25rem;
-            margin-top: 1rem;
-        }
-        input, select, textarea {
-            width: 100%;
-            padding: 0.5rem;
-            border: 1px solid #cbd5e1;
-            border-radius: 6px;
-            box-sizing: border-box;
-            font-family: inherit;
-        }
-        .errorlist {
-            color: #dc2626;
-            font-size: 0.8rem;
-            list-style: none;
-            padding: 0;
-            margin: 0.25rem 0 0;
-        }
-        .ayuda {
-            font-size: 0.75rem;
-            color: #64748b;
-            margin-top: 0.25rem;
-        }
-        button {
-            margin-top: 1.5rem;
-            width: 100%;
-            padding: 0.6rem;
-            background: #dc2626;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        button:hover {
-            background: #b91c1c;
-        }
-    </style>
-</head>
-<body>
-{% include 'includes/notificaciones.html' %}
-    <div class="topbar">
-        <h1>Registrar Ticket — Emergencia IGSS</h1>
-        <a class="volver" href="{{ volver_url }}">&larr; Volver a Emergencia IGSS</a>
-    </div>
-    <div class="card">
-        <div class="aviso">
-            Este registro es para pacientes que llegan sin cita agendada. Se le asignará un
-            turno numerado y quedará en la fila de la <a href="{% url 'pantalla_turnos_emergencia' %}">pantalla de turnos</a>.
-        </div>
-
-        {% if messages %}
-            <ul class="mensajes">
-                {% for message in messages %}
-                    <li>{{ message }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-
-        <form method="post">
-            {% csrf_token %}
-            {{ form.non_field_errors }}
-
-            <label for="{{ form.dpi.id_for_label }}">DPI</label>
-            {{ form.dpi }}
-            {{ form.dpi.errors }}
-            <div class="aviso-paciente" id="aviso-paciente-existente">
-                Paciente ya registrado — se completaron sus datos automáticamente.
-                <a href="#" id="btn-buscar-otro">No es este paciente</a>
-            </div>
-
-            <label for="{{ form.nombre.id_for_label }}">Nombre</label>
-            {{ form.nombre }}
-            {{ form.nombre.errors }}
-
-            <label for="{{ form.apellido.id_for_label }}">Apellido</label>
-            {{ form.apellido }}
-            {{ form.apellido.errors }}
-
-            <label for="{{ form.sexo.id_for_label }}">Sexo (opcional)</label>
-            {{ form.sexo }}
-            {{ form.sexo.errors }}
-
-            <label for="{{ form.telefono.id_for_label }}">Teléfono (opcional)</label>
-            {{ form.telefono }}
-            {{ form.telefono.errors }}
-
-            <label for="{{ form.fecha_nacimiento.id_for_label }}">Fecha de nacimiento (opcional)</label>
-            {{ form.fecha_nacimiento }}
-            {{ form.fecha_nacimiento.errors }}
-            <p class="ayuda">
-                En una emergencia, estos datos se pueden completar después: al final del
-                día se les avisa a las recepcionistas qué pacientes quedaron con datos pendientes.
-            </p>
-
-            <label for="{{ form.carnet_igss.id_for_label }}">Carné de afiliación IGSS</label>
-            {{ form.carnet_igss }}
-            {{ form.carnet_igss.errors }}
-
-            <label for="{{ form.prioridad.id_for_label }}">Prioridad</label>
-            {{ form.prioridad }}
-            {{ form.prioridad.errors }}
-
-            <label for="{{ form.motivo.id_for_label }}">Motivo de la visita</label>
-            {{ form.motivo }}
-            {{ form.motivo.errors }}
-
-            <button type="submit">Registrar ticket</button>
-        </form>
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     </div>
 
     <script>
@@ -275,11 +86,7 @@
             var dpiInput = document.getElementById('id_dpi');
             var aviso = document.getElementById('aviso-paciente-existente');
             var camposAutocompletables = [
-<<<<<<< HEAD
                 'nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento', 'carnet_igss',
-=======
-                'nombre', 'apellido', 'sexo', 'telefono', 'fecha_nacimiento', 'carnet_igss',
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             ];
             var temporizadorBusqueda = null;
             var ultimoDpiBuscado = '';
@@ -334,9 +141,4 @@
             });
         })();
     </script>
-<<<<<<< HEAD
 {% endblock %}
-=======
-</body>
-</html>
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

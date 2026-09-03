@@ -39,6 +39,16 @@
                 {{ form.rol }}
                 {{ form.rol.errors }}
 
+                <label style="display:flex;align-items:center;gap:.5rem;margin-top:1rem;">
+                    {{ form.puede_operar_caja }} {{ form.puede_operar_caja.label }}
+                </label>
+                <p class="form-help">{{ form.puede_operar_caja.help_text }}</p>
+                {{ form.puede_operar_caja.errors }}
+
+                <label for="{{ form.salario_base.id_for_label }}">Salario base mensual (Q)</label>
+                {{ form.salario_base }}
+                {{ form.salario_base.errors }}
+
                 <p class="form-help mt-1">
                     Los porcentajes de comisión solo aplican a técnicos de imágenes,
                     médicos radiólogos y médicos remitentes. Para otros roles se guardan en 0.

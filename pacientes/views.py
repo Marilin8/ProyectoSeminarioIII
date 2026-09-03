@@ -1,48 +1,35 @@
-<<<<<<< HEAD
 import base64
 import binascii
 import datetime
 import os
 import zipfile
 from io import BytesIO
-=======
-import datetime
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
 from django import forms
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
-<<<<<<< HEAD
 from django.core.files.base import ContentFile
 from django.db.models import Q
+from django.core.paginator import Paginator
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
-=======
-from django.db.models import Q
-from django.http import Http404, HttpResponse, JsonResponse
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
-<<<<<<< HEAD
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
 from accounts.models import Bitacora, Usuario
 from accounts.views import es_administrador
 
-<<<<<<< HEAD
 from .correos import enviar_resultados
 from .dicom_utils import dicom_a_jpg_memoria
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 from .forms import (
     AdjuntarImagenesForm,
     AdjuntarInformeForm,
     AgendarCitaForm,
-<<<<<<< HEAD
     AgendarCitaPrivadoForm,
+    ComboForm,
     CompletarDatosPacienteForm,
     CrearTipoEstudioForm,
     EXTENSIONES_IMAGEN_DIRECTA,
@@ -50,15 +37,8 @@ from .forms import (
     IngresarCorreoEnvioForm,
     NOMBRES_IGNORADOS_EN_CARPETA,
     ProcesarTicketForm,
+    RegistrarPagoEstudioForm,
     RegistrarTicketForm,
-    RegistrarTicketPrivadoForm,
-=======
-    CompletarDatosPacienteForm,
-    CrearTipoEstudioForm,
-    GenerarOrdenForm,
-    ProcesarTicketForm,
-    RegistrarTicketForm,
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 )
 from .horarios import (
     DIAS_SEMANA,
@@ -73,6 +53,8 @@ from .horarios import (
 )
 from .models import (
     Cita,
+    Cobro,
+    Combo,
     ImagenEstudio,
     Notificacion,
     OrdenTrabajo,
@@ -83,10 +65,15 @@ from .models import (
 )
 
 
-<<<<<<< HEAD
 # Cuántas citas de emergencia (agendadas encima de otra ya existente) se
 # permiten como máximo por día, para no saturar a la radióloga.
 MAXIMO_EMERGENCIAS_POR_DIA = 5
+
+# Cupo de estudios que cada servicio (COEX / Privado / Emergencia IGSS)
+# puede atender en paralelo en la misma franja horaria. Una cita normal no
+# puede superarlo; solo una emergencia confirmada puede agendarse por encima
+# del cupo (con el tope diario MAXIMO_EMERGENCIAS_POR_DIA).
+CUPO_PARALELO_POR_SERVICIO = 3
 
 # Etiqueta corta del convenio para mostrar en las celdas del calendario.
 ETIQUETA_CONVENIO_CORTA = {
@@ -96,10 +83,14 @@ ETIQUETA_CONVENIO_CORTA = {
 }
 
 
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 def es_recepcionista(user):
     return user.is_authenticated and user.rol == Usuario.ROL_RECEPCIONISTA
+
+
+def es_caja(user):
+    return user.is_authenticated and (
+        user.puede_operar_caja or user.rol == Usuario.ROL_CAJA or es_administrador(user)
+    )
 
 
 def es_tecnico(user):
@@ -110,21 +101,21 @@ def es_radiologo(user):
     return user.is_authenticated and user.rol == Usuario.ROL_MEDICO_RADIOLOGO
 
 
-def es_administrador_financiero(user):
-    return user.is_authenticated and (user.is_superuser or user.rol == Usuario.ROL_ADMINISTRADOR_FINANCIERO)
-
-
 def puede_ver_reportes_diarios(user):
-    return es_recepcionista(user) or es_administrador_financiero(user) or es_administrador(user)
+    return es_recepcionista(user) or es_administrador(user) or es_administrador_financiero(user)
 
 
 def puede_descargar_reportes_diarios(user):
-    return es_administrador_financiero(user) or es_administrador(user)
+    return es_administrador(user) or es_administrador_financiero(user)
+
+
+def es_administrador_financiero(user):
+    # Compatibilidad con sesiones antiguas; el rol ya no se muestra ni se crea.
+    return user.is_authenticated and user.rol == Usuario.ROL_ADMINISTRADOR_FINANCIERO
 
 
 def _notificar_cita_asignada(cita):
     """El radiólogo elegido al agendar la cita recibe una nueva solicitud
-<<<<<<< HEAD
     para revisar/confirmar. Si la recepcionista la marcó como emergencia
     (agendada encima de otra cita ya existente), el mensaje lo deja claro
     para que la radióloga sepa que se le está pidiendo hacer un espacio."""
@@ -140,17 +131,6 @@ def _notificar_cita_asignada(cita):
         destinatario=cita.radiologo,
         tipo=Notificacion.TIPO_CITA_ASIGNADA,
         mensaje=mensaje,
-=======
-    para revisar/confirmar."""
-    Notificacion.notificar(
-        destinatario=cita.radiologo,
-        tipo=Notificacion.TIPO_CITA_ASIGNADA,
-        mensaje=(
-            f'Nueva cita asignada: {cita.tipo_estudio} para {cita.paciente.nombre} '
-            f'{cita.paciente.apellido} el {cita.fecha_sugerida or cita.fecha} a las '
-            f'{cita.hora_sugerida or cita.hora}.'
-        ),
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         cita=cita,
         url=reverse('solicitudes_pendientes'),
     )
@@ -247,7 +227,9 @@ def _notificar_estudio_completado(cita):
 def _notificar_reporte_enviado(reporte, enviado_por):
     """Cuando la recepcionista envía el reporte diario, se avisa a todo el
     equipo de administración financiera para que puedan revisarlo."""
-    destinatarios = Usuario.objects.filter(rol=Usuario.ROL_ADMINISTRADOR_FINANCIERO, is_active=True)
+    destinatarios = Usuario.objects.filter(
+        rol=Usuario.ROL_ADMINISTRADOR, is_active=True,
+    )
     Notificacion.notificar_a_varios(
         usuarios=destinatarios,
         tipo=Notificacion.TIPO_REPORTE_ENVIADO,
@@ -259,7 +241,6 @@ def _notificar_reporte_enviado(reporte, enviado_por):
     )
 
 
-<<<<<<< HEAD
 CAMPOS_DATOS_PACIENTE = ('nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento')
 
 
@@ -272,20 +253,6 @@ def obtener_o_actualizar_paciente(cd):
     aunque el recepcionista lo edite en el formulario. Las correcciones de
     datos existentes se hacen desde la pantalla dedicada de "Completar datos
     del paciente" (o el admin), no al agendar una cita."""
-=======
-CAMPOS_DATOS_PACIENTE = ('nombre', 'apellido', 'sexo', 'telefono', 'fecha_nacimiento')
-
-
-def obtener_o_actualizar_paciente(cd):
-    """Reutiliza el paciente si el DPI ya existe (evita duplicar el registro)
-    y sincroniza sus datos con lo capturado en el formulario, por si el
-    recepcionista corrigió algo (ej. un teléfono desactualizado).
-
-    El carné de afiliación IGSS, el sexo, el teléfono y la fecha de
-    nacimiento son opcionales (ej. registro apurado en una emergencia) y se
-    identifican siempre por el DPI del paciente: si vienen vacíos no se
-    borra el valor que ya tuviera registrado de una visita anterior."""
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     carnet_igss = cd.get('carnet_igss') or None
     paciente, creado = Paciente.objects.get_or_create(
         dpi=cd['dpi'],
@@ -295,26 +262,15 @@ def obtener_o_actualizar_paciente(cd):
         cambiados = []
         for campo in CAMPOS_DATOS_PACIENTE:
             valor_nuevo = cd[campo]
-<<<<<<< HEAD
             # Solo se rellena si el paciente NO tiene ya ese dato guardado.
             if valor_nuevo and not getattr(paciente, campo):
                 setattr(paciente, campo, valor_nuevo)
                 cambiados.append(campo)
         if carnet_igss and not paciente.carnet_igss:
-=======
-            si_opcional_y_vacio = campo in Paciente.CAMPOS_OPCIONALES and not valor_nuevo
-            if si_opcional_y_vacio:
-                continue
-            if getattr(paciente, campo) != valor_nuevo:
-                setattr(paciente, campo, valor_nuevo)
-                cambiados.append(campo)
-        if carnet_igss and paciente.carnet_igss != carnet_igss:
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             paciente.carnet_igss = carnet_igss
             cambiados.append('carnet_igss')
         if cambiados:
             paciente.save(update_fields=cambiados)
-<<<<<<< HEAD
     _notificar_datos_pendientes_si_corresponde(paciente)
     return paciente
 
@@ -346,11 +302,6 @@ def _notificar_datos_pendientes_si_corresponde(paciente):
     )
 
 
-=======
-    return paciente
-
-
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 @login_required
 @user_passes_test(es_recepcionista)
 def completar_datos_paciente(request, paciente_id):
@@ -420,10 +371,7 @@ def buscar_paciente_por_dpi(request):
         'apellido': paciente.apellido,
         'sexo': paciente.sexo,
         'telefono': paciente.telefono,
-<<<<<<< HEAD
         'correo': paciente.correo or '',
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         'fecha_nacimiento': (
             paciente.fecha_nacimiento.isoformat() if paciente.fecha_nacimiento else ''
         ),
@@ -439,8 +387,13 @@ def radiologos_por_estudio(request):
     realizan (ej. Celeste solo hace Ultrasonido y Rayos X)."""
     tipo_estudio_id = request.GET.get('tipo_estudio')
     radiologos = Usuario.objects.filter(
-        rol=Usuario.ROL_MEDICO_RADIOLOGO, is_active=True, tipos_estudio_asignados__id=tipo_estudio_id,
-    ).order_by('username').distinct()
+        rol=Usuario.ROL_MEDICO_RADIOLOGO, is_active=True,
+    )
+    if tipo_estudio_id:
+        radiologos = radiologos.filter(
+            tipos_estudio_asignados__id=tipo_estudio_id,
+        )
+    radiologos = radiologos.order_by('username').distinct()
     return JsonResponse({
         'radiologos': [
             {'id': r.id, 'texto': r.get_full_name() or r.username} for r in radiologos
@@ -533,7 +486,7 @@ def historial_paciente(request, paciente_id):
     paciente = get_object_or_404(Paciente, id=paciente_id)
     citas = (
         Cita.objects.filter(paciente=paciente, estado=Cita.ESTADO_PROCESADA)
-        .select_related('tipo_estudio', 'orden_trabajo')
+        .select_related('tipo_estudio', 'orden_trabajo', 'cobro')
         .order_by('-fecha', '-hora')
     )
     # Para llenar el combo de "Estudio" del filtro solo con los tipos que
@@ -548,14 +501,32 @@ def historial_paciente(request, paciente_id):
     })
 
 
-<<<<<<< HEAD
+def _cobro_bloquea_envio(cita):
+    """True si la cita tiene un cobro registrado que sigue pendiente: en ese
+    caso no se permite enviar los resultados hasta que se marque como
+    cobrado. Si no hay cobro, no bloquea (el cobro no es obligatorio)."""
+    return bool(
+        hasattr(cita, 'cobro')
+        and cita.cobro
+        and cita.cobro.estado != Cobro.ESTADO_PAGADO
+    )
+
+
 def _enviar_estudio_y_registrar(request, cita, orden):
     """Envía el estudio (asume que el paciente ya tiene correo) y deja
     constancia: bitácora, marca de tiempo y mensaje de éxito. Si el envío
     falla (ej. el sistema no tiene configuradas las credenciales SMTP),
     avisa con un mensaje de error en vez de dejar la pantalla reventar, y
     NO marca el estudio como enviado — así el botón sigue disponible para
-    reintentar."""
+    reintentar. Si el estudio tiene un cobro pendiente, no se envía."""
+    if _cobro_bloquea_envio(cita):
+        messages.error(
+            request,
+            f'El estudio de {cita.paciente} tiene un cobro pendiente. '
+            'Primero marque el cobro como realizado para poder enviar los resultados.',
+        )
+        return
+
     if not enviar_resultados(orden):
         messages.error(
             request,
@@ -597,6 +568,108 @@ def enviar_estudio(request, cita_id):
 
 
 @login_required
+@user_passes_test(es_caja)
+def pagos_pendientes(request):
+    """Listado paginado de órdenes generadas, con filtros para caja."""
+    qs = Cobro.objects.select_related(
+        'cita__paciente', 'cita__tipo_estudio', 'cobrado_por',
+    ).order_by('-creado_en')
+    busqueda = (request.GET.get('q') or '').strip()
+    estado = request.GET.get('estado', 'pendiente')
+    convenio = request.GET.get('convenio', '')
+    tipo_estudio = request.GET.get('tipo_estudio', '')
+    desde = parse_date(request.GET.get('desde', ''))
+    hasta = parse_date(request.GET.get('hasta', ''))
+    if busqueda:
+        qs = qs.filter(
+            Q(cita__paciente__nombre__icontains=busqueda)
+            | Q(cita__paciente__apellido__icontains=busqueda)
+            | Q(cita__paciente__dpi__icontains=busqueda)
+        )
+    if estado in (Cobro.ESTADO_PENDIENTE, Cobro.ESTADO_PAGADO):
+        qs = qs.filter(estado=estado)
+    if convenio in dict(Cita.CONVENIO_CHOICES):
+        qs = qs.filter(cita__convenio=convenio)
+    if tipo_estudio.isdigit():
+        qs = qs.filter(cita__tipo_estudio_id=int(tipo_estudio))
+    if desde:
+        qs = qs.filter(cita__fecha__gte=desde)
+    if hasta:
+        qs = qs.filter(cita__fecha__lte=hasta)
+    pagina = Paginator(qs, 20).get_page(request.GET.get('page'))
+    return render(request, 'pacientes/pagos_pendientes.html', {
+        'pagina': pagina, 'busqueda': busqueda, 'estado': estado,
+        'convenio': convenio, 'tipo_estudio': tipo_estudio,
+        'desde': desde, 'hasta': hasta,
+        'convenios': Cita.CONVENIO_CHOICES,
+        'tipos_estudio': TipoEstudio.objects.filter(activo=True).order_by('nombre'),
+    })
+
+
+@login_required
+@user_passes_test(es_caja)
+def boleta_pago_pdf(request, cobro_id):
+    """Genera la boleta imprimible de un cobro ya registrado como pagado."""
+    cobro = get_object_or_404(
+        Cobro.objects.select_related('cita__paciente', 'cita__tipo_estudio', 'cobrado_por'),
+        id=cobro_id,
+        estado=Cobro.ESTADO_PAGADO,
+    )
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    paciente = cobro.cita.paciente
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=letter, topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+        leftMargin=1.8 * cm, rightMargin=1.8 * cm,
+    )
+    estilos = getSampleStyleSheet()
+    datos = [
+        ['BOLETA DE PAGO', ''],
+        ['Paciente', f'{paciente.nombre} {paciente.apellido}'],
+        ['DPI', paciente.dpi],
+        ['Carné IGSS', paciente.carnet_igss or 'No registrado'],
+        ['Teléfono', paciente.telefono or 'No registrado'],
+        ['Estudio', cobro.cita.tipo_estudio.nombre],
+        ['Convenio', cobro.cita.get_convenio_display()],
+        ['Fecha de cita', cobro.cita.fecha.strftime('%d/%m/%Y')],
+        ['Monto', f'Q{cobro.cita.precio:.2f}'],
+        ['Forma de pago', cobro.get_forma_pago_display() or 'No registrada'],
+        ['Referencia', cobro.numero_boleta or 'No registrada'],
+        ['Pagado el', cobro.pagado_en.strftime('%d/%m/%Y %H:%M') if cobro.pagado_en else ''],
+        ['Registrado por', cobro.cobrado_por.get_full_name() or cobro.cobrado_por.username],
+    ]
+    tabla = Table(datos, colWidths=[4 * cm, 12 * cm])
+    tabla.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1d4ed8')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('SPAN', (0, 0), (-1, 0)),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+        ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    doc.build([
+        Paragraph('Clínica de Imágenes', estilos['Title']),
+        Spacer(1, 12),
+        tabla,
+        Spacer(1, 24),
+        Paragraph('Comprobante generado por el sistema. Conserve esta boleta como constancia del pago.', estilos['BodyText']),
+    ])
+    respuesta = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+    respuesta['Content-Disposition'] = f'inline; filename="boleta_pago_{cobro.id}.pdf"'
+    return respuesta
+
+
+@login_required
 @user_passes_test(es_recepcionista)
 def ingresar_correo_envio(request, cita_id):
     """El paciente no tenía correo registrado al momento de enviar el
@@ -629,8 +702,40 @@ def ingresar_correo_envio(request, cita_id):
     })
 
 
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
+@login_required
+@user_passes_test(es_caja)
+@require_POST
+def marcar_cobrado(request, cita_id):
+    """Registra la boleta desde que existe una orden de trabajo."""
+    cita = get_object_or_404(
+        Cita.objects.filter(
+            estado__in=(Cita.ESTADO_EN_PROCESO, Cita.ESTADO_PROCESADA),
+            orden_trabajo__isnull=False,
+        ),
+        id=cita_id,
+    )
+    cobro, creado = Cobro.objects.get_or_create(cita=cita)
+    if request.method != 'POST':
+        return redirect('pagos_pendientes')
+    form = RegistrarPagoEstudioForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, 'Revise los datos de la boleta antes de guardar.')
+        return redirect('pagos_pendientes')
+    cobro.forma_pago = form.cleaned_data['forma_pago']
+    cobro.numero_boleta = form.cleaned_data['numero_boleta']
+    cobro.marcar_pagado(request.user, notas=form.cleaned_data['notas'])
+    cobro.save(update_fields=['forma_pago', 'numero_boleta'])
+
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_MARCAR_COBRADO,
+        descripcion=f'Marcó como cobrado el estudio de {cita.paciente} (cita #{cita.id}).',
+    )
+    messages.success(request, f'Estudio de {cita.paciente} marcado como cobrado.')
+    return redirect('pagos_pendientes')
+
+
 @login_required
 @user_passes_test(es_recepcionista)
 def ver_estudio_historial(request, cita_id):
@@ -657,20 +762,15 @@ def crear_estudio(request):
                 request=request,
                 usuario=request.user,
                 accion=Bitacora.ACCION_CREAR_ESTUDIO,
-<<<<<<< HEAD
                 descripcion=(
                     f'Creó el estudio "{tipo_estudio.nombre}" '
                     f'({tipo_estudio.get_modalidad_display()}, {tipo_estudio.duracion_minutos} min).'
                 ),
-=======
-                descripcion=f'Creó el estudio "{tipo_estudio.nombre}" (precio: {tipo_estudio.precio}).',
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             )
             messages.success(request, f'Estudio "{tipo_estudio.nombre}" creado correctamente.')
             return redirect('dashboard')
     else:
         form = CrearTipoEstudioForm()
-<<<<<<< HEAD
     return render(request, 'pacientes/crear_estudio.html', {'form': form, 'editando': None})
 
 
@@ -707,9 +807,58 @@ def editar_estudio(request, estudio_id):
     else:
         form = CrearTipoEstudioForm(instance=tipo_estudio)
     return render(request, 'pacientes/crear_estudio.html', {'form': form, 'editando': tipo_estudio})
-=======
-    return render(request, 'pacientes/crear_estudio.html', {'form': form})
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
+
+
+@login_required
+@user_passes_test(es_administrador)
+def lista_combos(request):
+    combos = (
+        Combo.objects.all()
+        .prefetch_related('estudios')
+        .order_by('nombre')
+    )
+    return render(request, 'pacientes/lista_combos.html', {'combos': combos})
+
+
+@login_required
+@user_passes_test(es_administrador)
+def crear_combo(request):
+    if request.method == 'POST':
+        form = ComboForm(request.POST)
+        if form.is_valid():
+            combo = form.save()
+            Bitacora.registrar(
+                request=request,
+                usuario=request.user,
+                accion=Bitacora.ACCION_CREAR_COMBO,
+                descripcion=f'Creó el combo "{combo.nombre}" con {combo.estudios.count()} estudios.',
+            )
+            messages.success(request, f'Combo "{combo.nombre}" creado correctamente.')
+            return redirect('lista_combos')
+    else:
+        form = ComboForm()
+    return render(request, 'pacientes/crear_combo.html', {'form': form, 'editando': None})
+
+
+@login_required
+@user_passes_test(es_administrador)
+def editar_combo(request, combo_id):
+    combo = get_object_or_404(Combo, id=combo_id)
+    if request.method == 'POST':
+        form = ComboForm(request.POST, instance=combo)
+        if form.is_valid():
+            combo = form.save()
+            Bitacora.registrar(
+                request=request,
+                usuario=request.user,
+                accion=Bitacora.ACCION_EDITAR_COMBO,
+                descripcion=f'Editó el combo "{combo.nombre}".',
+            )
+            messages.success(request, f'Combo "{combo.nombre}" actualizado correctamente.')
+            return redirect('lista_combos')
+    else:
+        form = ComboForm(instance=combo)
+    return render(request, 'pacientes/crear_combo.html', {'form': form, 'editando': combo})
 
 
 @login_required
@@ -735,67 +884,26 @@ def seleccionar_horario(request, convenio):
     if reagendar_cita:
         citas_semana = citas_semana.exclude(id=reagendar_cita.id)
 
-<<<<<<< HEAD
-    # El calendario es único para toda la clínica: un turno ocupado por
-    # cualquier convenio (COEX / Privado / Emergencia IGSS) se ve ocupado en
-    # los tres. Se guarda la etiqueta del convenio para mostrarla en la celda.
-    ocupados_por_dia = {}   # fecha -> [(rango, etiqueta_convenio), ...]
-    asignados_por_dia = {}  # fecha -> {hora: {etiquetas}}
-    for cita in citas_semana:
-        etiqueta = ETIQUETA_CONVENIO_CORTA.get(cita.convenio, cita.convenio)
-        rango = rango_ocupado_por(cita.fecha, cita.hora, cita.tipo_estudio.duracion_minutos)
-        ocupados_por_dia.setdefault(cita.fecha, []).append((rango, etiqueta))
-        asignados_por_dia.setdefault(cita.fecha, {}).setdefault(cita.hora, set()).add(etiqueta)
-
+    # Cada servicio (COEX / Privado / Emergencia IGSS) tiene cupo de
+    # CUPO_PARALELO_POR_SERVICIO estudios en paralelo por franja. Cada celda
+    # muestra cuántos cupos del servicio usa la franja y con qué otros
+    # servicios se cruza (una franja cruzada por otro servicio se considera
+    # ocupada). Las citas rechazadas no cuentan.
     def _celda(dia, hora):
-        asignados = asignados_por_dia.get(dia, {})
-        cruces = [
-            et for rango, et in ocupados_por_dia.get(dia, [])
-            if se_cruzan(rango_ocupado_por(dia, hora, PASO_MINUTOS), rango)
-        ]
+        mismas, otras = _ocupacion_en_franja(citas_semana, dia, hora, PASO_MINUTOS, convenio)
         return {
             'dia': dia,
             'hora': hora,
             'pasado': en_el_pasado(dia, hora),
             'fuera_rango': fuera_de_ventana(dia),
-            'asignado': hora in asignados,
-            'ocupado': hora not in asignados and bool(cruces),
-            'convenios': ', '.join(sorted(asignados[hora])) if hora in asignados
-            else ', '.join(sorted(set(cruces))),
+            'cupo': mismas,
+            'cupo_lleno': mismas >= CUPO_PARALELO_POR_SERVICIO,
+            'ocupado': mismas >= CUPO_PARALELO_POR_SERVICIO or bool(otras),
+            'convenios': ', '.join(otras),
         }
 
     filas = [
         {'hora': hora, 'celdas': [_celda(dia, hora) for dia in dias]}
-=======
-    ocupados_por_dia = {}
-    asignados_por_dia = {}
-    for cita in citas_semana:
-        rango = rango_ocupado_por(cita.fecha, cita.hora, cita.tipo_estudio.duracion_minutos)
-        ocupados_por_dia.setdefault(cita.fecha, []).append(rango)
-        asignados_por_dia.setdefault(cita.fecha, set()).add(cita.hora)
-
-    filas = [
-        {
-            'hora': hora,
-            'celdas': [
-                {
-                    'dia': dia,
-                    'hora': hora,
-                    'pasado': en_el_pasado(dia, hora),
-                    'fuera_rango': fuera_de_ventana(dia),
-                    'asignado': hora in asignados_por_dia.get(dia, set()),
-                    'ocupado': (
-                        hora not in asignados_por_dia.get(dia, set())
-                        and any(
-                            se_cruzan(rango_ocupado_por(dia, hora, PASO_MINUTOS), ocupado)
-                            for ocupado in ocupados_por_dia.get(dia, [])
-                        )
-                    ),
-                }
-                for dia in dias
-            ],
-        }
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         for hora in horarios_disponibles()
     ]
 
@@ -812,32 +920,42 @@ def seleccionar_horario(request, convenio):
         'reagendar_cita': reagendar_cita,
         'reagendar_url_name': f'confirmar_reagenda_{convenio}' if reagendar_cita else None,
         'procesar_url_name': f'procesar_citas_{convenio}',
-<<<<<<< HEAD
+        'cupo_paralelo': CUPO_PARALELO_POR_SERVICIO,
         'maximo_emergencias_por_dia': MAXIMO_EMERGENCIAS_POR_DIA,
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     }
     return render(request, 'pacientes/calendario.html', contexto)
 
 
-<<<<<<< HEAD
-def _hay_conflicto_horario(fecha_dt, hora_time, duracion_minutos):
-    """¿El horario dado se cruza con alguna cita ya existente ese día?
-    (no cuenta las citas rechazadas)."""
-    if not fecha_dt or not hora_time:
-        return False
-    ocupados = [
-        rango_ocupado_por(c.fecha, c.hora, c.tipo_estudio.duracion_minutos)
-        for c in Cita.objects.filter(fecha=fecha_dt)
+def _ocupacion_en_franja(citas, fecha, hora, duracion_minutos, convenio):
+    """Dada una lista de citas ya cargada, cuenta cuántas del mismo servicio
+    se cruzan con la franja [hora, hora+duracion) y con qué otros servicios
+    se cruza. Devuelve (mismas, otras_etiquetas)."""
+    rango = rango_ocupado_por(fecha, hora, duracion_minutos)
+    mismas = 0
+    otras = set()
+    for cita in citas:
+        if se_cruzan(rango, rango_ocupado_por(cita.fecha, cita.hora, cita.tipo_estudio.duracion_minutos)):
+            if cita.convenio == convenio:
+                mismas += 1
+            else:
+                otras.add(ETIQUETA_CONVENIO_CORTA.get(cita.convenio, cita.convenio))
+    return mismas, sorted(otras)
+
+
+def _estado_franja(fecha, hora, duracion_minutos, convenio, excluir_cita_id=None):
+    """Estado de ocupación de una franja consultando la BD (para validar una
+    reserva nueva). No cuenta las citas rechazadas y opcionalmente ignora una
+    cita (al reagendar). Devuelve (mismas, otras_etiquetas)."""
+    citas = (
+        Cita.objects.filter(fecha=fecha)
         .exclude(estado=Cita.ESTADO_RECHAZADA)
         .select_related('tipo_estudio')
-    ]
-    rango_nuevo = rango_ocupado_por(fecha_dt, hora_time, duracion_minutos)
-    return any(se_cruzan(rango_nuevo, ocupado) for ocupado in ocupados)
+    )
+    if excluir_cita_id:
+        citas = citas.exclude(id=excluir_cita_id)
+    return _ocupacion_en_franja(list(citas), fecha, hora, duracion_minutos, convenio)
 
 
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 @login_required
 @user_passes_test(es_recepcionista)
 def agendar_cita(request, convenio):
@@ -857,7 +975,6 @@ def agendar_cita(request, convenio):
     form.fields['fecha'].widget = forms.HiddenInput()
     form.fields['hora'].widget = forms.HiddenInput()
 
-<<<<<<< HEAD
     # Aviso de si el horario elegido ya tiene otra cita encima: se calcula
     # desde ya (sin esperar a elegir el tipo de estudio) usando PASO_MINUTOS
     # como referencia, para que la advertencia de emergencia aparezca apenas
@@ -868,10 +985,11 @@ def agendar_cita(request, convenio):
         hora_time = hora if isinstance(hora, datetime.time) else datetime.datetime.strptime(hora, '%H:%M').time()
     except (TypeError, ValueError):
         hora_time = None
-    hay_conflicto = _hay_conflicto_horario(fecha_dt, hora_time, PASO_MINUTOS)
+    mismas_iniciales, otras_iniciales = _estado_franja(fecha_dt, hora_time, PASO_MINUTOS, convenio)
+    hay_conflicto = (
+        mismas_iniciales >= CUPO_PARALELO_POR_SERVICIO or bool(otras_iniciales)
+    )
 
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     if request.method == 'POST' and form.is_valid():
         cd = form.cleaned_data
         if en_el_pasado(cd['fecha'], cd['hora']):
@@ -881,16 +999,28 @@ def agendar_cita(request, convenio):
             messages.error(request, 'Solo se pueden agendar citas hasta 3 semanas después de hoy.')
             return redirect(calendario_url)
 
-<<<<<<< HEAD
-        hay_conflicto = _hay_conflicto_horario(cd['fecha'], cd['hora'], cd['tipo_estudio'].duracion_minutos)
+        mismas, otras = _estado_franja(
+            cd['fecha'], cd['hora'], cd['tipo_estudio'].duracion_minutos, convenio,
+        )
+        cupo_lleno = mismas >= CUPO_PARALELO_POR_SERVICIO
+        hay_conflicto = cupo_lleno or bool(otras)
 
         if hay_conflicto and not cd['es_emergencia']:
-            form.add_error(
-                None,
-                'Este horario ya está ocupado por otra cita. Si es una emergencia que debe '
-                'agendarse sí o sí en este horario, marcá la casilla de confirmación de '
-                'emergencia (más abajo) y volvé a enviar.',
-            )
+            if cupo_lleno:
+                form.add_error(
+                    None,
+                    f'Este servicio ya tiene sus {CUPO_PARALELO_POR_SERVICIO} cupos ocupados '
+                    f'a las {cd["hora"]} para el {cd["fecha"]}. Solo una emergencia que deba '
+                    'agendarse de forma excepcional puede superar el cupo: marque la casilla de confirmación '
+                    'de emergencia (más abajo) y volvé a enviar.',
+                )
+            else:
+                form.add_error(
+                    None,
+                    'Este horario ya está ocupado por otra cita. Si es una emergencia que debe '
+                    'agendarse de forma excepcional en este horario, marque la casilla de confirmación de '
+                    'emergencia (más abajo) y vuelva a enviar.',
+                )
         else:
             if hay_conflicto:
                 emergencias_hoy = Cita.objects.filter(
@@ -900,7 +1030,7 @@ def agendar_cita(request, convenio):
                     messages.error(
                         request,
                         f'Ya se agendaron {MAXIMO_EMERGENCIAS_POR_DIA} citas de emergencia para el '
-                        f'{cd["fecha"]}, el máximo permitido por día. Elegí otra fecha.',
+                        f'{cd["fecha"]}, el máximo permitido por día. Elija otra fecha.',
                     )
                     return redirect(calendario_url)
 
@@ -951,52 +1081,6 @@ def agendar_cita(request, convenio):
                     'Quedará agendada cuando la radióloga la confirme.',
                 )
             return redirect('dashboard')
-=======
-        ocupados = [
-            rango_ocupado_por(c.fecha, c.hora, c.tipo_estudio.duracion_minutos)
-            for c in Cita.objects.filter(fecha=cd['fecha'])
-            .exclude(estado=Cita.ESTADO_RECHAZADA)
-            .select_related('tipo_estudio')
-        ]
-        rango_nuevo = rango_ocupado_por(cd['fecha'], cd['hora'], cd['tipo_estudio'].duracion_minutos)
-        if any(se_cruzan(rango_nuevo, ocupado) for ocupado in ocupados):
-            messages.error(request, 'Ese horario ya no está disponible: se cruza con otra cita.')
-            return redirect(calendario_url)
-
-        paciente = obtener_o_actualizar_paciente(cd)
-        cita = Cita.objects.create(
-            paciente=paciente,
-            tipo_estudio=cd['tipo_estudio'],
-            radiologo=cd['radiologo'],
-            convenio=convenio,
-            estado=Cita.ESTADO_PENDIENTE,
-            fecha=cd['fecha'],
-            hora=cd['hora'],
-            medico_referente=cd['medico_referente'],
-            fecha_sugerida=cd['fecha'],
-            hora_sugerida=cd['hora'],
-            notas=cd['notas'],
-            creada_por=request.user,
-        )
-        _notificar_cita_asignada(cita)
-        Bitacora.registrar(
-            request=request,
-            usuario=request.user,
-            accion=Bitacora.ACCION_SOLICITAR_CITA,
-            descripcion=(
-                f'Registró al paciente {paciente.nombre} {paciente.apellido} (DPI {paciente.dpi}) '
-                f'y solicitó cita de {cd["tipo_estudio"]} para {cd["fecha"]} {cd["hora"]} ({convenio}), '
-                f'asignada a {cd["radiologo"]}.'
-            ),
-        )
-        messages.success(
-            request,
-            f'Solicitud enviada a {cd["radiologo"]} para {paciente.nombre} {paciente.apellido} '
-            f'(sugerido: {cd["fecha"]} a las {cd["hora"]}). '
-            'Quedará agendada cuando la radióloga la confirme.',
-        )
-        return redirect('dashboard')
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
     return render(request, 'pacientes/agendar_cita.html', {
         'form': form,
@@ -1006,7 +1090,6 @@ def agendar_cita(request, convenio):
         'fecha_valor': fecha,
         'hora_valor': hora,
         'requiere_carnet_igss': convenio in (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS),
-<<<<<<< HEAD
         'hay_conflicto': hay_conflicto,
     })
 
@@ -1017,8 +1100,9 @@ def agendar_cita_privado(request):
     """Agendamiento del módulo Privado: formulario simple, sin carné IGSS y
     sin revisión del radiólogo. La cita se agenda de una vez (estado
     AGENDADA), se asigna automáticamente al primer radiólogo habilitado para
-    ese estudio, y se avisa (sin bloquear) si el turno ya está ocupado por
-    otra cita."""
+    ese estudio, y se avisa (sin bloquear) si la franja se cruza con la cita
+    de otro servicio. Hasta CUPO_PARALELO_POR_SERVICIO citas del mismo
+    servicio pueden compartir franja; a partir de ahí el cupo bloquea."""
     calendario_url = reverse('calendario_privado')
 
     datos = request.POST if request.method == 'POST' else request.GET
@@ -1036,9 +1120,18 @@ def agendar_cita_privado(request):
                 messages.error(request, 'Solo se pueden agendar citas hasta 3 semanas después de hoy.')
                 return redirect(calendario_url)
 
-            hay_conflicto = _hay_conflicto_horario(
+            mismas, otras = _estado_franja(
                 cd['fecha'], cd['hora'], cd['tipo_estudio'].duracion_minutos,
+                Cita.CONVENIO_PRIVADO,
             )
+            if mismas >= CUPO_PARALELO_POR_SERVICIO:
+                messages.error(
+                    request,
+                    f'El servicio Privado ya tiene sus {CUPO_PARALELO_POR_SERVICIO} cupos '
+                    f'ocupados a las {cd["hora"]} para el {cd["fecha"]}. Elija otra franja horaria.',
+                )
+                return redirect(calendario_url)
+            hay_conflicto = bool(otras)
             radiologo = (
                 cd['tipo_estudio'].radiologos.filter(is_active=True).order_by('username').first()
             )
@@ -1103,14 +1196,16 @@ def agendar_cita_privado(request):
                 hora_dt = datetime.datetime.strptime(hora_inicial, '%H:%M').time()
             except ValueError:
                 hora_dt = None
-            if hora_dt and _hay_conflicto_horario(parse_date(fecha_inicial), hora_dt, PASO_MINUTOS):
-                messages.warning(request, 'Ese turno ya está ocupado por otra cita.')
+            if hora_dt:
+                mismas_get, otras_get = _estado_franja(
+                    parse_date(fecha_inicial), hora_dt, PASO_MINUTOS, Cita.CONVENIO_PRIVADO,
+                )
+                if mismas_get >= CUPO_PARALELO_POR_SERVICIO or otras_get:
+                    messages.warning(request, 'Ese turno ya está ocupado por otra cita.')
 
     return render(request, 'pacientes/agendar_privado.html', {
         'form': form,
         'calendario_url': calendario_url,
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     })
 
 
@@ -1120,12 +1215,25 @@ def procesar_citas(request, convenio):
     convenio_nombre = dict(Cita.CONVENIO_CHOICES).get(convenio, convenio)
 
     fecha = parse_date(request.GET.get('fecha', '')) or datetime.date.today()
+    busqueda = (request.GET.get('q') or '').strip()
+    filtro_estado = (request.GET.get('estado') or '').strip()
+    filtro_tipo_estudio = (request.GET.get('tipo_estudio') or '').strip()
     citas = (
         Cita.objects.filter(convenio=convenio, fecha=fecha)
         .exclude(estado=Cita.ESTADO_PENDIENTE)
         .select_related('paciente', 'tipo_estudio')
         .order_by('hora')
     )
+    if busqueda:
+        citas = citas.filter(
+            Q(paciente__dpi__icontains=busqueda)
+            | Q(paciente__nombre__icontains=busqueda)
+            | Q(paciente__apellido__icontains=busqueda)
+        )
+    if filtro_estado:
+        citas = citas.filter(estado=filtro_estado)
+    if filtro_tipo_estudio.isdigit():
+        citas = citas.filter(tipo_estudio_id=int(filtro_tipo_estudio))
 
     return render(request, 'pacientes/procesar_citas.html', {
         'convenio': convenio,
@@ -1135,6 +1243,13 @@ def procesar_citas(request, convenio):
         'dia_anterior': fecha - datetime.timedelta(days=1),
         'dia_siguiente': fecha + datetime.timedelta(days=1),
         'citas': citas,
+        'busqueda': busqueda,
+        'filtro_estado': filtro_estado,
+        'filtro_tipo_estudio': filtro_tipo_estudio,
+        'estados_cita': Cita.ESTADO_CHOICES,
+        'tipos_estudio': TipoEstudio.objects.filter(
+            citas__convenio=convenio, citas__fecha=fecha
+        ).distinct().order_by('nombre'),
         'calendario_url_name': f'calendario_{convenio}',
         'marcar_llegada_url_name': f'marcar_llegada_{convenio}',
         'generar_orden_url_name': f'generar_orden_{convenio}',
@@ -1142,11 +1257,37 @@ def procesar_citas(request, convenio):
     })
 
 
+def _crear_ticket_de_turno(*, request, cita, usuario, prioridad=Ticket.PRIORIDAD_NORMAL, motivo=''):
+    """Genera el ticket de la Pantalla de turnos para una cita que acaba de
+    marcarse como llegada (COEX/Privado). Si por algún motivo ya existiera
+    un ticket para esta cita (doble clic, etc.) no crea uno duplicado."""
+    ticket_existente = Ticket.objects.filter(cita=cita).first()
+    if ticket_existente:
+        return ticket_existente
+    ticket = Ticket.objects.create(
+        paciente=cita.paciente,
+        cita=cita,
+        servicio=cita.convenio,
+        prioridad=prioridad,
+        motivo=motivo,
+        registrado_por=usuario,
+    )
+    Bitacora.registrar(
+        request=request,
+        usuario=usuario,
+        accion=Bitacora.ACCION_REGISTRAR_TICKET,
+        descripcion=(
+            f'Se generó el turno {ticket.turno} para {ticket.paciente} al marcar su llegada '
+            f'(cita #{cita.id}, {cita.get_convenio_display()}).'
+        ),
+    )
+    return ticket
+
+
 @login_required
 @user_passes_test(es_recepcionista)
 def marcar_llegada(request, convenio, cita_id):
     cita = get_object_or_404(Cita, id=cita_id, convenio=convenio)
-<<<<<<< HEAD
     if request.method == 'POST' and cita.estado in (Cita.ESTADO_AGENDADA, Cita.ESTADO_EN_ESPERA):
         campos = ['hora_llegada']
         cita.hora_llegada = timezone.now()
@@ -1154,18 +1295,42 @@ def marcar_llegada(request, convenio, cita_id):
             cita.estado = Cita.ESTADO_AGENDADA
             campos.append('estado')
         cita.save(update_fields=campos)
-=======
-    if request.method == 'POST' and cita.estado == Cita.ESTADO_AGENDADA:
-        cita.hora_llegada = timezone.now()
-        cita.save(update_fields=['hora_llegada'])
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         Bitacora.registrar(
             request=request,
             usuario=request.user,
             accion=Bitacora.ACCION_MARCAR_LLEGADA,
             descripcion=f'Marcó la llegada de {cita.paciente} (cita #{cita.id}).',
         )
-        messages.success(request, f'Se registró la llegada de {cita.paciente}.')
+
+        # Se genera el turno de la Pantalla de turnos para COEX/Privado (los
+        # de Emergencia IGSS se registran aparte, en "Registrar Ticket",
+        # porque llegan sin cita agendada).
+        if convenio in (Cita.CONVENIO_COEX, Cita.CONVENIO_PRIVADO):
+            ticket = _crear_ticket_de_turno(request=request, cita=cita, usuario=request.user)
+            mensaje = f'Se registró la llegada de {cita.paciente} — turno {ticket.turno}.'
+
+            if convenio == Cita.CONVENIO_PRIVADO:
+                try:
+                    posiciones = int(request.POST.get('adelantar') or 0)
+                except ValueError:
+                    posiciones = 0
+                posiciones = max(0, min(2, posiciones))
+                if posiciones:
+                    ticket.adelantar(posiciones)
+                    Bitacora.registrar(
+                        request=request,
+                        usuario=request.user,
+                        accion=Bitacora.ACCION_ADELANTAR_TICKET,
+                        descripcion=(
+                            f'Adelantó {posiciones} turno(s) al turno {ticket.turno} de '
+                            f'{ticket.paciente} en la Pantalla de turnos.'
+                        ),
+                    )
+                    mensaje += f' Se adelantó {posiciones} turno(s) en la fila de espera.'
+
+            messages.success(request, mensaje)
+        else:
+            messages.success(request, f'Se registró la llegada de {cita.paciente}.')
     return redirect(f'{reverse(f"procesar_citas_{convenio}")}?fecha={cita.fecha}')
 
 
@@ -1178,11 +1343,7 @@ def generar_orden(request, convenio, cita_id):
     if not cita.hora_llegada:
         messages.error(request, 'Primero hay que marcar la llegada del paciente.')
         return redirect(volver_url)
-<<<<<<< HEAD
     if cita.estado not in (Cita.ESTADO_AGENDADA, Cita.ESTADO_EN_ESPERA):
-=======
-    if cita.estado != Cita.ESTADO_AGENDADA:
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         messages.error(request, 'Esta cita ya no está pendiente de procesar.')
         return redirect(volver_url)
 
@@ -1194,6 +1355,7 @@ def generar_orden(request, convenio, cita_id):
                 motivo=form.cleaned_data['motivo'],
                 creada_por=request.user,
             )
+            Cobro.objects.get_or_create(cita=cita)
             cita.estado = Cita.ESTADO_EN_PROCESO
             cita.save(update_fields=['estado'])
             _notificar_orden_pendiente(cita)
@@ -1221,7 +1383,6 @@ def generar_orden(request, convenio, cita_id):
 @login_required
 @user_passes_test(es_tecnico)
 def ordenes_pendientes(request):
-<<<<<<< HEAD
     """Órdenes esperando que el técnico cargue las imágenes, con búsqueda
     por nombre/apellido/DPI y filtros por convenio, fecha de la cita y
     tipo de estudio (mismo patrón que historial_pacientes)."""
@@ -1230,14 +1391,11 @@ def ordenes_pendientes(request):
     filtro_fecha = (request.GET.get('fecha') or '').strip()
     filtro_tipo_estudio = (request.GET.get('tipo_estudio') or '').strip()
 
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     ordenes = (
         OrdenTrabajo.objects.filter(cita__estado=Cita.ESTADO_EN_PROCESO)
         .exclude(imagenes__isnull=False)
         .select_related('cita', 'cita__paciente', 'cita__tipo_estudio')
         .distinct()
-<<<<<<< HEAD
     )
     if busqueda:
         ordenes = ordenes.filter(
@@ -1306,23 +1464,15 @@ def _guardar_imagen_o_convertir_dicom(archivo, orden, usuario):
     # No se pudo convertir (no era un DICOM válido): se omite en silencio,
     # es habitual que una carpeta traiga archivos que no son parte del estudio.
     return False
-=======
-        .order_by('creada_en')
-    )
-    return render(request, 'pacientes/ordenes_pendientes.html', {'ordenes': ordenes})
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 
 
 @login_required
 @user_passes_test(es_tecnico)
 def adjuntar_imagenes(request, orden_id):
-<<<<<<< HEAD
     """Pantalla de carga. El envío real (y la barra de progreso) los maneja
     el JS del template llamando a adjuntar_imagenes_lote/_finalizar en
     tandas; este POST solo queda como respaldo por si el navegador no
     ejecuta JavaScript."""
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     orden = get_object_or_404(OrdenTrabajo, id=orden_id, cita__estado=Cita.ESTADO_EN_PROCESO)
     volver_url = reverse('ordenes_pendientes')
 
@@ -1330,7 +1480,6 @@ def adjuntar_imagenes(request, orden_id):
         form = AdjuntarImagenesForm(request.POST, request.FILES)
         if form.is_valid():
             archivos = form.cleaned_data['imagenes']
-<<<<<<< HEAD
             adjuntadas = sum(
                 _guardar_imagen_o_convertir_dicom(archivo, orden, request.user)
                 for archivo in archivos
@@ -1343,21 +1492,13 @@ def adjuntar_imagenes(request, orden_id):
                 )
                 return redirect('adjuntar_imagenes', orden_id=orden.id)
 
-=======
-            for archivo in archivos:
-                ImagenEstudio.objects.create(orden=orden, archivo=archivo, subida_por=request.user)
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             _notificar_estudio_listo_para_informar(orden.cita)
             Bitacora.registrar(
                 request=request,
                 usuario=request.user,
                 accion=Bitacora.ACCION_ADJUNTAR_IMAGENES,
                 descripcion=(
-<<<<<<< HEAD
                     f'Adjuntó {adjuntadas} imagen(es) a la orden de {orden.cita.paciente} '
-=======
-                    f'Adjuntó {len(archivos)} imagen(es) a la orden de {orden.cita.paciente} '
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
                     f'(orden #{orden.id}).'
                 ),
             )
@@ -1378,7 +1519,6 @@ def adjuntar_imagenes(request, orden_id):
 
 
 @login_required
-<<<<<<< HEAD
 @user_passes_test(es_tecnico)
 @require_POST
 def adjuntar_imagenes_lote(request, orden_id):
@@ -1431,8 +1571,6 @@ def adjuntar_imagenes_finalizar(request, orden_id):
 
 
 @login_required
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 @user_passes_test(es_radiologo)
 def citas_procesadas(request):
     ordenes = (
@@ -1467,10 +1605,7 @@ def adjuntar_informe(request, cita_id):
             ])
             cita.estado = Cita.ESTADO_PROCESADA
             cita.save(update_fields=['estado'])
-<<<<<<< HEAD
 
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             _notificar_estudio_completado(cita)
             Bitacora.registrar(
                 request=request,
@@ -1489,16 +1624,12 @@ def adjuntar_informe(request, cita_id):
         'orden': orden,
         'edad': cita.paciente.edad_en(cita.fecha),
         'volver_url': volver_url,
-<<<<<<< HEAD
         'tiene_dicom_original': any(img.archivo_original for img in orden.imagenes.all()),
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     })
 
 
 @login_required
 @user_passes_test(es_radiologo)
-<<<<<<< HEAD
 def ver_imagenes_jpg(request, orden_id):
     """Galería con las imágenes JPG (ya convertidas si venían de DICOM) de
     un estudio, con casillas para que la radióloga elija cuáles quedan: las
@@ -1596,8 +1727,6 @@ def descargar_dicom_orden(request, orden_id):
 
 @login_required
 @user_passes_test(es_radiologo)
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 def solicitudes_pendientes(request):
     citas = (
         Cita.objects.filter(estado=Cita.ESTADO_PENDIENTE, radiologo=request.user)
@@ -1731,16 +1860,16 @@ def confirmar_reagenda(request, convenio, cita_id):
             messages.error(request, 'Solo se pueden reagendar citas hasta 3 semanas después de hoy.')
             return redirect(f'{calendario_url}?reagendar={cita.id}')
 
-        ocupados = [
-            rango_ocupado_por(c.fecha, c.hora, c.tipo_estudio.duracion_minutos)
-            for c in Cita.objects.filter(fecha=fecha)
-            .exclude(estado=Cita.ESTADO_RECHAZADA)
-            .exclude(id=cita.id)
-            .select_related('tipo_estudio')
-        ]
-        rango_nuevo = rango_ocupado_por(fecha, hora_valor, cita.tipo_estudio.duracion_minutos)
-        if any(se_cruzan(rango_nuevo, ocupado) for ocupado in ocupados):
-            messages.error(request, 'Ese horario ya no está disponible: se cruza con otra cita.')
+        mismas, otras = _estado_franja(
+            fecha, hora_valor, cita.tipo_estudio.duracion_minutos, cita.convenio,
+            excluir_cita_id=cita.id,
+        )
+        if bool(otras) or (mismas >= CUPO_PARALELO_POR_SERVICIO and not cita.es_emergencia_forzada):
+            messages.error(
+                request,
+                'Ese horario ya no está disponible: se cruza con otra cita o el servicio '
+                f'ya llenó sus {CUPO_PARALELO_POR_SERVICIO} cupos.',
+            )
             return redirect(f'{calendario_url}?reagendar={cita.id}')
 
         cita.fecha = fecha
@@ -1770,7 +1899,9 @@ def confirmar_reagenda(request, convenio, cita_id):
 
 # Registrar Ticket: check-in de pacientes que llegan a Emergencia IGSS sin
 # cita agendada. Genera un turno numerado (ver Ticket.save) para la fila de
-# atención.
+# atención. Ticket.save le asigna automáticamente la prioridad máxima
+# (Crítica), así siempre va al frente de la cola sin importar quién lo
+# registre (ver Ticket.save).
 @login_required
 @user_passes_test(es_recepcionista)
 def registrar_ticket_emergencia(request):
@@ -1784,7 +1915,6 @@ def registrar_ticket_emergencia(request):
             ticket = Ticket.objects.create(
                 paciente=paciente,
                 servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
-                prioridad=int(cd['prioridad']),
                 motivo=cd['motivo'],
                 registrado_por=request.user,
             )
@@ -1800,7 +1930,7 @@ def registrar_ticket_emergencia(request):
             messages.success(
                 request, f'Ticket {ticket.turno} registrado para {paciente.nombre} {paciente.apellido}.'
             )
-            return redirect('pantalla_turnos_emergencia')
+            return redirect('pantalla_turnos')
     else:
         form = RegistrarTicketForm()
 
@@ -1812,18 +1942,124 @@ def registrar_ticket_emergencia(request):
 
 @login_required
 @user_passes_test(es_recepcionista)
-def pantalla_turnos_emergencia(request):
-    cola = (
-        Ticket.objects.filter(servicio=Ticket.SERVICIO_EMERGENCIA_IGSS)
-        .exclude(estado__in=[Ticket.ESTADO_ATENDIDO, Ticket.ESTADO_AUSENTE])
-        .select_related('paciente')
-        .order_by('-prioridad', 'creado_en')
-    )
-    return render(request, 'pacientes/pantalla_turnos_emergencia.html', {
+def pantalla_turnos(request):
+    """Fila de espera unificada de COEX + Privado + Emergencia IGSS. El
+    primero de la cola (mayor prioridad y, entre iguales, el que lleva más
+    tiempo esperando o fue adelantado) se resalta como el turno actual;
+    "Siguiente" lo marca atendido y pasa al que sigue.
+
+    Solo el día de hoy muestra la fila en vivo (nada más los que siguen en
+    espera, con el botón "Siguiente" habilitado). Los demás días muestran el
+    historial completo de turnos de ese día, de solo lectura."""
+    hoy = timezone.localdate()
+    fecha = parse_date(request.GET.get('fecha', '')) or hoy
+    es_hoy = fecha == hoy
+
+    tickets_del_dia = Ticket.del_dia(fecha).select_related('paciente')
+
+    def _cola(filtrar_espera):
+        qs = tickets_del_dia
+        if filtrar_espera:
+            qs = qs.filter(estado=Ticket.ESTADO_EN_ESPERA)
+        return list(qs.order_by('-prioridad', 'orden'))
+
+    if es_hoy:
+        cola = _cola(True)
+        # Por cada ticket en espera, y dentro de su bloque de prioridad,
+        # indicamos si puede subir / bajar / ir al tope de su grupo. El primer
+        # del bloque no puede subir ni ir al tope; el último no puede bajar.
+        grupos = {}
+        for i, t in enumerate(cola):
+            grupos.setdefault(t.prioridad, []).append((i, t))
+        for i, t in enumerate(cola):
+            ids_grupo = [idx for idx, _ in grupos[t.prioridad]]
+            es_primero = i == min(ids_grupo)
+            es_ultimo = i == max(ids_grupo)
+            t.puede_subir = not es_primero
+            t.puede_tope = not es_primero
+            t.puede_bajar = not es_ultimo
+    else:
+        cola = _cola(False)
+
+    return render(request, 'pacientes/pantalla_turnos.html', {
         'cola': cola,
-        'siguiente': cola.first(),
-        'volver_url': reverse('pantalla_placeholder', kwargs={'clave': 'emergencia_igss'}),
+        'actual': (cola[0] if cola else None) if es_hoy else None,
+        'fecha': fecha,
+        'es_hoy': es_hoy,
+        'hoy': hoy,
+        'dia_anterior': fecha - datetime.timedelta(days=1),
+        'dia_siguiente': fecha + datetime.timedelta(days=1),
     })
+
+
+@login_required
+@user_passes_test(es_recepcionista)
+@require_POST
+def avanzar_turno(request, ticket_id):
+    """Marca este ticket como atendido (desaparece de la Pantalla de turnos)
+    y de paso el siguiente en la cola pasa a ser el turno actual."""
+    ticket = get_object_or_404(Ticket, id=ticket_id, estado=Ticket.ESTADO_EN_ESPERA)
+    ticket.estado = Ticket.ESTADO_ATENDIDO
+    ticket.atendido_en = timezone.now()
+    ticket.save(update_fields=['estado', 'atendido_en'])
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_AVANZAR_TURNO,
+        descripcion=f'Avanzó la Pantalla de turnos: turno {ticket.turno} ({ticket.paciente}) atendido.',
+    )
+    messages.success(request, f'Turno {ticket.turno} atendido.')
+    return redirect('pantalla_turnos')
+
+
+@login_required
+@user_passes_test(es_recepcionista)
+@require_POST
+def reordenar_turno(request, ticket_id, direccion):
+    """Reordena un turno en la fila de espera del día SIN cambiar su número de
+    turno oficial. Solo puede moverse dentro de su bloque de prioridad:
+    `subir` lo adelanta un lugar, `bajar` lo atrasa un lugar e `ir_al_tope`
+    (`tope`) lo lleva al frente de su grupo — jamás detrás ni delante de un
+    ticket de otra prioridad. Registra el movimiento en la bitácora."""
+    etiquetas = {
+        'subir': 'subió',
+        'bajar': 'bajó',
+        'tope': 'llevó al tope',
+    }
+    if direccion not in etiquetas:
+        messages.error(request, 'Dirección de reordenamiento inválida.')
+        return redirect('pantalla_turnos')
+
+    ticket = get_object_or_404(
+        Ticket, id=ticket_id, estado=Ticket.ESTADO_EN_ESPERA,
+    )
+    # Un turno de un día que ya no es hoy no se puede reordenar (solo lectura).
+    # Se compara la fecha LOCAL de creación (`localtime`) para que cuenten bien
+    # los tickets creados cerca de la medianoche en UTC.
+    if timezone.localtime(ticket.creado_en).date() != timezone.localdate():
+        messages.error(request, 'Solo se reordenan turnos del día de hoy.')
+        return redirect('pantalla_turnos')
+
+    movido = {
+        'subir': ticket.subir,
+        'bajar': ticket.bajar,
+        'tope': ticket.ir_al_tope,
+    }[direccion]()
+
+    if movido:
+        Bitacora.registrar(
+            request=request,
+            usuario=request.user,
+            accion=Bitacora.ACCION_REORDENAR_TICKET,
+            descripcion=(
+                f'{etiquetas[direccion].capitalize()} el turno {ticket.turno} '
+                f'({ticket.paciente}) en la Pantalla de turnos.'
+            ),
+        )
+        messages.success(request, f'Turno {ticket.turno} {etiquetas[direccion]} en la fila.')
+    else:
+        messages.info(request, f'El turno {ticket.turno} ya estaba en esa posición.')
+    return redirect('pantalla_turnos')
 
 
 @login_required
@@ -1833,7 +2069,7 @@ def procesar_ticket_emergencia(request, ticket_id):
     para que el técnico la vea en 'Órdenes pendientes'. Se salta agendado y
     revisión del radiólogo porque el paciente ya está en la clínica."""
     ticket = get_object_or_404(Ticket, id=ticket_id, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS)
-    volver_url = reverse('pantalla_turnos_emergencia')
+    volver_url = reverse('pantalla_turnos')
 
     if ticket.estado != Ticket.ESTADO_EN_ESPERA:
         messages.error(request, f'El ticket {ticket.turno} ya fue procesado.')
@@ -1885,140 +2121,6 @@ def procesar_ticket_emergencia(request, ticket_id):
     })
 
 
-<<<<<<< HEAD
-# Registrar Ticket Privado: check-in de pacientes que llegan a Privado sin
-# cita agendada. Genera un turno numerado (ver Ticket.save) tipo PRIV-xxx
-# para la fila de atención. Reusa el mismo modelo de tickets que
-# Emergencia IGSS, solo que con servicio/convenio 'privado'.
-@login_required
-@user_passes_test(es_recepcionista)
-def registrar_ticket_privado(request):
-    volver_url = reverse('pantalla_placeholder', kwargs={'clave': 'privado'})
-
-    if request.method == 'POST':
-        form = RegistrarTicketPrivadoForm(request.POST)
-        if form.is_valid():
-            cd = form.cleaned_data
-            paciente = obtener_o_actualizar_paciente(cd)
-            ticket = Ticket.objects.create(
-                paciente=paciente,
-                servicio=Ticket.SERVICIO_PRIVADO,
-                prioridad=Ticket.PRIORIDAD_NORMAL,
-                motivo=cd['motivo'],
-                registrado_por=request.user,
-            )
-            Bitacora.registrar(
-                request=request,
-                usuario=request.user,
-                accion=Bitacora.ACCION_REGISTRAR_TICKET,
-                descripcion=(
-                    f'Registró el ticket {ticket.turno} de Privado para '
-                    f'{paciente.nombre} {paciente.apellido} (DPI {paciente.dpi}).'
-                ),
-            )
-            messages.success(
-                request, f'Ticket {ticket.turno} registrado para {paciente.nombre} {paciente.apellido}.'
-            )
-            return redirect('pantalla_turnos_privado')
-    else:
-        form = RegistrarTicketPrivadoForm()
-
-    return render(request, 'pacientes/registrar_ticket_privado.html', {
-        'form': form,
-        'volver_url': volver_url,
-    })
-
-
-@login_required
-@user_passes_test(es_recepcionista)
-def pantalla_turnos_privado(request):
-    cola = (
-        Ticket.objects.filter(servicio=Ticket.SERVICIO_PRIVADO)
-        .exclude(estado__in=[Ticket.ESTADO_ATENDIDO, Ticket.ESTADO_AUSENTE])
-        .select_related('paciente')
-        .order_by('-prioridad', 'creado_en')
-    )
-    return render(request, 'pacientes/pantalla_turnos_privado.html', {
-        'cola': cola,
-        'siguiente': cola.first(),
-        'volver_url': reverse('pantalla_placeholder', kwargs={'clave': 'privado'}),
-    })
-
-
-@login_required
-@user_passes_test(es_recepcionista)
-def procesar_ticket_privado(request, ticket_id):
-    """Convierte el ticket de Privado en una cita EN_PROCESO + orden de
-    trabajo, lista para que el técnico la vea en 'Órdenes pendientes'. Como
-    el paciente ya está en la clínica, se salta el agendado y la revisión
-    del radiólogo; se asigna automáticamente el radiólogo del estudio (igual
-    que en el agendado privado normal)."""
-    ticket = get_object_or_404(Ticket, id=ticket_id, servicio=Ticket.SERVICIO_PRIVADO)
-    volver_url = reverse('pantalla_turnos_privado')
-
-    if ticket.estado != Ticket.ESTADO_EN_ESPERA:
-        messages.error(request, f'El ticket {ticket.turno} ya fue procesado.')
-        return redirect(volver_url)
-
-    if request.method == 'POST':
-        form = ProcesarTicketForm(request.POST)
-        if form.is_valid():
-            ahora = timezone.localtime()
-            radiologo = (
-                form.cleaned_data['tipo_estudio'].radiologos.filter(is_active=True).order_by('username').first()
-            )
-            cita = Cita.objects.create(
-                paciente=ticket.paciente,
-                tipo_estudio=form.cleaned_data['tipo_estudio'],
-                radiologo=radiologo,
-                convenio=Cita.CONVENIO_PRIVADO,
-                estado=Cita.ESTADO_EN_PROCESO,
-                fecha=ahora.date(),
-                hora=ahora.time(),
-                hora_llegada=ticket.creado_en,
-                notas=ticket.motivo,
-                creada_por=request.user,
-            )
-            ReporteDiario.objects.get_or_create(fecha=cita.fecha, convenio=cita.convenio)
-            OrdenTrabajo.objects.create(
-                cita=cita,
-                motivo=form.cleaned_data['motivo'],
-                creada_por=request.user,
-            )
-            ticket.estado = Ticket.ESTADO_ATENDIDO
-            ticket.atendido_en = timezone.now()
-            ticket.cita = cita
-            ticket.save(update_fields=['estado', 'atendido_en', 'cita'])
-            _notificar_orden_pendiente(cita)
-            if radiologo is None:
-                messages.warning(
-                    request,
-                    f'El estudio "{form.cleaned_data["tipo_estudio"]}" no tiene ningún radiólogo '
-                    'habilitado. Asignalo desde el admin antes de que el estudio esté listo para informar.',
-                )
-            Bitacora.registrar(
-                request=request,
-                usuario=request.user,
-                accion=Bitacora.ACCION_PROCESAR_TICKET,
-                descripcion=(
-                    f'Procesó el ticket {ticket.turno} de Privado y generó la orden de trabajo '
-                    f'para {ticket.paciente} (cita #{cita.id}).'
-                ),
-            )
-            messages.success(request, f'Ticket {ticket.turno} procesado: la orden ya está con el técnico.')
-            return redirect(volver_url)
-    else:
-        form = ProcesarTicketForm(initial={'motivo': ticket.motivo})
-
-    return render(request, 'pacientes/procesar_ticket_privado.html', {
-        'form': form,
-        'ticket': ticket,
-        'volver_url': volver_url,
-    })
-
-
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 MAX_NOTIFICACIONES_EN_CAMPANITA = 20
 
 
@@ -2047,7 +2149,6 @@ def notificaciones_pendientes(request):
 @login_required
 def marcar_notificacion_leida(request, notificacion_id):
     if request.method == 'POST':
-<<<<<<< HEAD
         # Los avisos de "datos de paciente pendientes" no se pueden cerrar a
         # mano: se apagan solos cuando el dato realmente se completa (ver
         # completar_datos_paciente). Se valida también aquí, no solo en el
@@ -2055,22 +2156,15 @@ def marcar_notificacion_leida(request, notificacion_id):
         request.user.notificaciones.filter(id=notificacion_id).exclude(
             tipo=Notificacion.TIPO_DATOS_PACIENTE_PENDIENTES,
         ).update(leida=True)
-=======
-        request.user.notificaciones.filter(id=notificacion_id).update(leida=True)
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     return JsonResponse({'ok': True})
 
 
 @login_required
 def marcar_notificaciones_leidas(request):
     if request.method == 'POST':
-<<<<<<< HEAD
         request.user.notificaciones.filter(leida=False).exclude(
             tipo=Notificacion.TIPO_DATOS_PACIENTE_PENDIENTES,
         ).update(leida=True)
-=======
-        request.user.notificaciones.filter(leida=False).update(leida=True)
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     return JsonResponse({'ok': True})
 
 
@@ -2095,6 +2189,24 @@ COLUMNAS_REPORTE = [
     'No.', 'Hora', 'Nombre del Paciente', 'Edad', 'Estudio',
     'Técnico', 'Médico Referente', 'Emerg', 'Radiólogo', 'Precio',
 ]
+
+# Fin del "día operativo" (el día agendado termina a las 18:00, la misma regla
+# que usa Cita.marcar_ausentes_vencidas). A partir de esa hora ya no es
+# razonable que se agreguen / cancelen / reagenden citas de hoy, así que el
+# reporte del día puede verse y enviarse.
+HORA_FIN_DIA_OPERATIVO = datetime.time(18, 0)
+
+
+def _dia_operativo_terminado():
+    """True si la hora local superó el fin del día operativo (18:00)."""
+    return timezone.localtime().time() >= HORA_FIN_DIA_OPERATIVO
+
+
+def _fecha_ultimo_reporte_visible():
+    """Última fecha cuyo reporte debe mostrarse/enviarse: ayer hasta las
+    18:00, y a partir de esa hora el día de hoy (el día operativo terminó)."""
+    hoy = timezone.localdate()
+    return hoy if _dia_operativo_terminado() else hoy - datetime.timedelta(days=1)
 
 
 def _fecha_larga_es(fecha):
@@ -2136,11 +2248,7 @@ def _filas_reporte(reporte):
             'radiologo': (
                 (cita.radiologo.get_full_name() or cita.radiologo.username) if cita.radiologo else ''
             ),
-<<<<<<< HEAD
             'precio': cita.precio,
-=======
-            'precio': cita.tipo_estudio.precio,
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
             'ausente': cita.estado == Cita.ESTADO_AUSENTE,
         })
     return filas
@@ -2296,22 +2404,16 @@ def lista_reportes_diarios(request, convenio):
     # existen, deben seguir apareciendo aunque las citas que los originaron
     # cambien después (se reagenden a otra fecha, se rechacen, etc.). Por
     # eso se listan desde ReporteDiario y no recalculando a partir de Cita
-<<<<<<< HEAD
-    # en cada visita. Solo se muestran días anteriores a hoy: el reporte de
-    # un día que todavía no terminó puede cambiar (citas que se cancelan,
-    # reagendan o completan durante el día), así que hasta que el día pasa
-    # no se puede confiar en el conteo de estudios realizados / cancelados /
-    # reagendados / finalizados.
+    # en cada visita. Solo se muestran días cuyo día operativo ya terminó: el
+    # reporte de un día que todavía no termina puede cambiar (citas que se
+    # cancelan, reagendan o completan durante el día), así que hasta que el
+    # día termina no se puede confiar en el conteo de estudios realizados /
+    # cancelados / reagendados / finalizados. El día "termina" a las 18:00
+    # (ver HORA_FIN_DIA_OPERATIVO): desde esa hora también se muestra el de
+    # hoy.
     reportes = ReporteDiario.objects.filter(
-        convenio=convenio, fecha__lt=timezone.localdate(),
+        convenio=convenio, fecha__lte=_fecha_ultimo_reporte_visible(),
     ).order_by('-fecha')
-=======
-    # en cada visita. Se incluyen fechas futuras a propósito: si el
-    # radiólogo ya confirmó una cita para un día próximo, la recepcionista
-    # puede adelantar y enviar ese reporte si quiere, sin esperar a que
-    # llegue la fecha.
-    reportes = ReporteDiario.objects.filter(convenio=convenio).order_by('-fecha')
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     if solo_enviados:
         reportes = reportes.filter(estado=ReporteDiario.ESTADO_ENVIADO)
 
@@ -2376,17 +2478,17 @@ def enviar_reporte_diario(request, convenio, fecha):
     volver_url = reverse('ver_reporte_diario', args=[convenio, fecha])
 
     if request.method == 'POST' and reporte.estado == ReporteDiario.ESTADO_BORRADOR:
-<<<<<<< HEAD
-        if fecha_valor >= timezone.localdate():
+        hoy = timezone.localdate()
+        es_futuro = fecha_valor > hoy
+        es_hoy_sin_terminar = fecha_valor == hoy and not _dia_operativo_terminado()
+        if es_futuro or es_hoy_sin_terminar:
             messages.error(
                 request,
-                'No se puede enviar el reporte de hoy ni de una fecha futura: todavía puede '
-                'haber citas de ese día que se cancelen, reagenden o finalicen. Esperá a que '
-                'el día termine.',
+                'No se puede enviar el reporte de hoy (antes de las 18:00) ni de una fecha '
+                'futura: todavía puede haber citas de ese día que se cancelen, reagenden o '
+                'finalicen. Esperá a que el día termine.',
             )
             return redirect(volver_url)
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
         pendientes = _pacientes_con_datos_pendientes(reporte)
         if pendientes:
             nombres = ', '.join(paciente['nombre'] for paciente in pendientes)
@@ -2447,7 +2549,6 @@ def descargar_reporte_xlsx(request, convenio, fecha):
     )
     respuesta['Content-Disposition'] = f'attachment; filename="reporte_{convenio}_{fecha_valor}.xlsx"'
     return respuesta
-<<<<<<< HEAD
 
 
 # ---------------------------------------------------------------------------
@@ -2582,12 +2683,15 @@ def visor_jpg(request, orden_id):
     return respuesta
 
 
+@xframe_options_sameorigin
 def visor_informe_pdf(request, orden_id):
     orden = _visor_orden_autorizada(request, orden_id)
     if not orden.informe_archivo:
         raise Http404
+    descargar = request.GET.get('descargar') == '1'
     return FileResponse(
         orden.informe_archivo.open('rb'),
+        as_attachment=descargar,
         content_type='application/pdf',
         filename=f'informe_{orden.cita.paciente.apellido}_{orden.cita.fecha}.pdf',
     )
@@ -2621,5 +2725,3 @@ def visor_dicom(request, orden_id):
         f'attachment; filename="estudio_{orden.cita.paciente.dpi}.zip"'
     )
     return respuesta
-=======
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

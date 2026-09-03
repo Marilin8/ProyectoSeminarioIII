@@ -49,3 +49,17 @@ que se carga automáticamente en un contenedor MySQL la primera vez que lo levan
 
 - `.env` está en `.gitignore` y no se sube al repo; cada quien mantiene el suyo
   a partir de `.env.example`.
+
+### Datos de demostración
+
+Para crear usuarios y registros de prueba sin duplicarlos en cada ejecución:
+
+```bash
+python manage.py cargar_datos_demo
+```
+
+El comando crea usuarios `demo_admin`, `demo_tecnico`,
+`demo_radiologo` y `demo_remitente`. Todos usan temporalmente la contraseña
+`DemoCIME2026!`. También garantiza el paciente de prueba con DPI
+`1234567891234`, asigna radiólogos a estudios activos sin asignación y crea una
+cita/reporte histórico para validar el flujo.

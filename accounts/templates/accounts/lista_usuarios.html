@@ -4,6 +4,47 @@
 {% block page_title %}Usuarios activos — {{ rol_label }}{% endblock %}
 {% block nav_usuarios %}active{% endblock %}
 
+{% block extra_css %}
+    <style>
+        .estudios-cell { min-width: 200px; }
+        .estudios-resumen {
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--primary);
+            list-style: none;
+            white-space: nowrap;
+        }
+        .estudios-resumen::-webkit-details-marker { display: none; }
+        .estudios-resumen::before {
+            content: '▸';
+            font-size: 0.75rem;
+            transition: transform 0.15s ease;
+        }
+        details[open] > .estudios-resumen::before { transform: rotate(90deg); }
+        .estudios-todos { color: var(--success); }
+        .estudios-lista {
+            margin-top: 0.6rem;
+            max-height: 240px;
+            overflow-y: auto;
+            padding-right: 0.35rem;
+        }
+        .estudios-grupo + .estudios-grupo { margin-top: 0.75rem; }
+        .estudios-grupo h4 {
+            margin: 0 0 0.35rem;
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-muted);
+        }
+        .estudios-grupo .badge { margin: 0 0.2rem 0.25rem 0; }
+    </style>
+{% endblock %}
+
 {% block topbar_actions %}
     {% include 'includes/notificaciones.html' %}
     <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
@@ -45,12 +86,31 @@
                                 <td>{{ u.username }}</td>
                                 <td>{{ u.porcentaje_coex }}% / {{ u.porcentaje_privado }}% / {{ u.porcentaje_emergencia_igss }}%</td>
                                 {% if es_radiologo %}
-                                    <td>
-                                        {% for te in u.tipos_estudio_asignados.all %}
-                                            <span class="badge badge-info" style="margin:0 0.15rem 0.15rem 0;">{{ te.nombre }}</span>
-                                        {% empty %}
+                                    <td class="estudios-cell">
+                                        {% if u.n_estudios %}
+                                            <details>
+                                                <summary class="estudios-resumen">
+                                                    {% if u.n_estudios == total_estudios %}
+                                                        <span class="estudios-todos">Todos los estudios ({{ u.n_estudios }})</span>
+                                                    {% else %}
+                                                        {{ u.n_estudios }} estudio{{ u.n_estudios|pluralize }} asignado{{ u.n_estudios|pluralize }}
+                                                    {% endif %}
+                                                </summary>
+                                                <div class="estudios-lista">
+                                                    {% regroup u.tipos_estudio_asignados.all by get_modalidad_display as grupos %}
+                                                    {% for grupo in grupos %}
+                                                        <div class="estudios-grupo">
+                                                            <h4>{{ grupo.grouper }}</h4>
+                                                            {% for te in grupo.list %}
+                                                                <span class="badge badge-info">{{ te.nombre }}</span>
+                                                            {% endfor %}
+                                                        </div>
+                                                    {% endfor %}
+                                                </div>
+                                            </details>
+                                        {% else %}
                                             <span class="text-xs text-muted">sin estudios</span>
-                                        {% endfor %}
+                                        {% endif %}
                                     </td>
                                 {% endif %}
                                 <td>

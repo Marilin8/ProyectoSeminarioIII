@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if editando %}Editar combo{% else %}Crear combo{% endif %} - Clínica de Imágenes{% endblock %}
+{% block page_title %}{% if editando %}Editar combo — {{ editando.nombre }}{% else %}Crear combo{% endif %}{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'lista_combos' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver a combos
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="card" style="max-width: 640px;">
+        <div class="card-body" style="padding: 1.5rem 2rem;">
+            <form method="post">
+                {% csrf_token %}
+                {{ form.non_field_errors }}
+
+                <label for="{{ form.nombre.id_for_label }}">Nombre</label>
+                {{ form.nombre }}
+                {{ form.nombre.errors }}
+                <p class="form-help">Ej: "Tórax completo" o "Serie lumbar 3 vistas".</p>
+
+                <label for="{{ form.estudios.id_for_label }}">Estudios incluidos</label>
+                {{ form.estudios }}
+                {{ form.estudios.errors }}
+                <p class="form-help">
+                    Marcá los estudios que componen este combo. El precio del combo es la suma de los
+                    precios de los estudios marcados.
+                </p>
+
+                <label for="{{ form.activo.id_for_label }}">Combo activo</label>
+                {{ form.activo }}
+                {{ form.activo.errors }}
+                <p class="form-help">Los combos inactivos no se ofrecen agendables.</p>
+
+                <div class="section-title" style="margin-top: 1.5rem;">Descuento (opcional)</div>
+                <label for="{{ form.aplica_descuento.id_for_label }}">Aplicar descuento</label>
+                {{ form.aplica_descuento }}
+                {{ form.aplica_descuento.errors }}
+
+                <label for="{{ form.porcentaje_descuento.id_for_label }}">% de descuento</label>
+                {{ form.porcentaje_descuento }}
+                {{ form.porcentaje_descuento.errors }}
+                <p class="form-help">
+                    Solo se usa si "Aplicar descuento" está marcado. El total final = suma de precios
+                    de los estudios − este porcentaje.
+                </p>
+
+                <button type="submit" class="btn btn-primary btn-block" style="margin-top: 1.5rem;">
+                    <svg width="14" height="14"><use href="#i-plus"/></svg>
+                    {% if editando %}Guardar cambios{% else %}Crear combo{% endif %}
+                </button>
+            </form>
+        </div>
+    </div>
+{% endblock %}

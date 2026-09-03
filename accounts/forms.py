@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 from django import forms
 from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm, UserCreationForm
@@ -17,7 +16,7 @@ class LoginForm(AuthenticationForm):
 
     error_messages = {
         **AuthenticationForm.error_messages,
-        'inactive': 'Tu usuario está inactivo. Pedile al administrador que lo reactive.',
+        'inactive': 'Su usuario está inactivo. Solicite al administrador que lo reactive.',
     }
 
     def clean(self):
@@ -37,19 +36,12 @@ class LoginForm(AuthenticationForm):
 # Longitud mínima de contraseña en el cambio de contraseña del propio perfil.
 PASSWORD_MIN_LEN = 10
 
-=======
-from django.contrib.auth.forms import UserCreationForm
-
-from .models import Usuario
-
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
 ROLES_CON_COMISION = (
     Usuario.ROL_TECNICO_IMAGENES,
     Usuario.ROL_MEDICO_RADIOLOGO,
     Usuario.ROL_MEDICO_REMITENTE,
 )
 
-<<<<<<< HEAD
 CAMPOS_PORCENTAJE = ('porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss')
 
 
@@ -61,7 +53,7 @@ def _campo_email():
         validators=[validar_dominio_correo],
         error_messages={
             'required': 'El correo es obligatorio.',
-            'invalid': 'Ingresá un correo electrónico válido (ejemplo: nombre@dominio.com).',
+            'invalid': 'Ingrese un correo electrónico válido (ejemplo: nombre@dominio.com).',
         },
     )
 
@@ -78,26 +70,30 @@ def _validar_porcentajes(form, cleaned):
     if rol not in ROLES_CON_COMISION:
         for campo in CAMPOS_PORCENTAJE:
             cleaned[campo] = 0
+
+    salario = cleaned.get('salario_base')
+    if salario is not None and salario < 0:
+        form.add_error('salario_base', 'El salario base no puede ser negativo.')
     return cleaned
 
 
 class CrearUsuarioForm(UserCreationForm):
     email = _campo_email()
+    puede_operar_caja = forms.BooleanField(
+        label='Puede operar Caja', required=False,
+        help_text='Permite gestionar pagos de estudios sin cambiar el rol principal.',
+    )
 
-=======
-
-class CrearUsuarioForm(UserCreationForm):
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58
     class Meta(UserCreationForm.Meta):
         model = Usuario
         fields = (
-            'username', 'first_name', 'last_name', 'email', 'rol',
+            'username', 'first_name', 'last_name', 'email', 'rol', 'salario_base',
+            'puede_operar_caja',
             'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
         )
 
     def clean(self):
         cleaned = super().clean()
-<<<<<<< HEAD
         return _validar_porcentajes(self, cleaned)
 
 
@@ -167,6 +163,10 @@ class EditarUsuarioForm(forms.ModelForm):
     radiólogos — los tipos de estudio que puede realizar."""
 
     email = _campo_email()
+    puede_operar_caja = forms.BooleanField(
+        label='Puede operar Caja', required=False,
+        help_text='Permite gestionar pagos de estudios sin cambiar el rol principal.',
+    )
 
     tipos_estudio = forms.ModelMultipleChoiceField(
         queryset=TipoEstudio.objects.order_by('nombre'),
@@ -179,7 +179,8 @@ class EditarUsuarioForm(forms.ModelForm):
     class Meta:
         model = Usuario
         fields = (
-            'first_name', 'last_name', 'email', 'rol',
+            'first_name', 'last_name', 'email', 'rol', 'salario_base',
+            'puede_operar_caja',
             'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
             'is_active',
         )
@@ -207,18 +208,67 @@ class EditarUsuarioForm(forms.ModelForm):
         else:
             self._guardar_estudios = guardar_estudios
         return usuario
-=======
-        rol = cleaned.get('rol')
-        campos_porcentaje = ('porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss')
 
-        for campo in campos_porcentaje:
-            valor = cleaned.get(campo)
-            if valor is not None and not (0 <= valor <= 100):
-                self.add_error(campo, 'El porcentaje debe estar entre 0 y 100.')
 
-        if rol not in ROLES_CON_COMISION:
-            for campo in campos_porcentaje:
-                cleaned[campo] = 0
+class RegistrarPagoPlanillaForm(forms.Form):
+    """Comprobante de pago de planilla: foto de la boleta o de la
+    transferencia (JPG/PNG/WEBP) o un PDF, el número de boleta y una nota.
 
+    Al validar, corre el OCR del comprobante (``accounts.verificacion_boleta``)
+    y compara el monto (y el número de boleta, si se indicó) con lo que se
+    está pagando. Si no coinciden, no deja registrar el pago salvo que se
+    marque ``confirmar_pese_a_diferencia``.
+    """
+
+    EXTENSIONES_VALIDAS = ('.jpg', '.jpeg', '.png', '.webp', '.pdf')
+    TAMANO_MAXIMO = 10 * 1024 * 1024  # 10 MB
+
+    comprobante = forms.FileField(label='Comprobante (boleta o transferencia)')
+    numero_boleta = forms.CharField(
+        label='Número de boleta / referencia', max_length=60, required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'El que aparece en la boleta'}),
+    )
+    notas = forms.CharField(
+        label='Notas (opcional)', max_length=255, required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'Ej.: transferencia Banco Industrial'}),
+    )
+    confirmar_pese_a_diferencia = forms.BooleanField(
+        label='Registrar el pago aunque los datos del comprobante no coincidan',
+        required=False,
+    )
+
+    def __init__(self, *args, monto_esperado=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.monto_esperado = monto_esperado
+        self.verificacion = None
+
+    def clean_comprobante(self):
+        archivo = self.cleaned_data['comprobante']
+        if not archivo.name.lower().endswith(self.EXTENSIONES_VALIDAS):
+            raise forms.ValidationError('Subí una foto (JPG, PNG o WEBP) o un PDF.')
+        if archivo.size > self.TAMANO_MAXIMO:
+            raise forms.ValidationError('El archivo no debe pesar más de 10 MB.')
+        return archivo
+
+    def clean(self):
+        from .verificacion_boleta import ESTADO_NO_COINCIDE, verificar
+
+        cleaned = super().clean()
+        archivo = cleaned.get('comprobante')
+        if archivo is None or self.monto_esperado is None:
+            return cleaned
+
+        contenido = archivo.read()
+        archivo.seek(0)  # el archivo se sigue usando para guardarlo
+        self.verificacion = verificar(
+            contenido, self.monto_esperado, cleaned.get('numero_boleta', ''),
+            nombre_archivo=archivo.name,
+        )
+
+        if self.verificacion.estado == ESTADO_NO_COINCIDE and not cleaned.get('confirmar_pese_a_diferencia'):
+            raise forms.ValidationError(
+                'Los datos del comprobante no coinciden con el pago: '
+                f'{self.verificacion.mensaje}. Revisá la boleta; si aun así querés '
+                'registrar el pago, marque la casilla de confirmación.'
+            )
         return cleaned
->>>>>>> 6c6a7f92a98d42c5c4312897e77c9a819885bb58

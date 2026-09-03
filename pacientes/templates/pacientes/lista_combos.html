@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+
+{% block title %}Combos - Clínica de Imágenes{% endblock %}
+{% block page_title %}Combos{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <p class="text-muted text-sm mb-2">
+        Los combos agrupan estudios relacionados. El precio se calcula en el momento:
+        suma de los precios de sus estudios, menos el descuento si aplica.
+    </p>
+
+    <div class="card">
+        <div class="card-header" style="display: flex; justify-content: flex-end;">
+            <a class="btn btn-primary" href="{% url 'crear_combo' %}">
+                <svg width="14" height="14"><use href="#i-plus"/></svg>
+                Nuevo combo
+            </a>
+        </div>
+        <div class="card-body" style="padding: 0;">
+            {% if combos %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Nombre</th>
+                            <th>Estudios</th>
+                            <th>Descuento</th>
+                            <th>Precio ref. (privado hábil)</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for combo in combos %}
+                            <tr class="{% if not combo.activo %}text-muted{% endif %}">
+                                <td>
+                                    {{ combo.nombre }}
+                                    {% if not combo.activo %}<span class="badge badge-muted" style="margin-left: 0.4rem;">inactivo</span>{% endif %}
+                                </td>
+                                <td>
+                                    {% for estudio in combo.estudios.all %}
+                                        <span class="badge badge-info" style="margin-right:0.2rem;">{{ estudio.nombre }}</span>
+                                    {% empty %}
+                                        <span class="text-muted text-xs">sin estudios</span>
+                                    {% endfor %}
+                                </td>
+                                <td>
+                                    {% if combo.aplica_descuento %}
+                                        {{ combo.porcentaje_descuento }}%
+                                    {% else %}
+                                        <span class="text-muted text-xs">sin descuento</span>
+                                    {% endif %}
+                                </td>
+                                <td>Q{{ combo.precio_referencia }}</td>
+                                <td><a class="btn btn-ghost btn-sm" href="{% url 'editar_combo' combo_id=combo.id %}">
+                                    <svg width="14" height="14"><use href="#i-edit"/></svg>
+                                    Editar
+                                </a></td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <p class="text-muted text-center" style="padding: 2rem 0;">Todavía no hay combos creados.</p>
+            {% endif %}
+        </div>
+    </div>
+{% endblock %}

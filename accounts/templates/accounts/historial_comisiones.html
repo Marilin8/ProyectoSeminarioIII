@@ -2,6 +2,7 @@
 
 {% block title %}Historial de comisiones - Clínica de Imágenes{% endblock %}
 {% block page_title %}Historial de comisiones{% endblock %}
+{% block nav_planilla %}active{% endblock %}
 
 {% block topbar_actions %}
     {% include 'includes/notificaciones.html' %}
@@ -12,6 +13,11 @@
 {% endblock %}
 
 {% block content %}
+    <div class="tabs">
+        <a href="{% url 'planilla' %}">Planilla</a>
+        <a href="{% url 'historial_comisiones' %}" class="active">Historial de comisiones</a>
+    </div>
+
     <form method="get" class="card mb-2" style="padding:0.85rem 1rem;display:flex;gap:0.6rem;align-items:flex-end;flex-wrap:wrap;">
         <div style="display:flex;flex-direction:column;gap:0.2rem;">
             <label for="q" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Usuario</label>

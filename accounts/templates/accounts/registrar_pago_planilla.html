@@ -1,0 +1,121 @@
+{% extends 'base.html' %}
+
+{% block title %}Pagar planilla — {{ empleado.get_full_name|default:empleado.username }}{% endblock %}
+{% block page_title %}Registrar pago de planilla{% endblock %}
+{% block nav_planilla %}active{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'planilla' %}{% if query %}?{{ query }}{% endif %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver a la planilla
+    </a>
+{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .pago-wrap { max-width: 560px; }
+        .resumen-pago {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 0.3rem 1rem;
+            font-size: 0.9rem;
+            margin: 0.5rem 0 1.25rem;
+        }
+        .resumen-pago .total { font-weight: 700; border-top: 1px solid var(--border-light); padding-top: 0.35rem; }
+        .resumen-pago span:nth-child(even) { text-align: right; }
+        form label { display: block; font-weight: 600; margin-bottom: 0.25rem; }
+        form input[type="file"], form input[type="text"] { width: 100%; }
+        .comprobante-actual {
+            display: flex; align-items: center; gap: 0.5rem;
+            background: var(--success-light); color: #166534;
+            border-radius: 6px; padding: 0.5rem 0.75rem; font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+    <div class="card pago-wrap" style="padding:1.25rem 1.5rem;">
+        <h2 style="font-size:1.05rem;margin-bottom:0.25rem;">
+            {{ empleado.get_full_name|default:empleado.username }}
+        </h2>
+        <p class="text-muted text-sm">
+            <span class="badge badge-muted">{{ empleado.get_rol_display }}</span>
+            Pago correspondiente a <strong>{{ periodo.etiqueta }}</strong>
+        </p>
+
+        <div class="resumen-pago">
+            <span>Salario base</span><span>Q{{ fila.salario_base|floatformat:2 }}</span>
+            <span>Comisiones del mes</span><span>Q{{ fila.comisiones|floatformat:2 }}</span>
+            <span class="total">Total a pagar</span><span class="total">Q{{ fila.total|floatformat:2 }}</span>
+        </div>
+
+        {% if pago %}
+            <div class="comprobante-actual">
+                <svg width="16" height="16"><use href="#i-check-circle"/></svg>
+                Ya hay un pago registrado ({{ pago.creado_en|date:'d/m/Y H:i' }}).
+                <a href="{{ pago.comprobante.url }}" target="_blank" rel="noopener" style="margin-left:auto;">Ver comprobante actual</a>
+            </div>
+            <p style="margin-top:-0.5rem;margin-bottom:1rem;font-size:0.82rem;">
+                {% if pago.verificado %}
+                    <span class="badge badge-success">Verificado</span>
+                {% else %}
+                    <span class="badge badge-warning">Sin verificar</span>
+                {% endif %}
+                {% if pago.verificacion_nota %}<span class="text-muted">{{ pago.verificacion_nota }}</span>{% endif %}
+            </p>
+            <p class="text-muted text-xs" style="margin-bottom:1rem;">
+                Si sube un archivo nuevo se reemplaza el comprobante y se vuelve a verificar.
+            </p>
+        {% endif %}
+
+        <p class="text-muted text-xs" style="margin-bottom:1rem;">
+            Al subir el comprobante, el sistema lo lee e intenta confirmar que el
+            <strong>monto depositado</strong> y el <strong>número de boleta</strong>
+            coinciden con este pago.
+        </p>
+
+        <form method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            {% if form.non_field_errors %}
+                <div class="alert alert-warning" style="margin-bottom:1rem;">
+                    {{ form.non_field_errors }}
+                </div>
+            {% endif %}
+
+            <div style="margin-bottom:1rem;">
+                <label for="{{ form.comprobante.id_for_label }}">{{ form.comprobante.label }}</label>
+                {{ form.comprobante }}
+                <p class="text-muted text-xs" style="margin-top:0.25rem;">
+                    Foto de la boleta o captura de la transferencia (JPG, PNG, WEBP o PDF, máx. 10 MB).
+                </p>
+                {{ form.comprobante.errors }}
+            </div>
+
+            <div style="margin-bottom:1rem;">
+                <label for="{{ form.numero_boleta.id_for_label }}">{{ form.numero_boleta.label }}</label>
+                {{ form.numero_boleta }}
+                {{ form.numero_boleta.errors }}
+            </div>
+
+            <div style="margin-bottom:1rem;">
+                <label for="{{ form.notas.id_for_label }}">{{ form.notas.label }}</label>
+                {{ form.notas }}
+                {{ form.notas.errors }}
+            </div>
+
+            {% if form.non_field_errors %}
+                <label style="display:flex;align-items:flex-start;gap:0.5rem;margin-bottom:1.25rem;font-weight:400;">
+                    {{ form.confirmar_pese_a_diferencia }}
+                    <span>{{ form.confirmar_pese_a_diferencia.label }}</span>
+                </label>
+            {% endif %}
+
+            <button type="submit" class="btn btn-primary">
+                <svg width="14" height="14"><use href="#i-save"/></svg>
+                {% if pago %}Reemplazar comprobante{% else %}Registrar pago{% endif %}
+            </button>
+        </form>
+    </div>
+{% endblock %}
