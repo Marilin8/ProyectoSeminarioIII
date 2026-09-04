@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sala de espera</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            background: #0f172a;
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .encabezado {
+            background: #111827;
+            padding: 24px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 3px solid #2563eb;
+        }
+
+        .encabezado h1 {
+            margin: 0;
+            font-size: 34px;
+        }
+
+        .reloj {
+            font-size: 28px;
+            font-weight: bold;
+        }
+
+        .contenido {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .titulo-turno {
+            font-size: 34px;
+            margin-bottom: 20px;
+            color: #cbd5e1;
+        }
+
+        .turno {
+            font-size: 150px;
+            font-weight: 900;
+            line-height: 1;
+            margin-bottom: 20px;
+            color: #ffffff;
+        }
+
+        .mensaje {
+            font-size: 38px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #22c55e;
+        }
+
+        .paciente {
+            font-size: 38px;
+            margin-bottom: 12px;
+        }
+
+        .estudio {
+            font-size: 28px;
+            color: #cbd5e1;
+            margin-bottom: 35px;
+        }
+
+        .sin-turno {
+            font-size: 42px;
+            color: #cbd5e1;
+        }
+
+        .proximos {
+            width: 100%;
+            background: #111827;
+            padding: 20px 30px 30px;
+        }
+
+        .proximos h2 {
+            text-align: center;
+            margin-top: 0;
+            font-size: 28px;
+            color: #cbd5e1;
+        }
+
+        .lista-proximos {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+
+        .proximo {
+            background: #1e293b;
+            min-width: 150px;
+            padding: 18px 25px;
+            border-radius: 14px;
+            font-size: 34px;
+            font-weight: bold;
+            border: 2px solid #334155;
+        }
+
+        @media (max-width: 900px) {
+            .turno {
+                font-size: 100px;
+            }
+
+            .paciente {
+                font-size: 30px;
+            }
+
+            .mensaje {
+                font-size: 30px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="encabezado">
+        <h1>Clínica de Imágenes</h1>
+        <div class="reloj" id="reloj"></div>
+    </div>
+
+    <div class="contenido">
+
+        {% if actual %}
+
+            <div class="titulo-turno">TURNO ACTUAL</div>
+
+            <div class="turno">
+                {{ actual.turno }}
+            </div>
+
+            <div class="mensaje">
+                FAVOR DE PASAR
+            </div>
+
+            <div class="paciente">
+                {{ actual.paciente.nombre }} {{ actual.paciente.apellido }}
+            </div>
+
+            {% if actual.cita and actual.cita.tipo_estudio %}
+                <div class="estudio">
+                    {{ actual.cita.tipo_estudio.nombre }}
+                </div>
+            {% endif %}
+
+        {% else %}
+
+            <div class="sin-turno">
+                No hay turnos en espera en este momento.
+            </div>
+
+        {% endif %}
+
+    </div>
+
+    <div class="proximos">
+        <h2>PRÓXIMOS TURNOS</h2>
+
+        <div class="lista-proximos">
+            {% for ticket in proximos %}
+                <div class="proximo">
+                    {{ ticket.turno }}
+                </div>
+            {% empty %}
+                <div style="font-size: 22px; color: #94a3b8;">
+                    No hay más turnos en espera.
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <script>
+        function actualizarReloj() {
+            const ahora = new Date();
+
+            const hora = ahora.toLocaleTimeString('es-GT', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+
+            document.getElementById('reloj').textContent = hora;
+        }
+
+        actualizarReloj();
+        setInterval(actualizarReloj, 1000);
+
+        setTimeout(function () {
+            location.reload();
+        }, 5000);
+    </script>
+
+</body>
+</html>
