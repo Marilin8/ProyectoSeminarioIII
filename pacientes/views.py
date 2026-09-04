@@ -1757,29 +1757,24 @@ def pantalla_turnos(request):
         'dia_anterior': fecha - datetime.timedelta(days=1),
         'dia_siguiente': fecha + datetime.timedelta(days=1),
     })
-def pantalla_sala_espera(request):
-    """
-    Pantalla pública para el televisor de la sala de espera.
-    Muestra el último turno llamado/procesado y los próximos en espera.
-    """
-    hoy = timezone.localdate()
 
+
+def pantalla_sala_espera(request):
+    """Pantalla pública para el televisor de la sala de espera (sin login:
+    se abre directo en la TV). Muestra el último turno llamado — el que se
+    acaba de marcar atendido en pantalla_turnos, con "favor de pasar" — y los
+    próximos en espera. Se recarga sola cada 5 segundos."""
+    hoy = timezone.localdate()
     tickets_del_dia = Ticket.del_dia(hoy).select_related(
-        'paciente',
-        'cita__radiologo',
-        'cita__tipo_estudio',
+        'paciente', 'cita__radiologo', 'cita__tipo_estudio',
     )
 
     actual = (
-        tickets_del_dia
-        .filter(estado=Ticket.ESTADO_ATENDIDO)
-        .order_by('-atendido_en')
-        .first()
+        tickets_del_dia.filter(estado=Ticket.ESTADO_ATENDIDO)
+        .order_by('-atendido_en').first()
     )
-
     proximos = (
-        tickets_del_dia
-        .filter(estado=Ticket.ESTADO_EN_ESPERA)
+        tickets_del_dia.filter(estado=Ticket.ESTADO_EN_ESPERA)
         .order_by('-prioridad', 'orden')[:4]
     )
 
@@ -1788,6 +1783,7 @@ def pantalla_sala_espera(request):
         'proximos': proximos,
         'hoy': hoy,
     })
+
 
 @login_required
 @user_passes_test(es_recepcionista)

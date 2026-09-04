@@ -892,6 +892,78 @@ class PantallaTurnosViewTests(TestCase):
         )
 
 
+class PantallaSalaEsperaTests(TestCase):
+    """Pantalla pública (sin login) para el televisor de la sala de espera:
+    muestra el último turno llamado y los próximos en espera."""
+
+    def setUp(self):
+        self.usuario = crear_usuario('recepcionista_sala_espera', rol=Usuario.ROL_RECEPCIONISTA)
+
+    def test_no_requiere_login(self):
+        respuesta = self.client.get(reverse('pantalla_sala_espera'))
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_sin_turno_atendido_no_hay_actual(self):
+        Ticket.objects.create(
+            paciente=crear_paciente(dpi='1231231231231'),
+            servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
+        )
+
+        respuesta = self.client.get(reverse('pantalla_sala_espera'))
+
+        self.assertIsNone(respuesta.context['actual'])
+
+    def test_actual_es_el_ultimo_ticket_atendido(self):
+        primero = Ticket.objects.create(
+            paciente=crear_paciente(dpi='1112223334441'),
+            servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
+            estado=Ticket.ESTADO_ATENDIDO, atendido_en=timezone.now() - datetime.timedelta(minutes=5),
+        )
+        ultimo = Ticket.objects.create(
+            paciente=crear_paciente(dpi='1112223334442'),
+            servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario,
+            estado=Ticket.ESTADO_ATENDIDO, atendido_en=timezone.now(),
+        )
+
+        respuesta = self.client.get(reverse('pantalla_sala_espera'))
+
+        self.assertEqual(respuesta.context['actual'], ultimo)
+        self.assertNotEqual(respuesta.context['actual'], primero)
+
+    def test_proximos_son_los_en_espera_sin_incluir_al_ya_atendido(self):
+        atendido = Ticket.objects.create(
+            paciente=crear_paciente(dpi='1112223334443'),
+            servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
+            estado=Ticket.ESTADO_ATENDIDO, atendido_en=timezone.now(),
+        )
+        urgente = Ticket.objects.create(
+            paciente=crear_paciente(dpi='1112223334444'),
+            servicio=Ticket.SERVICIO_EMERGENCIA_IGSS, prioridad=Ticket.PRIORIDAD_URGENTE,
+            registrado_por=self.usuario,
+        )
+        normal = Ticket.objects.create(
+            paciente=crear_paciente(dpi='1112223334445'),
+            servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario,
+        )
+
+        respuesta = self.client.get(reverse('pantalla_sala_espera'))
+
+        proximos = list(respuesta.context['proximos'])
+        self.assertEqual(proximos, [urgente, normal])
+        self.assertNotIn(atendido, proximos)
+
+    def test_proximos_se_limitan_a_cuatro(self):
+        for n in range(6):
+            Ticket.objects.create(
+                paciente=crear_paciente(dpi=f'22233344455{n}'),
+                servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
+            )
+
+        respuesta = self.client.get(reverse('pantalla_sala_espera'))
+
+        self.assertEqual(len(respuesta.context['proximos']), 4)
+
+
 class ProcesarTicketEmergenciaViewTests(TestCase):
 
     def setUp(self):
