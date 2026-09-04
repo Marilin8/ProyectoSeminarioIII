@@ -7,6 +7,9 @@ urlpatterns = [
     path('estudios/nuevo/', views.crear_estudio, name='crear_estudio'),
     path('estudios/', views.lista_estudios, name='lista_estudios'),
     path('estudios/<int:estudio_id>/editar/', views.editar_estudio, name='editar_estudio'),
+    path('combos/nuevo/', views.crear_combo, name='crear_combo'),
+    path('combos/', views.lista_combos, name='lista_combos'),
+    path('combos/<int:combo_id>/editar/', views.editar_combo, name='editar_combo'),
     # Visor web público del estudio (link estilo PACS que se manda por correo:
     # /visor/?studyId=<id>&tab=images&ac=<token base64>).
     path('visor/', views.visor_estudio, name='visor_estudio'),
@@ -43,6 +46,13 @@ urlpatterns = [
         views.ingresar_correo_envio,
         name='ingresar_correo_envio',
     ),
+    path(
+        'pacientes/historial/estudio/<int:cita_id>/cobrar/',
+        views.marcar_cobrado,
+        name='marcar_cobrado',
+    ),
+    path('pagos/', views.pagos_pendientes, name='pagos_pendientes'),
+    path('pagos/<int:cobro_id>/boleta/', views.boleta_pago_pdf, name='boleta_pago_pdf'),
     path(
         'citas/calendario/coex/',
         views.seleccionar_horario,

@@ -1,5 +1,6 @@
 import base64
 import datetime
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -9,7 +10,18 @@ from django.utils import timezone
 
 from pacientes import horarios
 from pacientes.forms import AgendarCitaForm, RegistrarTicketForm
-from pacientes.models import Cita, ImagenEstudio, Notificacion, OrdenTrabajo, Paciente, Ticket, TipoEstudio
+from pacientes.models import (
+    Cita,
+    Cobro,
+    Combo,
+    ImagenEstudio,
+    Notificacion,
+    OrdenTrabajo,
+    Paciente,
+    PrecioEstudio,
+    Ticket,
+    TipoEstudio,
+)
 
 Usuario = get_user_model()
 
@@ -1293,3 +1305,189 @@ class NotificacionesPendientesViewTests(TestCase):
 
         ajena.refresh_from_db()
         self.assertFalse(ajena.leida)
+
+
+class ComboModelTests(TestCase):
+    """Combo (portado de visual-andres): el precio se calcula al vuelo,
+    nada se guarda."""
+
+    def setUp(self):
+        self.e1 = TipoEstudio.objects.create(nombre='RX Torax combo')
+        self.e2 = TipoEstudio.objects.create(nombre='RX Columna combo')
+        PrecioEstudio.objects.create(
+            tipo_estudio=self.e1, convenio=Cita.CONVENIO_PRIVADO,
+            horario_habil=True, precio=Decimal('200'),
+        )
+        PrecioEstudio.objects.create(
+            tipo_estudio=self.e2, convenio=Cita.CONVENIO_PRIVADO,
+            horario_habil=True, precio=Decimal('300'),
+        )
+
+    def test_total_para_suma_los_precios_de_sus_estudios(self):
+        combo = Combo.objects.create(nombre='Combo torax-columna')
+        combo.estudios.set([self.e1, self.e2])
+        self.assertEqual(combo.total_para(Cita.CONVENIO_PRIVADO, True), Decimal('500.00'))
+
+    def test_total_para_aplica_el_descuento(self):
+        combo = Combo.objects.create(
+            nombre='Combo con descuento', aplica_descuento=True, porcentaje_descuento=Decimal('10'),
+        )
+        combo.estudios.set([self.e1, self.e2])
+        self.assertEqual(combo.total_para(Cita.CONVENIO_PRIVADO, True), Decimal('450.00'))
+
+    def test_total_para_ignora_descuento_fuera_de_rango(self):
+        combo = Combo.objects.create(
+            nombre='Combo descuento invalido', aplica_descuento=True, porcentaje_descuento=Decimal('150'),
+        )
+        combo.estudios.set([self.e1, self.e2])
+        self.assertEqual(combo.total_para(Cita.CONVENIO_PRIVADO, True), Decimal('500.00'))
+
+    def test_precio_referencia_usa_privado_habil(self):
+        combo = Combo.objects.create(nombre='Combo ref')
+        combo.estudios.set([self.e1])
+        self.assertEqual(combo.precio_referencia, Decimal('200.00'))
+
+
+class ComboViewTests(TestCase):
+    """Los combos (catálogo) se administran íntegro por un administrador,
+    igual que Estudios."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_combo', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.recep = crear_usuario('recep_combo', rol=Usuario.ROL_RECEPCIONISTA)
+        self.estudio = TipoEstudio.objects.create(nombre='RX combo view')
+
+    def test_lista_combos_visible_para_administrador(self):
+        self.client.force_login(self.admin)
+        respuesta = self.client.get(reverse('lista_combos'))
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_lista_combos_no_visible_para_recepcionista(self):
+        self.client.force_login(self.recep)
+        respuesta = self.client.get(reverse('lista_combos'))
+        self.assertNotEqual(respuesta.status_code, 200)
+
+    def test_crear_combo_como_administrador(self):
+        self.client.force_login(self.admin)
+        respuesta = self.client.post(reverse('crear_combo'), {
+            'nombre': 'Combo nuevo', 'estudios': [self.estudio.id],
+            'activo': 'on', 'aplica_descuento': '', 'porcentaje_descuento': '0',
+        })
+        self.assertRedirects(respuesta, reverse('lista_combos'))
+        self.assertTrue(Combo.objects.filter(nombre='Combo nuevo').exists())
+
+    def test_recepcionista_no_puede_crear_combo(self):
+        self.client.force_login(self.recep)
+        respuesta = self.client.get(reverse('crear_combo'))
+        self.assertNotEqual(respuesta.status_code, 200)
+
+
+class CajaTests(TestCase):
+    """Rol/permiso de Caja (portado de visual-andres, 2026-09-04): al
+    generar una orden se crea un Cobro pendiente; mientras no se marque
+    pagado, bloquea el envío de resultados; pagos_pendientes/marcar_cobrado
+    son solo para quien tiene el permiso puede_operar_caja (o admin)."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_caja', rol=Usuario.ROL_RECEPCIONISTA)
+        self.caja = crear_usuario(
+            'caja_operador', rol=Usuario.ROL_RECEPCIONISTA, puede_operar_caja=True,
+        )
+
+    def test_generar_orden_crea_un_cobro_pendiente(self):
+        cita = crear_cita(
+            self.recepcion, estado=Cita.ESTADO_AGENDADA, hora_llegada=timezone.now(),
+        )
+        self.client.force_login(self.recepcion)
+
+        respuesta = self.client.post(
+            reverse('generar_orden_privado', args=[cita.id]), {'motivo': 'Dolor lumbar'},
+        )
+
+        self.assertEqual(respuesta.status_code, 302)
+        cobro = Cobro.objects.get(cita=cita)
+        self.assertEqual(cobro.estado, Cobro.ESTADO_PENDIENTE)
+        self.assertFalse(cobro.pagado)
+
+    def test_pagos_pendientes_requiere_el_permiso_de_caja(self):
+        self.client.force_login(self.recepcion)
+        respuesta = self.client.get(reverse('pagos_pendientes'))
+        self.assertNotEqual(respuesta.status_code, 200)
+
+    def test_pagos_pendientes_visible_con_el_permiso(self):
+        self.client.force_login(self.caja)
+        respuesta = self.client.get(reverse('pagos_pendientes'))
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_pagos_pendientes_filtra_por_estado(self):
+        cita_pendiente = crear_cita(self.recepcion, estado=Cita.ESTADO_EN_PROCESO)
+        OrdenTrabajo.objects.create(cita=cita_pendiente, motivo='x', creada_por=self.recepcion)
+        cobro_pendiente = Cobro.objects.create(cita=cita_pendiente)
+
+        cita_pagada = crear_cita(
+            self.recepcion, estado=Cita.ESTADO_PROCESADA,
+            paciente=crear_paciente(dpi='9998887776665'),
+        )
+        OrdenTrabajo.objects.create(cita=cita_pagada, motivo='x', creada_por=self.recepcion)
+        cobro_pagado = Cobro.objects.create(cita=cita_pagada)
+        cobro_pagado.marcar_pagado(self.caja)
+
+        self.client.force_login(self.caja)
+        respuesta = self.client.get(reverse('pagos_pendientes'), {'estado': 'pagado'})
+
+        cobros = list(respuesta.context['pagina'])
+        self.assertIn(cobro_pagado, cobros)
+        self.assertNotIn(cobro_pendiente, cobros)
+
+    def test_marcar_cobrado_registra_forma_de_pago_y_boleta(self):
+        cita = crear_cita(self.recepcion, estado=Cita.ESTADO_EN_PROCESO)
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        Cobro.objects.create(cita=cita)
+        self.client.force_login(self.caja)
+
+        respuesta = self.client.post(reverse('marcar_cobrado', args=[cita.id]), {
+            'forma_pago': Cobro.FORMA_EFECTIVO, 'numero_boleta': 'B-001', 'notas': 'Pagó en caja',
+        })
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
+        cobro = Cobro.objects.get(cita=cita)
+        self.assertTrue(cobro.pagado)
+        self.assertEqual(cobro.forma_pago, Cobro.FORMA_EFECTIVO)
+        self.assertEqual(cobro.numero_boleta, 'B-001')
+        self.assertEqual(cobro.cobrado_por, self.caja)
+        self.assertIsNotNone(cobro.pagado_en)
+
+    def test_boleta_pago_pdf_solo_para_cobros_pagados(self):
+        cita = crear_cita(self.recepcion, estado=Cita.ESTADO_EN_PROCESO)
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        cobro = Cobro.objects.create(cita=cita)
+        self.client.force_login(self.caja)
+
+        respuesta = self.client.get(reverse('boleta_pago_pdf', args=[cobro.id]))
+        self.assertEqual(respuesta.status_code, 404)
+
+        cobro.marcar_pagado(self.caja)
+        respuesta = self.client.get(reverse('boleta_pago_pdf', args=[cobro.id]))
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta['Content-Type'], 'application/pdf')
+
+    def test_cobro_pendiente_bloquea_el_envio_de_resultados(self):
+        paciente = crear_paciente(dpi='1112223334446', correo='paciente@example.com')
+        cita = crear_cita(self.recepcion, paciente=paciente, estado=Cita.ESTADO_PROCESADA)
+        orden = OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        Cobro.objects.create(cita=cita)
+        self.client.force_login(self.recepcion)
+
+        self.client.post(reverse('enviar_estudio', args=[cita.id]))
+
+        orden.refresh_from_db()
+        self.assertIsNone(orden.resultados_enviados_en)
+
+    def test_sin_cobro_no_bloquea_el_envio(self):
+        paciente = crear_paciente(dpi='1112223334447', correo='paciente2@example.com')
+        cita = crear_cita(self.recepcion, paciente=paciente, estado=Cita.ESTADO_PROCESADA)
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+
+        self.assertFalse(hasattr(cita, 'cobro'))
+        from pacientes.views import _cobro_bloquea_envio
+        self.assertFalse(_cobro_bloquea_envio(cita))

@@ -39,6 +39,13 @@
                 {{ form.rol }}
                 {{ form.rol.errors }}
 
+                <label for="{{ form.puede_operar_caja.id_for_label }}" style="display:flex;align-items:center;gap:0.5rem;margin-top:0.75rem;">
+                    {{ form.puede_operar_caja }}
+                    <span>{{ form.puede_operar_caja.label }}</span>
+                </label>
+                <p class="form-help">{{ form.puede_operar_caja.help_text }}</p>
+                {{ form.puede_operar_caja.errors }}
+
                 <label for="{{ form.salario_base.id_for_label }}">Salario base mensual (Q)</label>
                 {{ form.salario_base }}
                 {{ form.salario_base.errors }}

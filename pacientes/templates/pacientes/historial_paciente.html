@@ -68,6 +68,11 @@
                             {% if not cita.orden_trabajo.resultados_enviados_en %}
                                 <span class="badge badge-warning" style="margin-left:0.5rem;">No enviado</span>
                             {% endif %}
+                            {% if cita.cobro and not cita.cobro.pagado %}
+                                <span class="badge badge-danger" style="margin-left:0.5rem;" title="Primero registrá el pago en la pantalla de Caja">
+                                    Cobro pendiente
+                                </span>
+                            {% endif %}
                             <div class="text-muted text-sm" style="margin-top:0.25rem;">
                                 {{ cita.fecha }} {{ cita.hora|time:'H:i' }} &mdash; {{ cita.get_convenio_display }}
                             </div>

@@ -29,6 +29,7 @@ from .forms import (
     AdjuntarInformeForm,
     AgendarCitaForm,
     AgendarCitaPrivadoForm,
+    ComboForm,
     CompletarDatosPacienteForm,
     CrearTipoEstudioForm,
     EXTENSIONES_IMAGEN_DIRECTA,
@@ -36,6 +37,7 @@ from .forms import (
     IngresarCorreoEnvioForm,
     NOMBRES_IGNORADOS_EN_CARPETA,
     ProcesarTicketForm,
+    RegistrarPagoEstudioForm,
     RegistrarTicketForm,
 )
 from .horarios import (
@@ -51,6 +53,8 @@ from .horarios import (
 )
 from .models import (
     Cita,
+    Cobro,
+    Combo,
     ImagenEstudio,
     Notificacion,
     OrdenTrabajo,
@@ -75,6 +79,13 @@ ETIQUETA_CONVENIO_CORTA = {
 
 def es_recepcionista(user):
     return user.is_authenticated and user.rol == Usuario.ROL_RECEPCIONISTA
+
+
+def es_caja(user):
+    """Puede operar la pantalla de Caja: por el permiso puede_operar_caja
+    (independiente del rol) o por ser administrador. Portado (2026-09-04)
+    desde la rama visual-andres de TechBlood."""
+    return user.is_authenticated and (user.puede_operar_caja or es_administrador(user))
 
 
 def es_tecnico(user):
@@ -469,7 +480,7 @@ def historial_paciente(request, paciente_id):
     paciente = get_object_or_404(Paciente, id=paciente_id)
     citas = (
         Cita.objects.filter(paciente=paciente, estado=Cita.ESTADO_PROCESADA)
-        .select_related('tipo_estudio', 'orden_trabajo')
+        .select_related('tipo_estudio', 'orden_trabajo', 'cobro')
         .order_by('-fecha', '-hora')
     )
     # Para llenar el combo de "Estudio" del filtro solo con los tipos que
@@ -484,13 +495,33 @@ def historial_paciente(request, paciente_id):
     })
 
 
+def _cobro_bloquea_envio(cita):
+    """True si la cita tiene un cobro registrado que sigue pendiente: en ese
+    caso no se permite enviar los resultados hasta que se marque como
+    cobrado desde Caja. Si no hay cobro (todavía no se generó orden, o la
+    orden es de antes de este permiso), no bloquea — el cobro no es
+    obligatorio. Portado (2026-09-04) desde la rama visual-andres de
+    TechBlood."""
+    return bool(
+        hasattr(cita, 'cobro') and cita.cobro and cita.cobro.estado != Cobro.ESTADO_PAGADO
+    )
+
+
 def _enviar_estudio_y_registrar(request, cita, orden):
     """Envía el estudio (asume que el paciente ya tiene correo) y deja
     constancia: bitácora, marca de tiempo y mensaje de éxito. Si el envío
     falla (ej. el sistema no tiene configuradas las credenciales SMTP),
     avisa con un mensaje de error en vez de dejar la pantalla reventar, y
     NO marca el estudio como enviado — así el botón sigue disponible para
-    reintentar."""
+    reintentar. Si el estudio tiene un cobro pendiente, no se envía."""
+    if _cobro_bloquea_envio(cita):
+        messages.error(
+            request,
+            f'El estudio de {cita.paciente} tiene un cobro pendiente. '
+            'Primero marcá el cobro como realizado desde Caja para poder enviar los resultados.',
+        )
+        return
+
     if not enviar_resultados(orden):
         messages.error(
             request,
@@ -562,6 +593,161 @@ def ingresar_correo_envio(request, cita_id):
         'form': form,
         'cita': cita,
     })
+
+
+# --- Caja: cobro de estudios ----------------------------------------------
+#
+# Cobro es opcional y solo administrativo: registra si ya se cobró el
+# estudio (recepción/caja lo marcan a mano), no mueve dinero real. Mientras
+# quede pendiente, bloquea el envío de resultados al paciente (ver
+# _cobro_bloquea_envio) pero no afecta el trabajo del técnico ni del
+# radiólogo. Portado (2026-09-04) desde la rama visual-andres de TechBlood.
+
+@login_required
+@user_passes_test(es_caja)
+def pagos_pendientes(request):
+    """Listado paginado de cobros, con filtros para Caja."""
+    qs = Cobro.objects.select_related(
+        'cita__paciente', 'cita__tipo_estudio', 'cobrado_por',
+    ).order_by('-creado_en')
+    busqueda = (request.GET.get('q') or '').strip()
+    estado = request.GET.get('estado', Cobro.ESTADO_PENDIENTE)
+    convenio = request.GET.get('convenio', '')
+    tipo_estudio = request.GET.get('tipo_estudio', '')
+    desde = parse_date(request.GET.get('desde', ''))
+    hasta = parse_date(request.GET.get('hasta', ''))
+    if busqueda:
+        qs = qs.filter(
+            Q(cita__paciente__nombre__icontains=busqueda)
+            | Q(cita__paciente__apellido__icontains=busqueda)
+            | Q(cita__paciente__dpi__icontains=busqueda)
+        )
+    if estado in (Cobro.ESTADO_PENDIENTE, Cobro.ESTADO_PAGADO):
+        qs = qs.filter(estado=estado)
+    if convenio in dict(Cita.CONVENIO_CHOICES):
+        qs = qs.filter(cita__convenio=convenio)
+    if tipo_estudio.isdigit():
+        qs = qs.filter(cita__tipo_estudio_id=int(tipo_estudio))
+    if desde:
+        qs = qs.filter(cita__fecha__gte=desde)
+    if hasta:
+        qs = qs.filter(cita__fecha__lte=hasta)
+
+    pagina = Paginator(qs, 20).get_page(request.GET.get('page'))
+
+    filtros = request.GET.copy()
+    filtros.pop('page', None)
+    return render(request, 'pacientes/pagos_pendientes.html', {
+        'pagina': pagina,
+        'busqueda': busqueda,
+        'estado': estado,
+        'convenio': convenio,
+        'tipo_estudio': tipo_estudio,
+        'desde': desde,
+        'hasta': hasta,
+        'convenios': Cita.CONVENIO_CHOICES,
+        'tipos_estudio': TipoEstudio.objects.filter(activo=True).order_by('nombre'),
+        'filtros_qs': filtros.urlencode(),
+    })
+
+
+@login_required
+@user_passes_test(es_caja)
+def boleta_pago_pdf(request, cobro_id):
+    """Genera la boleta imprimible de un cobro ya registrado como pagado."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    cobro = get_object_or_404(
+        Cobro.objects.select_related('cita__paciente', 'cita__tipo_estudio', 'cobrado_por'),
+        id=cobro_id, estado=Cobro.ESTADO_PAGADO,
+    )
+    paciente = cobro.cita.paciente
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=letter, topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+        leftMargin=1.8 * cm, rightMargin=1.8 * cm,
+    )
+    estilos = getSampleStyleSheet()
+    datos = [
+        ['BOLETA DE PAGO', ''],
+        ['Paciente', f'{paciente.nombre} {paciente.apellido}'],
+        ['DPI', paciente.dpi],
+        ['Carné IGSS', paciente.carnet_igss or 'No registrado'],
+        ['Teléfono', paciente.telefono or 'No registrado'],
+        ['Estudio', cobro.cita.tipo_estudio.nombre],
+        ['Convenio', cobro.cita.get_convenio_display()],
+        ['Fecha de cita', cobro.cita.fecha.strftime('%d/%m/%Y')],
+        ['Monto', f'Q{cobro.cita.precio:.2f}'],
+        ['Forma de pago', cobro.get_forma_pago_display() or 'No registrada'],
+        ['Referencia', cobro.numero_boleta or 'No registrada'],
+        ['Pagado el', cobro.pagado_en.strftime('%d/%m/%Y %H:%M') if cobro.pagado_en else ''],
+        ['Registrado por', cobro.cobrado_por.get_full_name() or cobro.cobrado_por.username],
+    ]
+    tabla = Table(datos, colWidths=[4 * cm, 12 * cm])
+    tabla.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1d4ed8')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('SPAN', (0, 0), (-1, 0)),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+        ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    doc.build([
+        Paragraph('Clínica de Imágenes', estilos['Title']),
+        Spacer(1, 12),
+        tabla,
+        Spacer(1, 24),
+        Paragraph(
+            'Comprobante generado por el sistema. Conserve esta boleta como constancia del pago.',
+            estilos['BodyText'],
+        ),
+    ])
+    respuesta = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+    respuesta['Content-Disposition'] = f'inline; filename="boleta_pago_{cobro.id}.pdf"'
+    return respuesta
+
+
+@login_required
+@user_passes_test(es_caja)
+@require_POST
+def marcar_cobrado(request, cita_id):
+    """Registra la boleta y marca el cobro como pagado."""
+    cita = get_object_or_404(
+        Cita.objects.filter(
+            estado__in=(Cita.ESTADO_EN_PROCESO, Cita.ESTADO_PROCESADA),
+            orden_trabajo__isnull=False,
+        ),
+        id=cita_id,
+    )
+    cobro, _creado = Cobro.objects.get_or_create(cita=cita)
+    form = RegistrarPagoEstudioForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, 'Revisá los datos de la boleta antes de guardar.')
+        return redirect('pagos_pendientes')
+
+    cobro.forma_pago = form.cleaned_data['forma_pago']
+    cobro.numero_boleta = form.cleaned_data['numero_boleta']
+    cobro.marcar_pagado(request.user, notas=form.cleaned_data['notas'])
+    cobro.save(update_fields=['forma_pago', 'numero_boleta'])
+
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_MARCAR_COBRADO,
+        descripcion=f'Marcó como cobrado el estudio de {cita.paciente} (cita #{cita.id}).',
+    )
+    messages.success(request, f'Estudio de {cita.paciente} marcado como cobrado.')
+    return redirect('pagos_pendientes')
 
 
 @login_required
@@ -657,6 +843,60 @@ def editar_estudio(request, estudio_id):
     else:
         form = CrearTipoEstudioForm(instance=tipo_estudio)
     return render(request, 'pacientes/crear_estudio.html', {'form': form, 'editando': tipo_estudio})
+
+
+@login_required
+@user_passes_test(es_administrador)
+def lista_combos(request):
+    """Catálogo de combos de estudios (ver pacientes.models.Combo): se
+    administra íntegro desde acá, igual que Estudios (lista_estudios).
+    Portado (2026-09-04) desde la rama visual-andres de TechBlood — ahí
+    esta pantalla estaba abierta a cualquier recepcionista pero solo
+    aparecía en el menú del administrador; se corrige ese permiso
+    inconsistente al portarla."""
+    combos = Combo.objects.all().prefetch_related('estudios').order_by('nombre')
+    return render(request, 'pacientes/lista_combos.html', {'combos': combos})
+
+
+@login_required
+@user_passes_test(es_administrador)
+def crear_combo(request):
+    if request.method == 'POST':
+        form = ComboForm(request.POST)
+        if form.is_valid():
+            combo = form.save()
+            Bitacora.registrar(
+                request=request,
+                usuario=request.user,
+                accion=Bitacora.ACCION_CREAR_COMBO,
+                descripcion=f'Creó el combo "{combo.nombre}" con {combo.estudios.count()} estudios.',
+            )
+            messages.success(request, f'Combo "{combo.nombre}" creado correctamente.')
+            return redirect('lista_combos')
+    else:
+        form = ComboForm()
+    return render(request, 'pacientes/crear_combo.html', {'form': form, 'editando': None})
+
+
+@login_required
+@user_passes_test(es_administrador)
+def editar_combo(request, combo_id):
+    combo = get_object_or_404(Combo, id=combo_id)
+    if request.method == 'POST':
+        form = ComboForm(request.POST, instance=combo)
+        if form.is_valid():
+            combo = form.save()
+            Bitacora.registrar(
+                request=request,
+                usuario=request.user,
+                accion=Bitacora.ACCION_EDITAR_COMBO,
+                descripcion=f'Editó el combo "{combo.nombre}".',
+            )
+            messages.success(request, f'Combo "{combo.nombre}" actualizado correctamente.')
+            return redirect('lista_combos')
+    else:
+        form = ComboForm(instance=combo)
+    return render(request, 'pacientes/crear_combo.html', {'form': form, 'editando': combo})
 
 
 @login_required
@@ -1140,6 +1380,9 @@ def generar_orden(request, convenio, cita_id):
                 motivo=form.cleaned_data['motivo'],
                 creada_por=request.user,
             )
+            # Cobro pendiente por defecto: bloquea el envío de resultados
+            # hasta que Caja lo marque como pagado (ver _cobro_bloquea_envio).
+            Cobro.objects.get_or_create(cita=cita)
             cita.estado = Cita.ESTADO_EN_PROCESO
             cita.save(update_fields=['estado'])
             _notificar_orden_pendiente(cita)
@@ -1871,6 +2114,7 @@ def procesar_turno(request, ticket_id):
             motivo=(cita.notas or ticket.motivo or 'Sin indicación clínica registrada.'),
             creada_por=request.user,
         )
+        Cobro.objects.get_or_create(cita=cita)
         cita.estado = Cita.ESTADO_EN_PROCESO
         cita.save(update_fields=['estado'])
         _notificar_orden_pendiente(cita)
@@ -1932,6 +2176,7 @@ def procesar_ticket_emergencia(request, ticket_id):
                 motivo=form.cleaned_data['motivo'],
                 creada_por=request.user,
             )
+            Cobro.objects.get_or_create(cita=cita)
             ticket.estado = Ticket.ESTADO_ATENDIDO
             ticket.atendido_en = timezone.now()
             ticket.cita = cita

@@ -79,11 +79,16 @@ def _validar_porcentajes(form, cleaned):
 
 class CrearUsuarioForm(UserCreationForm):
     email = _campo_email()
+    puede_operar_caja = forms.BooleanField(
+        label='Puede operar Caja', required=False,
+        help_text='Permite gestionar pagos de estudios sin cambiar el rol principal.',
+    )
 
     class Meta(UserCreationForm.Meta):
         model = Usuario
         fields = (
             'username', 'first_name', 'last_name', 'email', 'rol', 'salario_base',
+            'puede_operar_caja',
             'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
         )
 
@@ -158,6 +163,10 @@ class EditarUsuarioForm(forms.ModelForm):
     radiólogos — los tipos de estudio que puede realizar."""
 
     email = _campo_email()
+    puede_operar_caja = forms.BooleanField(
+        label='Puede operar Caja', required=False,
+        help_text='Permite gestionar pagos de estudios sin cambiar el rol principal.',
+    )
 
     tipos_estudio = forms.ModelMultipleChoiceField(
         queryset=TipoEstudio.objects.order_by('nombre'),
@@ -171,6 +180,7 @@ class EditarUsuarioForm(forms.ModelForm):
         model = Usuario
         fields = (
             'first_name', 'last_name', 'email', 'rol', 'salario_base',
+            'puede_operar_caja',
             'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
             'is_active',
         )

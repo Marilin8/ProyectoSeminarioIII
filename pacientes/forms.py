@@ -6,7 +6,7 @@ from django.utils import timezone
 from accounts.models import Usuario
 from clinica.validators import validar_dominio_correo
 
-from .models import Cita, Paciente, TipoEstudio
+from .models import Cita, Cobro, Combo, Paciente, TipoEstudio
 
 CONVENIOS_QUE_REQUIEREN_CARNET_IGSS = (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS)
 
@@ -571,6 +571,37 @@ class CrearTipoEstudioForm(forms.ModelForm):
         else:
             self._guardar_precios = guardar_precios
         return tipo_estudio
+
+
+class ComboForm(forms.ModelForm):
+    """Alta/edición de un combo de estudios (ver pacientes.models.Combo).
+    Portado (2026-09-04) desde la rama visual-andres de TechBlood."""
+
+    class Meta:
+        model = Combo
+        fields = ('nombre', 'estudios', 'activo', 'aplica_descuento', 'porcentaje_descuento')
+        widgets = {'estudios': forms.CheckboxSelectMultiple}
+
+    def clean_porcentaje_descuento(self):
+        pct = self.cleaned_data['porcentaje_descuento']
+        if not self.cleaned_data.get('aplica_descuento'):
+            return pct
+        if pct is None or pct <= 0 or pct > 100:
+            raise forms.ValidationError('El porcentaje de descuento debe estar entre 0 y 100.')
+        return pct
+
+
+class RegistrarPagoEstudioForm(forms.Form):
+    """La boleta que Caja llena al marcar un estudio como cobrado (ver
+    pacientes.views.marcar_cobrado). Portado (2026-09-04) desde la rama
+    visual-andres de TechBlood."""
+
+    forma_pago = forms.ChoiceField(label='Forma de pago', choices=Cobro.FORMA_PAGO_CHOICES)
+    numero_boleta = forms.CharField(label='Número de boleta / referencia', max_length=60, required=False)
+    notas = forms.CharField(
+        label='Notas', max_length=255, required=False,
+        widget=forms.Textarea(attrs={'rows': 2}),
+    )
 
 
 class GenerarOrdenForm(forms.Form):

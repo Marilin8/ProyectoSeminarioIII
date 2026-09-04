@@ -30,6 +30,16 @@ class Usuario(AbstractUser):
         verbose_name='rol',
     )
 
+    # Permiso adicional, independiente del rol principal (típicamente se
+    # marca en una recepcionista): habilita la pantalla de Caja (pagos de
+    # estudios) sin tener que cambiarle el rol. Portado (2026-09-04) desde
+    # la rama visual-andres de TechBlood.
+    puede_operar_caja = models.BooleanField(
+        default=False,
+        verbose_name='puede operar Caja',
+        help_text='Permite consultar y registrar pagos de estudios.',
+    )
+
     # Salario fijo mensual del empleado, antes de comisiones. Se usa en la
     # pantalla de Planilla (salario base + comisiones del período = total).
     salario_base = models.DecimalField(
@@ -97,6 +107,9 @@ class Bitacora(models.Model):
     ACCION_AVANZAR_TURNO = 'avanzar_turno'
     ACCION_ENVIAR_REPORTE_DIARIO = 'enviar_reporte_diario'
     ACCION_REGISTRAR_PAGO_PLANILLA = 'registrar_pago_planilla'
+    ACCION_CREAR_COMBO = 'crear_combo'
+    ACCION_EDITAR_COMBO = 'editar_combo'
+    ACCION_MARCAR_COBRADO = 'marcar_cobrado'
 
     ACCION_CHOICES = [
         (ACCION_LOGIN_EXITOSO, 'Inicio de sesión'),
@@ -124,6 +137,9 @@ class Bitacora(models.Model):
         (ACCION_AVANZAR_TURNO, 'Avanzó la pantalla de turnos (siguiente)'),
         (ACCION_ENVIAR_REPORTE_DIARIO, 'Envío de reporte diario'),
         (ACCION_REGISTRAR_PAGO_PLANILLA, 'Registro de pago de planilla'),
+        (ACCION_CREAR_COMBO, 'Creación de combo de estudios'),
+        (ACCION_EDITAR_COMBO, 'Edición de combo de estudios'),
+        (ACCION_MARCAR_COBRADO, 'Marcar estudio como cobrado'),
     ]
 
     usuario = models.ForeignKey(

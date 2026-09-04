@@ -175,6 +175,65 @@ class PrecioEstudio(models.Model):
         return f'{self.tipo_estudio.nombre} · {self.get_convenio_display()} {horario}: Q{self.precio}'
 
 
+class Combo(models.Model):
+    """Agrupación de estudios relacionados (ej. variantes de tórax) que se
+    ofrecen como una misma opción, con descuento opcional.
+
+    El precio se calcula al vuelo: suma de los precios de los estudios que lo
+    integran, menos el descuento si aplica. Coherente con el patrón del
+    proyecto (nada se guarda, todo se deriva). Es solo administrativo:
+    agrupa el catálogo, no maneja transacciones monetarias.
+
+    Portado (2026-09-04) desde la rama visual-andres de TechBlood."""
+
+    nombre = models.CharField(max_length=120, unique=True)
+    estudios = models.ManyToManyField(
+        TipoEstudio, related_name='combos', blank=True, verbose_name='estudios del combo',
+    )
+    activo = models.BooleanField(default=True)
+    aplica_descuento = models.BooleanField(
+        default=False, verbose_name='aplicar descuento',
+        help_text='Si se activa, el total se calcula restando el porcentaje de descuento.',
+    )
+    porcentaje_descuento = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        verbose_name='% de descuento',
+        help_text='Solo se usa si "aplicar descuento" está marcado.',
+    )
+
+    class Meta:
+        db_table = 'combos'
+        verbose_name = 'combo'
+        verbose_name_plural = 'combos'
+        ordering = ['nombre']
+
+    def __str__(self):
+        return self.nombre
+
+    def total_bruto_para(self, convenio, horario_habil=True):
+        """Suma de los precios de los estudios del combo para un convenio y
+        tipo de horario, sin aplicar descuento."""
+        return sum(
+            (estudio.precio_para(convenio, horario_habil) for estudio in self.estudios.all()),
+            start=Decimal('0.00'),
+        )
+
+    def total_para(self, convenio, horario_habil=True):
+        """Precio final del combo para un convenio y horario: la suma de sus
+        estudios menos el descuento (si aplica y es válido)."""
+        bruto = self.total_bruto_para(convenio, horario_habil)
+        pct = Decimal('0') if not self.aplica_descuento else (self.porcentaje_descuento or Decimal('0'))
+        if pct <= 0 or pct > 100:
+            return bruto
+        descuento = (bruto * pct / Decimal('100')).quantize(Decimal('0.01'))
+        return (bruto - descuento).quantize(Decimal('0.01'))
+
+    @property
+    def precio_referencia(self):
+        """Precio orientativo para listados: privado en horario hábil."""
+        return self.total_para('privado', True)
+
+
 class Cita(models.Model):
     # Los valores viven a nivel de módulo (los usa también PrecioEstudio, que
     # se define antes que Cita); acá se reexponen para no romper el código
@@ -295,6 +354,66 @@ class Cita(models.Model):
     def precio(self):
         """Precio de la cita según su estudio, convenio y horario."""
         return self.tipo_estudio.precio_para(self.convenio, self.horario_habil)
+
+
+class Cobro(models.Model):
+    """Registro administrativo de "cobro/pago" de un estudio (relacionado a
+    su cita). El sistema NO maneja transacciones monetarias reales: solo
+    registra si la recepcionista/caja marcó que ya hubo cobro o si sigue
+    pendiente. Un cobro sin registrar como pagado bloquea únicamente el
+    envío de resultados al paciente; no afecta la orden de trabajo ni el
+    trabajo del técnico.
+
+    Portado (2026-09-04) desde la rama visual-andres de TechBlood."""
+
+    ESTADO_PENDIENTE = 'pendiente'
+    ESTADO_PAGADO = 'pagado'
+    FORMA_EFECTIVO = 'efectivo'
+    FORMA_TARJETA = 'tarjeta'
+    FORMA_TRANSFERENCIA = 'transferencia'
+
+    ESTADO_CHOICES = [
+        (ESTADO_PENDIENTE, 'Pendiente de cobro'),
+        (ESTADO_PAGADO, 'Cobrado'),
+    ]
+    FORMA_PAGO_CHOICES = [
+        (FORMA_EFECTIVO, 'Efectivo'),
+        (FORMA_TARJETA, 'Tarjeta'),
+        (FORMA_TRANSFERENCIA, 'Transferencia'),
+    ]
+
+    cita = models.OneToOneField(Cita, on_delete=models.PROTECT, related_name='cobro')
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=ESTADO_PENDIENTE)
+    pagado_en = models.DateTimeField(null=True, blank=True, verbose_name='pagado el')
+    cobrado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='cobros_registrados',
+    )
+    notas = models.CharField(max_length=255, blank=True)
+    forma_pago = models.CharField(max_length=20, choices=FORMA_PAGO_CHOICES, blank=True)
+    numero_boleta = models.CharField(max_length=60, blank=True, verbose_name='número de boleta / referencia')
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'cobros'
+        verbose_name = 'cobro'
+        verbose_name_plural = 'cobros'
+
+    def __str__(self):
+        return f'Cobro de {self.cita} — {self.get_estado_display()}'
+
+    @property
+    def pagado(self):
+        return self.estado == self.ESTADO_PAGADO
+
+    def marcar_pagado(self, usuario, notas=''):
+        """Marca el cobro como pagado y guarda quién y cuándo."""
+        self.estado = self.ESTADO_PAGADO
+        self.pagado_en = timezone.now()
+        self.cobrado_por = usuario
+        if notas:
+            self.notas = notas
+        self.save(update_fields=['estado', 'pagado_en', 'cobrado_por', 'notas'])
 
 
 class ReporteDiario(models.Model):
