@@ -75,11 +75,8 @@
             margin-bottom: 12px;
         }
 
-        .estudio {
-            font-size: 28px;
-            color: #cbd5e1;
-            margin-bottom: 35px;
-        }
+
+        
 
         .sin-turno {
             font-size: 42px;
@@ -116,6 +113,21 @@
             border: 2px solid #334155;
         }
 
+        .radiologo {
+            font-size: 26px;
+            font-weight: 600;
+            color: #cbd5e1;
+            margin-top: 10px;
+        }
+
+        .sala {
+            font-size: 42px;
+            font-weight: 900;
+            color: #22c55e;
+            margin-top: 22px;
+        }
+
+
         @media (max-width: 900px) {
             .turno {
                 font-size: 100px;
@@ -128,6 +140,7 @@
             .mensaje {
                 font-size: 30px;
             }
+
         }
     </style>
 </head>
@@ -143,7 +156,9 @@
 
         {% if actual %}
 
-            <div class="titulo-turno">TURNO ACTUAL</div>
+            <div class="titulo-turno">
+                TURNO ACTUAL
+            </div>
 
             <div class="turno">
                 {{ actual.turno }}
@@ -174,23 +189,33 @@
     </div>
 
     <div class="proximos">
+
         <h2>PRÓXIMOS TURNOS</h2>
 
         <div class="lista-proximos">
+
             {% for ticket in proximos %}
+
                 <div class="proximo">
                     {{ ticket.turno }}
                 </div>
+
             {% empty %}
+
                 <div style="font-size: 22px; color: #94a3b8;">
                     No hay más turnos en espera.
                 </div>
+
             {% endfor %}
+
         </div>
+
     </div>
 
     <script>
+
         function actualizarReloj() {
+
             const ahora = new Date();
 
             const hora = ahora.toLocaleTimeString('es-GT', {
@@ -203,11 +228,122 @@
         }
 
         actualizarReloj();
+
         setInterval(actualizarReloj, 1000);
 
-        setTimeout(function () {
-            location.reload();
-        }, 5000);
+
+        async function actualizarSalaEspera() {
+
+            try {
+
+                const respuesta = await fetch('/sala-espera/estado/', {
+                    cache: 'no-store'
+                });
+
+                const data = await respuesta.json();
+
+                const contenido =
+                    document.querySelector('.contenido');
+
+                const listaProximos =
+                    document.querySelector('.lista-proximos');
+
+
+                /* ==============================
+                   TURNO ACTUAL
+                ============================== */
+
+                if (data.actual) {
+
+                    contenido.innerHTML = `
+
+                        <div class="titulo-turno">
+                            TURNO ACTUAL
+                        </div>
+
+                        <div class="turno">
+                            ${data.actual.turno}
+                        </div>
+
+                        <div class="mensaje">
+                            FAVOR DE PASAR
+                        </div>
+
+                        <div class="paciente">
+                            ${data.actual.paciente}
+                        </div>
+
+                        
+                        <div class="radiologo">
+                            RAD. ${data.actual.radiologo || ''}
+                        </div>
+
+                        <div class="sala">
+                            PASE A ${data.actual.sala || 'SALA ASIGNADA'}
+                        </div>
+
+
+
+                    `;
+
+                } else {
+
+                    contenido.innerHTML = `
+
+                        <div class="sin-turno">
+                            No hay turnos en espera en este momento.
+                        </div>
+
+                    `;
+                }
+
+
+                /* ==============================
+                   PRÓXIMOS TURNOS
+                ============================== */
+
+                if (data.proximos && data.proximos.length > 0) {
+
+                    listaProximos.innerHTML =
+                        data.proximos.map(ticket => `
+
+                            <div class="proximo">
+                                ${ticket.turno}
+                            </div>
+
+                        `).join('');
+
+                } else {
+
+                    listaProximos.innerHTML = `
+
+                        <div style="
+                            font-size: 22px;
+                            color: #94a3b8;
+                        ">
+                            No hay más turnos en espera.
+                        </div>
+
+                    `;
+                }
+
+            } catch (error) {
+
+                console.error(
+                    'Error actualizando sala de espera:',
+                    error
+                );
+            }
+        }
+
+
+        actualizarSalaEspera();
+
+        setInterval(
+            actualizarSalaEspera,
+            3000
+        );
+
     </script>
 
 </body>

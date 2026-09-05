@@ -1789,6 +1789,89 @@ def pantalla_sala_espera(request):
         'hoy': hoy,
     })
 
+def estado_sala_espera(request):
+    hoy = timezone.localdate()
+
+    tickets_del_dia = Ticket.del_dia(hoy).select_related(
+        'paciente',
+        'cita__tipo_estudio',
+        'cita__radiologo',
+    )
+
+    actual = (
+        tickets_del_dia
+        .filter(estado=Ticket.ESTADO_ATENDIDO)
+        .order_by('-atendido_en')
+        .first()
+    )
+
+    proximos = (
+        tickets_del_dia
+        .filter(estado=Ticket.ESTADO_EN_ESPERA)
+        .order_by('-prioridad', 'orden')[:4]
+    )
+
+    data = {
+        'actual': None,
+        'proximos': []
+    }
+
+    if actual:
+        nombre = actual.paciente.nombre or ''
+        apellido = actual.paciente.apellido or ''
+
+        iniciales = []
+
+        for parte in nombre.split():
+            if parte:
+                iniciales.append(parte[0].upper() + '.')
+
+        for parte in apellido.split():
+            if parte:
+                iniciales.append(parte[0].upper() + '.')
+
+        paciente_abreviado = ' '.join(iniciales)
+
+        sala = 'Sala asignada'
+        radiologo_nombre = ''
+
+        if actual.cita and actual.cita.radiologo:
+            radiologo = actual.cita.radiologo
+
+            radiologo_nombre = (
+                radiologo.get_full_name().strip()
+                if radiologo.get_full_name().strip()
+                else radiologo.username
+            )
+
+            if radiologo.username == 'radiologo1':
+                sala = 'Sala 1'
+            elif radiologo.username == 'radiologo2':
+                sala = 'Sala 2'
+
+        data['actual'] = {
+            'id': actual.id,
+            'turno': actual.turno,
+            'paciente': paciente_abreviado,
+            'estudio': (
+                actual.cita.tipo_estudio.nombre
+                if actual.cita and actual.cita.tipo_estudio
+                else ''
+            ),
+            'radiologo': radiologo_nombre,
+            'sala': sala,
+        }
+
+    data['proximos'] = [
+        {
+            'id': ticket.id,
+            'turno': ticket.turno,
+        }
+        for ticket in proximos
+    ]
+
+    return JsonResponse(data)
+
 @login_required
 @user_passes_test(es_recepcionista)
 @require_POST

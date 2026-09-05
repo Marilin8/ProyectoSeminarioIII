@@ -173,6 +173,10 @@ urlpatterns = [
     ),
     path('turnos/', views.pantalla_turnos, name='pantalla_turnos'),
     path('sala-espera/', views.pantalla_sala_espera, name='pantalla_sala_espera'),
+    path(
+    'sala-espera/estado/',
+    views.estado_sala_espera,
+    name='estado_sala_espera'),
     path('turnos/<int:ticket_id>/siguiente/', views.avanzar_turno, name='avanzar_turno'),
     path('turnos/<int:ticket_id>/mover/', views.mover_turno, name='mover_turno'),
     path('turnos/<int:ticket_id>/procesar/', views.procesar_turno, name='procesar_turno'),
