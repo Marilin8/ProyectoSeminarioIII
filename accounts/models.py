@@ -40,6 +40,14 @@ class Usuario(AbstractUser):
         help_text='Permite consultar y registrar pagos de estudios.',
     )
 
+    # Sala / consultorio donde atiende un radiólogo. Sale en la pantalla
+    # pública de sala de espera ("PASE A ...") cuando se llama a un turno
+    # asignado a ese radiólogo.
+    sala = models.CharField(
+        max_length=40, blank=True, verbose_name='sala / consultorio',
+        help_text='Solo para radiólogos: la sala donde atiende (ej. "Sala 1").',
+    )
+
     # Salario fijo mensual del empleado, antes de comisiones. Se usa en la
     # pantalla de Planilla (salario base + comisiones del período = total).
     salario_base = models.DecimalField(

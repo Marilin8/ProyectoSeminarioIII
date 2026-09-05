@@ -2119,29 +2119,72 @@ def pantalla_turnos(request):
     })
 
 
-def pantalla_sala_espera(request):
-    """Pantalla pública para el televisor de la sala de espera (sin login:
-    se abre directo en la TV). Muestra el último turno llamado — el que se
-    acaba de marcar atendido en pantalla_turnos, con "favor de pasar" — y los
-    próximos en espera. Se recarga sola cada 5 segundos."""
-    hoy = timezone.localdate()
-    tickets_del_dia = Ticket.del_dia(hoy).select_related(
-        'paciente', 'cita__radiologo', 'cita__tipo_estudio',
+def _iniciales_paciente(paciente):
+    """Nombre del paciente reducido a iniciales para la pantalla pública
+    (privacidad): "Elmer Adrián Catalán" -> "E. A. C.""."""
+    partes = f'{paciente.nombre} {paciente.apellido}'.split()
+    return ' '.join(f'{p[0].upper()}.' for p in partes if p)
+
+
+def _turno_actual_sala_espera(hoy):
+    """El último turno llamado (marcado atendido) hoy, o None."""
+    return (
+        Ticket.del_dia(hoy)
+        .select_related('paciente', 'cita__radiologo')
+        .filter(estado=Ticket.ESTADO_ATENDIDO)
+        .order_by('-atendido_en')
+        .first()
     )
 
-    actual = (
-        tickets_del_dia.filter(estado=Ticket.ESTADO_ATENDIDO)
-        .order_by('-atendido_en').first()
-    )
-    proximos = (
-        tickets_del_dia.filter(estado=Ticket.ESTADO_EN_ESPERA)
+
+def _proximos_sala_espera(hoy):
+    return (
+        Ticket.del_dia(hoy)
+        .filter(estado=Ticket.ESTADO_EN_ESPERA)
         .order_by('-prioridad', 'orden')[:4]
     )
 
+
+def _actual_sala_espera_dict(actual):
+    """Datos del turno actual para la pantalla pública: iniciales del
+    paciente, radiólogo asignado y su sala. NO incluye el tipo de estudio
+    (privacidad)."""
+    if actual is None:
+        return None
+    radiologo = actual.cita.radiologo if actual.cita_id else None
+    return {
+        'turno': actual.turno,
+        'paciente': _iniciales_paciente(actual.paciente),
+        'radiologo': (
+            (radiologo.get_full_name() or radiologo.username) if radiologo else ''
+        ),
+        'sala': (radiologo.sala if radiologo and radiologo.sala else ''),
+    }
+
+
+def pantalla_sala_espera(request):
+    """Pantalla pública para el televisor de la sala de espera (sin login:
+    se abre directo en la TV). Muestra el último turno llamado — el que se
+    acaba de marcar atendido en pantalla_turnos, con "favor de pasar", las
+    iniciales del paciente, su radiólogo y sala — y los próximos en espera.
+    Se actualiza sola cada pocos segundos vía estado_sala_espera."""
+    hoy = timezone.localdate()
+    actual = _turno_actual_sala_espera(hoy)
     return render(request, 'pacientes/pantalla_sala_espera.html', {
-        'actual': actual,
-        'proximos': proximos,
+        'actual': _actual_sala_espera_dict(actual),
+        'proximos': _proximos_sala_espera(hoy),
         'hoy': hoy,
+    })
+
+
+def estado_sala_espera(request):
+    """JSON con el estado de la sala de espera, para que la pantalla del
+    televisor se refresque sola sin recargar toda la página. Público, igual
+    que pantalla_sala_espera."""
+    hoy = timezone.localdate()
+    return JsonResponse({
+        'actual': _actual_sala_espera_dict(_turno_actual_sala_espera(hoy)),
+        'proximos': [{'turno': t.turno} for t in _proximos_sala_espera(hoy)],
     })
 
 

@@ -963,21 +963,59 @@ class PantallaSalaEsperaTests(TestCase):
         self.assertIsNone(respuesta.context['actual'])
 
     def test_actual_es_el_ultimo_ticket_atendido(self):
-        primero = Ticket.objects.create(
-            paciente=crear_paciente(dpi='1112223334441'),
+        Ticket.objects.create(
+            paciente=crear_paciente(dpi='1112223334441', nombre='Primero', apellido='Viejo'),
             servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
             estado=Ticket.ESTADO_ATENDIDO, atendido_en=timezone.now() - datetime.timedelta(minutes=5),
         )
         ultimo = Ticket.objects.create(
-            paciente=crear_paciente(dpi='1112223334442'),
+            paciente=crear_paciente(dpi='1112223334442', nombre='Ultimo', apellido='Nuevo'),
             servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario,
             estado=Ticket.ESTADO_ATENDIDO, atendido_en=timezone.now(),
         )
 
         respuesta = self.client.get(reverse('pantalla_sala_espera'))
 
-        self.assertEqual(respuesta.context['actual'], ultimo)
-        self.assertNotEqual(respuesta.context['actual'], primero)
+        self.assertEqual(respuesta.context['actual']['turno'], ultimo.turno)
+
+    def test_el_paciente_se_muestra_solo_con_iniciales(self):
+        Ticket.objects.create(
+            paciente=crear_paciente(
+                dpi='1112223334449', nombre='Elmer Adrián', apellido='Melendrez Catalán',
+            ),
+            servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
+            estado=Ticket.ESTADO_ATENDIDO, atendido_en=timezone.now(),
+        )
+
+        respuesta = self.client.get(reverse('pantalla_sala_espera'))
+
+        self.assertEqual(respuesta.context['actual']['paciente'], 'E. A. M. C.')
+        self.assertNotContains(respuesta, 'Melendrez')
+
+    def test_estado_sala_espera_devuelve_json_con_radiologo_y_sala(self):
+        radiologo = crear_usuario('rad_sala', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        radiologo.first_name, radiologo.last_name, radiologo.sala = 'Juan', 'Pérez', 'Sala 2'
+        radiologo.save()
+        cita = crear_cita(
+            self.usuario, radiologo=radiologo, estado=Cita.ESTADO_EN_PROCESO,
+            paciente=crear_paciente(dpi='1112223334450', nombre='Ana', apellido='Gómez'),
+        )
+        Ticket.objects.create(
+            paciente=cita.paciente, cita=cita, servicio=Ticket.SERVICIO_PRIVADO,
+            registrado_por=self.usuario, estado=Ticket.ESTADO_ATENDIDO, atendido_en=timezone.now(),
+        )
+
+        data = self.client.get(reverse('estado_sala_espera')).json()
+
+        self.assertEqual(data['actual']['paciente'], 'A. G.')
+        self.assertEqual(data['actual']['radiologo'], 'Juan Pérez')
+        self.assertEqual(data['actual']['sala'], 'Sala 2')
+        self.assertNotIn('estudio', data['actual'])
+
+    def test_estado_sala_espera_sin_login_y_sin_turno(self):
+        data = self.client.get(reverse('estado_sala_espera')).json()
+        self.assertIsNone(data['actual'])
+        self.assertEqual(data['proximos'], [])
 
     def test_proximos_son_los_en_espera_sin_incluir_al_ya_atendido(self):
         atendido = Ticket.objects.create(

@@ -49,6 +49,11 @@
                 <p class="form-help">{{ form.puede_operar_caja.help_text }}</p>
                 {{ form.puede_operar_caja.errors }}
 
+                <label for="{{ form.sala.id_for_label }}">Sala / consultorio</label>
+                {{ form.sala }}
+                <p class="form-help">{{ form.sala.help_text }}</p>
+                {{ form.sala.errors }}
+
                 <label for="{{ form.salario_base.id_for_label }}">Salario base mensual (Q)</label>
                 {{ form.salario_base }}
                 {{ form.salario_base.errors }}

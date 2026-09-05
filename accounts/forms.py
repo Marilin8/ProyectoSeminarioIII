@@ -88,7 +88,7 @@ class CrearUsuarioForm(UserCreationForm):
         model = Usuario
         fields = (
             'username', 'first_name', 'last_name', 'email', 'rol', 'salario_base',
-            'puede_operar_caja',
+            'puede_operar_caja', 'sala',
             'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
         )
 
@@ -180,7 +180,7 @@ class EditarUsuarioForm(forms.ModelForm):
         model = Usuario
         fields = (
             'first_name', 'last_name', 'email', 'rol', 'salario_base',
-            'puede_operar_caja',
+            'puede_operar_caja', 'sala',
             'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
             'is_active',
         )
