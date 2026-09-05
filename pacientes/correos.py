@@ -1,5 +1,7 @@
 import base64
 import logging
+import smtplib
+import socket
 from urllib.parse import urlencode
 
 from django.conf import settings
@@ -14,15 +16,20 @@ def enviar_resultados(orden):
     web del estudio (donde ve las imágenes que dejó seleccionadas la
     radióloga). El visor pide los últimos 4 dígitos del DPI para abrirse.
 
-    Si el paciente no tiene correo registrado, no hace nada (no interrumpe el
-    flujo). Devuelve True si el correo se mandó, False si no había correo o si
-    el envío falló (ej. credenciales SMTP sin configurar en el .env:
-    EMAIL_HOST_USER / EMAIL_HOST_PASSWORD). Nunca deja que ese fallo tumbe la
-    pantalla que lo llamó."""
+    Devuelve '' si el correo se mandó, o un texto corto con el motivo del
+    fallo (paciente sin correo, credenciales rechazadas, no se pudo conectar
+    con el servidor de correo, etc.). Nunca deja que ese fallo tumbe la
+    pantalla que lo llamó — siempre atrapa la excepción."""
     paciente = orden.cita.paciente
 
     if not paciente.correo:
-        return False
+        return 'el paciente no tiene un correo registrado'
+
+    if not (settings.EMAIL_HOST_USER and settings.EMAIL_HOST_PASSWORD):
+        return (
+            'el sistema todavía no tiene configurado el correo emisor '
+            '(EMAIL_HOST_USER / EMAIL_HOST_PASSWORD en el archivo .env)'
+        )
 
     token = orden.asegurar_token_publico()
     ac = base64.urlsafe_b64encode(str(token).encode('ascii')).decode('ascii').rstrip('=')
@@ -62,8 +69,22 @@ Clínica de Imágenes
 
     try:
         correo.send()
+    except smtplib.SMTPAuthenticationError:
+        logger.exception('SMTP rechazó las credenciales (orden #%s)', orden.id)
+        return (
+            'el servidor de correo rechazó el usuario o la contraseña '
+            '(revisá EMAIL_HOST_USER / EMAIL_HOST_PASSWORD — Gmail necesita una '
+            '"contraseña de aplicación")'
+        )
+    except (socket.timeout, TimeoutError, ConnectionError, OSError, smtplib.SMTPException):
+        logger.exception('No se pudo conectar con el servidor de correo (orden #%s)', orden.id)
+        return (
+            'no se pudo conectar con el servidor de correo. Puede que la red '
+            'bloquee la salida SMTP (puerto 587); probá desde otra red o pedile '
+            'al administrador que configure el envío por un servicio de correo'
+        )
     except Exception:
-        logger.exception('No se pudo enviar el correo de resultados de la orden #%s', orden.id)
-        return False
+        logger.exception('Error inesperado enviando el correo de la orden #%s', orden.id)
+        return 'ocurrió un error inesperado al enviar el correo (ver el registro del sistema)'
 
-    return True
+    return ''

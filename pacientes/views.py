@@ -2,6 +2,7 @@ import base64
 import binascii
 import datetime
 import os
+import time
 import zipfile
 from io import BytesIO
 
@@ -517,10 +518,10 @@ def _cobro_bloquea_envio(cita):
 def _enviar_estudio_y_registrar(request, cita, orden):
     """Envía el estudio (asume que el paciente ya tiene correo) y deja
     constancia: bitácora, marca de tiempo y mensaje de éxito. Si el envío
-    falla (ej. el sistema no tiene configuradas las credenciales SMTP),
-    avisa con un mensaje de error en vez de dejar la pantalla reventar, y
-    NO marca el estudio como enviado — así el botón sigue disponible para
-    reintentar. Si el estudio tiene un cobro pendiente, no se envía."""
+    falla, avisa con el motivo concreto (ver enviar_resultados) en vez de
+    dejar la pantalla reventar, y NO marca el estudio como enviado — así el
+    botón sigue disponible para reintentar. Si el estudio tiene un cobro
+    pendiente, no se envía."""
     if _cobro_bloquea_envio(cita):
         messages.error(
             request,
@@ -529,12 +530,12 @@ def _enviar_estudio_y_registrar(request, cita, orden):
         )
         return
 
-    if not enviar_resultados(orden):
+    error = enviar_resultados(orden)
+    if error:
         messages.error(
             request,
-            'No se pudo enviar el correo. El sistema todavía no tiene configurado el '
-            'correo emisor (EMAIL_HOST_USER/EMAIL_HOST_PASSWORD) — avisá al '
-            'administrador. El estudio sigue marcado como no enviado.',
+            f'No se pudo enviar el estudio a {cita.paciente}: {error}. '
+            'El estudio sigue marcado como no enviado, podés reintentar.',
         )
         return
 
@@ -1790,6 +1791,26 @@ def ver_imagenes_jpg(request, orden_id):
     })
 
 
+def _borrar_archivo_media(storage, nombre, intentos=5):
+    """Borra un archivo del storage tolerando el bloqueo temporal de Windows
+    (WinError 5 / PermissionError) que aparece cuando otro hilo lo está
+    sirviendo o el antivirus lo está escaneando. Reintenta con una pausa
+    corta; si aun así no se pudo, devuelve False y el archivo queda huérfano
+    en disco (no rompe la operación; se puede limpiar aparte)."""
+    if not nombre:
+        return True
+    for intento in range(intentos):
+        try:
+            storage.delete(nombre)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            if intento < intentos - 1:
+                time.sleep(0.3 * (intento + 1))
+    return False
+
+
 @login_required
 @user_passes_test(es_radiologo)
 @require_POST
@@ -1798,22 +1819,36 @@ def guardar_seleccion_imagenes(request, orden_id):
     de las imágenes que quedaron sin marcar. Si esa imagen venía de un
     DICOM, el .dcm original se conserva íntegro (solo se le borra el JPG y
     se le apaga "seleccionada"); si no tenía DICOM detrás (se subió como
-    JPG/PNG directo), no queda nada que conservar y se elimina del todo."""
+    JPG/PNG directo), no queda nada que conservar y se elimina del todo.
+
+    El estado en la base de datos se actualiza siempre; borrar el archivo
+    físico es "mejor esfuerzo" (ver _borrar_archivo_media) para no reventar
+    si Windows lo tiene bloqueado un instante."""
     orden = get_object_or_404(OrdenTrabajo, id=orden_id)
     ids_marcados = set(request.POST.getlist('seleccionadas'))
 
     descartadas = 0
+    huerfanos = 0
     for imagen in orden.imagenes.filter(seleccionada=True).exclude(archivo=''):
         if str(imagen.id) in ids_marcados:
             continue
         descartadas += 1
+        storage = imagen.archivo.storage
+        nombre_jpg = imagen.archivo.name
+        try:
+            imagen.archivo.close()
+        except Exception:
+            pass
+
         if imagen.archivo_original:
-            imagen.archivo.delete(save=False)
+            imagen.archivo = ''
             imagen.seleccionada = False
             imagen.save(update_fields=['archivo', 'seleccionada'])
         else:
-            imagen.archivo.delete(save=False)
             imagen.delete()
+
+        if not _borrar_archivo_media(storage, nombre_jpg):
+            huerfanos += 1
 
     if descartadas:
         Bitacora.registrar(
@@ -1826,6 +1861,12 @@ def guardar_seleccion_imagenes(request, orden_id):
             ),
         )
         messages.success(request, f'Se descartaron {descartadas} imagen(es) de la galería.')
+        if huerfanos:
+            messages.warning(
+                request,
+                f'{huerfanos} archivo(s) no se pudieron borrar del disco en este momento '
+                '(estaban en uso); ya no aparecen en la galería.',
+            )
     else:
         messages.info(request, 'No se descartó ninguna imagen.')
 

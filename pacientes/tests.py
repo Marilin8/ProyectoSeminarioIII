@@ -1051,6 +1051,82 @@ class PantallaSalaEsperaTests(TestCase):
         self.assertEqual(len(respuesta.context['proximos']), 4)
 
 
+class GuardarSeleccionImagenesTests(TestCase):
+    """Al descartar imágenes de la galería: si el archivo físico está
+    bloqueado (WinError 5 en Windows) la operación no revienta — el estado
+    en la base de datos se actualiza igual y se avisa que quedaron huérfanos."""
+
+    def setUp(self):
+        import tempfile
+
+        from django.test import override_settings
+
+        self._media = tempfile.mkdtemp()
+        self._cm = override_settings(MEDIA_ROOT=self._media)
+        self._cm.enable()
+
+        self.radiologo = crear_usuario('rad_sel', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        recepcion = crear_usuario('recep_sel', rol=Usuario.ROL_RECEPCIONISTA)
+        self.cita = crear_cita(recepcion, estado=Cita.ESTADO_EN_PROCESO)
+        self.orden = OrdenTrabajo.objects.create(cita=self.cita, motivo='x', creada_por=recepcion)
+        self.tecnico = crear_usuario('tec_sel', rol=Usuario.ROL_TECNICO_IMAGENES)
+        self.img_marcada = ImagenEstudio.objects.create(
+            orden=self.orden, subida_por=self.tecnico, seleccionada=True,
+            archivo=SimpleUploadedFile('a.jpg', b'aaa'),
+        )
+        self.img_descartada = ImagenEstudio.objects.create(
+            orden=self.orden, subida_por=self.tecnico, seleccionada=True,
+            archivo=SimpleUploadedFile('b.jpg', b'bbb'),
+        )
+        self.client.force_login(self.radiologo)
+
+    def tearDown(self):
+        import shutil
+
+        self._cm.disable()
+        shutil.rmtree(self._media, ignore_errors=True)
+
+    def _post(self):
+        return self.client.post(
+            reverse('guardar_seleccion_imagenes', args=[self.orden.id]),
+            {'seleccionadas': [str(self.img_marcada.id)]},
+        )
+
+    def test_descarta_la_imagen_y_borra_el_archivo(self):
+        nombre = self.img_descartada.archivo.name
+        storage = self.img_descartada.archivo.storage
+
+        respuesta = self._post()
+
+        self.assertRedirects(respuesta, reverse('adjuntar_informe', args=[self.cita.id]))
+        self.assertFalse(ImagenEstudio.objects.filter(id=self.img_descartada.id).exists())
+        self.assertTrue(ImagenEstudio.objects.filter(id=self.img_marcada.id).exists())
+        self.assertFalse(storage.exists(nombre))
+
+    def test_archivo_bloqueado_no_revienta_y_avisa(self):
+        from django.contrib.messages import get_messages
+        from django.core.files.storage import FileSystemStorage
+
+        import pacientes.views as vistas
+
+        def denegado(self, name):
+            raise PermissionError(5, 'Acceso denegado')
+
+        original, sleep_real = FileSystemStorage.delete, vistas.time.sleep
+        FileSystemStorage.delete = denegado
+        vistas.time.sleep = lambda *_a, **_k: None
+        try:
+            respuesta = self._post()
+        finally:
+            FileSystemStorage.delete = original
+            vistas.time.sleep = sleep_real
+
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertFalse(ImagenEstudio.objects.filter(id=self.img_descartada.id).exists())
+        mensajes = [str(m) for m in get_messages(respuesta.wsgi_request)]
+        self.assertTrue(any('no se pudieron borrar' in m for m in mensajes))
+
+
 class ProcesarTicketEmergenciaViewTests(TestCase):
 
     def setUp(self):
