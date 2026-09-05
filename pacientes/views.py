@@ -76,6 +76,12 @@ ETIQUETA_CONVENIO_CORTA = {
     Cita.CONVENIO_EMERGENCIA_IGSS: 'Emerg. IGSS',
 }
 
+# Datos de la clínica que salen en la boleta / recibo de pago. Editar acá.
+CLINICA_NOMBRE = 'Clínica de Imágenes'
+CLINICA_RUBRO = 'Estudios de radiología e imágenes diagnósticas'
+CLINICA_DIRECCION = 'Av. XXXXXXXXXXXXXXXX, zona X, Ciudad de Guatemala'
+CLINICA_TELEFONO = 'XXXX-XXXX'
+
 
 def es_recepcionista(user):
     return user.is_authenticated and user.rol == Usuario.ROL_RECEPCIONISTA
@@ -399,8 +405,8 @@ def radiologos_por_estudio(request):
 @user_passes_test(es_recepcionista)
 def historial_pacientes(request):
     """Listado de pacientes con al menos un estudio ya realizado (informe
-    entregado), con búsqueda por nombre/apellido o DPI y filtros por
-    convenio, fecha y tipo de estudio. Los que todavía tienen datos
+    entregado), con búsqueda por nombre/apellido, DPI o N° de expediente y
+    filtros por convenio, fecha y tipo de estudio. Los que todavía tienen datos
     pendientes (sexo/teléfono/fecha de nacimiento) van primero, con un
     botón para completarlos; a los demás se les muestra de qué
     convenio(s) son sus estudios (COEX, Privado, Emergencia IGSS)."""
@@ -425,6 +431,7 @@ def historial_pacientes(request):
             Q(nombre__icontains=busqueda)
             | Q(apellido__icontains=busqueda)
             | Q(dpi__icontains=busqueda)
+            | Q(expediente__icontains=busqueda)
         )
 
     pacientes = list(pacientes_qs)
@@ -651,13 +658,36 @@ def pagos_pendientes(request):
     })
 
 
+def datos_paciente_boleta(cita):
+    """Filas (etiqueta, valor) de los datos del paciente que salen en la
+    boleta de pago. En estudios del convenio Privado NO se incluye el carné
+    del IGSS (esos pacientes no necesariamente están afiliados)."""
+    paciente = cita.paciente
+    filas = [
+        ('Expediente:', paciente.expediente or 'No asignado'),
+        ('DPI:', paciente.dpi or 'No registrado'),
+    ]
+    if cita.convenio != Cita.CONVENIO_PRIVADO:
+        filas.append(('Carné IGSS:', paciente.carnet_igss or 'No registrado'))
+    filas += [
+        ('Teléfono:', paciente.telefono or 'No registrado'),
+        ('Convenio:', cita.get_convenio_display()),
+        ('Fecha de cita:', cita.fecha.strftime('%d/%m/%Y')),
+    ]
+    return filas
+
+
 @login_required
 @user_passes_test(es_caja)
 def boleta_pago_pdf(request, cobro_id):
-    """Genera la boleta imprimible de un cobro ya registrado como pagado."""
+    """Recibo / boleta de pago imprimible de un cobro ya registrado como
+    pagado, con formato de recibo (encabezado, datos del paciente, tabla de
+    servicios y firma de conformidad). Para estudios del convenio Privado
+    NO se muestra el carné del IGSS."""
     from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
     from reportlab.lib.pagesizes import letter
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
@@ -665,53 +695,140 @@ def boleta_pago_pdf(request, cobro_id):
         Cobro.objects.select_related('cita__paciente', 'cita__tipo_estudio', 'cobrado_por'),
         id=cobro_id, estado=Cobro.ESTADO_PAGADO,
     )
-    paciente = cobro.cita.paciente
+    cita = cobro.cita
+    paciente = cita.paciente
+    monto = cita.precio
+
+    azul = colors.HexColor('#1d3a8a')
+    gris = colors.HexColor('#cbd5e1')
+
+    base = getSampleStyleSheet()['BodyText']
+    base.fontSize = 9
+    base.leading = 13
+    negrita = {'parent': base, 'fontName': 'Helvetica-Bold'}
+    st_clinica = ParagraphStyle('clinica', fontSize=16, textColor=azul, **negrita)
+    st_recibo = ParagraphStyle('recibo', fontSize=13, alignment=TA_CENTER, **negrita)
+    st_seccion = ParagraphStyle('seccion', fontSize=9, alignment=TA_CENTER, **negrita)
+    st_derecha = ParagraphStyle('derecha', parent=base, alignment=TA_RIGHT)
+    st_caja_lbl = ParagraphStyle('cajalbl', fontSize=8, **negrita)
+    st_firma = ParagraphStyle('firma', parent=base, fontSize=8, alignment=TA_CENTER, leading=11)
+
+    def caja(label, valor, ancho_lbl, ancho_val):
+        t = Table([[Paragraph(label, st_caja_lbl), str(valor)]], colWidths=[ancho_lbl, ancho_val])
+        t.setStyle(TableStyle([
+            ('BOX', (0, 0), (-1, -1), 1, azul),
+            ('ROUNDEDCORNERS', [4, 4, 4, 4]),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 7), ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+        ]))
+        return t
+
+    fecha_pago = cobro.pagado_en.strftime('%d/%m/%Y') if cobro.pagado_en else ''
+    encabezado = Table(
+        [[
+            Paragraph(CLINICA_NOMBRE, st_clinica),
+            caja('FECHA:', fecha_pago, 1.5 * cm, 2.4 * cm),
+            caja('EXPEDIENTE:', paciente.expediente or '—', 2.9 * cm, 2.0 * cm),
+        ]],
+        colWidths=[6.8 * cm, 4.2 * cm, 5.2 * cm],
+    )
+    encabezado.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]))
+
+    # Datos del paciente (sin carné IGSS si es un estudio privado).
+    datos_paciente = [[etiqueta, valor] for etiqueta, valor in datos_paciente_boleta(cita)]
+    tabla_paciente = Table(datos_paciente, colWidths=[3 * cm, 12 * cm])
+    tabla_paciente.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+    ]))
+
+    # Tabla de servicios (Cantidad / Descripción / Precio).
+    descripcion = cita.tipo_estudio.nombre
+    filas_servicio = [
+        ['Cantidad', 'Descripción', 'Precio'],
+        ['1', descripcion, f'Q{monto:.2f}'],
+        ['', '', ''],
+        ['', '', ''],
+        ['', 'Total:', f'Q{monto:.2f}'],
+    ]
+    tabla_servicio = Table(filas_servicio, colWidths=[2.6 * cm, 11.4 * cm, 4.0 * cm])
+    tabla_servicio.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), azul),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+        ('ALIGN', (2, 0), (2, -1), 'RIGHT'),
+        ('ALIGN', (1, -1), (1, -1), 'RIGHT'),
+        ('FONTNAME', (1, -1), (2, -1), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.5, gris),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 1), (-1, -1), 8), ('BOTTOMPADDING', (0, 1), (-1, -1), 8),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+    ]))
+
+    pago_detalle = Table(
+        [
+            ['Forma de pago:', cobro.get_forma_pago_display() or 'No registrada',
+             'Referencia:', cobro.numero_boleta or 'No registrada'],
+            ['Pagado el:', cobro.pagado_en.strftime('%d/%m/%Y %H:%M') if cobro.pagado_en else '',
+             'Registró:', cobro.cobrado_por.get_full_name() or cobro.cobrado_por.username],
+        ],
+        colWidths=[3 * cm, 6 * cm, 2.5 * cm, 6.5 * cm],
+    )
+    pago_detalle.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('TOPPADDING', (0, 0), (-1, -1), 3), ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+    ]))
+
+    firma = Table(
+        [[Paragraph('<br/><br/><br/>Firma de conformidad del paciente por el estudio realizado.', st_firma)]],
+        colWidths=[7.5 * cm],
+    )
+    firma.setStyle(TableStyle([
+        ('BOX', (0, 0), (-1, -1), 1, azul),
+        ('ROUNDEDCORNERS', [4, 4, 4, 4]),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]))
+
+    elementos = [
+        encabezado,
+        Spacer(1, 16),
+        Paragraph('RECIBO DE PAGO', st_recibo),
+        Spacer(1, 4),
+        Paragraph(f'N° de boleta: {cobro.id}', st_derecha),
+        Spacer(1, 10),
+        Paragraph(
+            f'<b>{CLINICA_NOMBRE}</b><br/>{CLINICA_RUBRO}<br/>'
+            f'Dirección: {CLINICA_DIRECCION}<br/>Tel: {CLINICA_TELEFONO}',
+            base,
+        ),
+        Spacer(1, 16),
+        Paragraph('DESCRIPCIÓN DE LOS SERVICIOS PRESTADOS AL PACIENTE', st_seccion),
+        Spacer(1, 10),
+        Paragraph(f'<b>Nombre del paciente:</b> {paciente.nombre} {paciente.apellido}', base),
+        Spacer(1, 4),
+        tabla_paciente,
+        Spacer(1, 12),
+        tabla_servicio,
+        Spacer(1, 14),
+        pago_detalle,
+        Spacer(1, 40),
+        firma,
+    ]
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(
-        buffer, pagesize=letter, topMargin=1.5 * cm, bottomMargin=1.5 * cm,
-        leftMargin=1.8 * cm, rightMargin=1.8 * cm,
+        buffer, pagesize=letter, topMargin=1.6 * cm, bottomMargin=1.6 * cm,
+        leftMargin=1.8 * cm, rightMargin=1.8 * cm, title=f'Boleta de pago {cobro.id}',
     )
-    estilos = getSampleStyleSheet()
-    datos = [
-        ['BOLETA DE PAGO', ''],
-        ['Paciente', f'{paciente.nombre} {paciente.apellido}'],
-        ['DPI', paciente.dpi],
-        ['Carné IGSS', paciente.carnet_igss or 'No registrado'],
-        ['Teléfono', paciente.telefono or 'No registrado'],
-        ['Estudio', cobro.cita.tipo_estudio.nombre],
-        ['Convenio', cobro.cita.get_convenio_display()],
-        ['Fecha de cita', cobro.cita.fecha.strftime('%d/%m/%Y')],
-        ['Monto', f'Q{cobro.cita.precio:.2f}'],
-        ['Forma de pago', cobro.get_forma_pago_display() or 'No registrada'],
-        ['Referencia', cobro.numero_boleta or 'No registrada'],
-        ['Pagado el', cobro.pagado_en.strftime('%d/%m/%Y %H:%M') if cobro.pagado_en else ''],
-        ['Registrado por', cobro.cobrado_por.get_full_name() or cobro.cobrado_por.username],
-    ]
-    tabla = Table(datos, colWidths=[4 * cm, 12 * cm])
-    tabla.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1d4ed8')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('SPAN', (0, 0), (-1, 0)),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
-        ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-        ('TOPPADDING', (0, 0), (-1, -1), 8),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-    ]))
-    doc.build([
-        Paragraph('Clínica de Imágenes', estilos['Title']),
-        Spacer(1, 12),
-        tabla,
-        Spacer(1, 24),
-        Paragraph(
-            'Comprobante generado por el sistema. Conserve esta boleta como constancia del pago.',
-            estilos['BodyText'],
-        ),
-    ])
+    doc.build(elementos)
+
     respuesta = HttpResponse(buffer.getvalue(), content_type='application/pdf')
     respuesta['Content-Disposition'] = f'inline; filename="boleta_pago_{cobro.id}.pdf"'
     return respuesta

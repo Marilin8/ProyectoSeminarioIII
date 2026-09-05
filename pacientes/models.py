@@ -41,6 +41,11 @@ class Paciente(models.Model):
         (SEXO_FEMENINO, 'Femenino'),
     ]
 
+    expediente = models.CharField(
+        max_length=12, unique=True, null=True, blank=True, editable=False,
+        verbose_name='N° de expediente',
+        help_text='Número de expediente que el sistema asigna al registrar al paciente.',
+    )
     dpi = models.CharField(max_length=20, unique=True, verbose_name='DPI')
     carnet_igss = models.CharField(
         max_length=20, unique=True, null=True, blank=True,
@@ -71,6 +76,23 @@ class Paciente(models.Model):
 
     def __str__(self):
         return f'{self.nombre} {self.apellido} ({self.dpi})'
+
+    def save(self, *args, **kwargs):
+        """Al registrar un paciente nuevo, el sistema le asigna el siguiente
+        número de expediente correlativo (000001, 000002, ...)."""
+        if self.expediente:
+            return super().save(*args, **kwargs)
+        with transaction.atomic():
+            ultimo = (
+                Paciente.objects.select_for_update()
+                .exclude(expediente__isnull=True).exclude(expediente='')
+                .order_by('-expediente')
+                .values_list('expediente', flat=True)
+                .first()
+            )
+            siguiente = (int(ultimo) + 1) if (ultimo and ultimo.isdigit()) else 1
+            self.expediente = f'{siguiente:06d}'
+            return super().save(*args, **kwargs)
 
     def campos_pendientes(self):
         """Nombres legibles de los campos opcionales que todavía no se

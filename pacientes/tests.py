@@ -255,6 +255,21 @@ class PacienteModelTests(TestCase):
         paciente = crear_paciente(nombre='Juana', apellido='Pérez', dpi='1111222233330')
         self.assertEqual(str(paciente), 'Juana Pérez (1111222233330)')
 
+    def test_el_sistema_asigna_un_expediente_correlativo(self):
+        p1 = crear_paciente(dpi='1000000000001')
+        p2 = crear_paciente(dpi='1000000000002')
+        self.assertTrue(p1.expediente)
+        self.assertEqual(len(p1.expediente), 6)
+        self.assertEqual(int(p2.expediente), int(p1.expediente) + 1)
+
+    def test_no_reasigna_el_expediente_al_editar(self):
+        paciente = crear_paciente(dpi='1000000000003')
+        original = paciente.expediente
+        paciente.telefono = '55550000'
+        paciente.save()
+        paciente.refresh_from_db()
+        self.assertEqual(paciente.expediente, original)
+
 
 class CitaModelTests(TestCase):
 
@@ -653,6 +668,28 @@ class RegistrarTicketEmergenciaViewTests(TestCase):
 
         self.assertEqual(respuesta.status_code, 302)
         self.assertEqual(Ticket.objects.count(), 0)
+
+
+class HistorialPacientesBusquedaTests(TestCase):
+    """La lista "Estudios realizados" también se puede buscar por el N° de
+    expediente que el sistema le asigna a cada paciente."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_historial', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(self.recepcion)
+        self.paciente = crear_paciente(dpi='4004004004001', nombre='Elena', apellido='Ramírez')
+        crear_cita(self.recepcion, paciente=self.paciente, estado=Cita.ESTADO_PROCESADA)
+        self.otro = crear_paciente(dpi='4004004004002', nombre='Otro', apellido='Paciente')
+        crear_cita(self.recepcion, paciente=self.otro, estado=Cita.ESTADO_PROCESADA)
+
+    def test_busca_por_numero_de_expediente(self):
+        respuesta = self.client.get(reverse('historial_pacientes'), {'q': self.paciente.expediente})
+        encontrados = [p.id for p in respuesta.context['pacientes']]
+        self.assertEqual(encontrados, [self.paciente.id])
+
+    def test_la_lista_muestra_el_expediente(self):
+        respuesta = self.client.get(reverse('historial_pacientes'))
+        self.assertContains(respuesta, f'Expediente: {self.paciente.expediente}')
 
 
 class BuscarPacientePorDpiViewTests(TestCase):
@@ -1470,6 +1507,28 @@ class CajaTests(TestCase):
         respuesta = self.client.get(reverse('boleta_pago_pdf', args=[cobro.id]))
         self.assertEqual(respuesta.status_code, 200)
         self.assertEqual(respuesta['Content-Type'], 'application/pdf')
+        self.assertTrue(respuesta.content.startswith(b'%PDF'))
+
+    def test_boleta_no_muestra_carne_igss_en_estudios_privados(self):
+        from pacientes.views import datos_paciente_boleta
+
+        paciente = crear_paciente(dpi='7778889990001', carnet_igss='IGSS-123456')
+        cita_privada = crear_cita(
+            self.recepcion, paciente=paciente, convenio=Cita.CONVENIO_PRIVADO,
+        )
+        etiquetas = [e for e, _ in datos_paciente_boleta(cita_privada)]
+        self.assertNotIn('Carné IGSS:', etiquetas)
+
+    def test_boleta_muestra_carne_igss_en_estudios_coex_y_emergencia(self):
+        from pacientes.views import datos_paciente_boleta
+
+        for i, convenio in enumerate((Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS)):
+            paciente = crear_paciente(
+                dpi=f'88800000000{i}', carnet_igss=f'IGSS-77{i}',
+            )
+            cita = crear_cita(self.recepcion, paciente=paciente, convenio=convenio)
+            filas = dict(datos_paciente_boleta(cita))
+            self.assertEqual(filas['Carné IGSS:'], f'IGSS-77{i}')
 
     def test_cobro_pendiente_bloquea_el_envio_de_resultados(self):
         paciente = crear_paciente(dpi='1112223334446', correo='paciente@example.com')
@@ -1482,6 +1541,28 @@ class CajaTests(TestCase):
 
         orden.refresh_from_db()
         self.assertIsNone(orden.resultados_enviados_en)
+
+    def test_historial_paciente_desactiva_el_boton_de_enviar_si_hay_cobro_pendiente(self):
+        paciente = crear_paciente(dpi='1112223334448', correo='p3@example.com')
+        cita = crear_cita(self.recepcion, paciente=paciente, estado=Cita.ESTADO_PROCESADA)
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        cobro = Cobro.objects.create(cita=cita)
+        self.client.force_login(self.recepcion)
+
+        html = self.client.get(
+            reverse('historial_paciente', args=[paciente.id])
+        ).content.decode('utf-8')
+        self.assertIn('Cobro pendiente', html)
+        self.assertIn('tiene un cobro pendiente', html)
+        self.assertIn('<button type="button" class="btn btn-primary btn-sm" disabled', html)
+        self.assertNotIn(f"{reverse('enviar_estudio', args=[cita.id])}", html)
+
+        cobro.marcar_pagado(self.caja)
+        html = self.client.get(
+            reverse('historial_paciente', args=[paciente.id])
+        ).content.decode('utf-8')
+        self.assertIn(f"{reverse('enviar_estudio', args=[cita.id])}", html)
+        self.assertIn('>Pagado</span>', html)
 
     def test_sin_cobro_no_bloquea_el_envio(self):
         paciente = crear_paciente(dpi='1112223334447', correo='paciente2@example.com')

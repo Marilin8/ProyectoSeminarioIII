@@ -4,7 +4,9 @@
             <div class="card-body" style="display: flex; justify-content: space-between; align-items: center;">
                 <div>
                     <div class="card-title">{{ paciente.nombre }} {{ paciente.apellido }}</div>
-                    <div class="text-sm text-muted">DPI: {{ paciente.dpi }}</div>
+                    <div class="text-sm text-muted">
+                        Expediente: {{ paciente.expediente|default:'—' }} &nbsp;·&nbsp; DPI: {{ paciente.dpi }}
+                    </div>
                     {% if paciente.datos_pendientes %}
                         <div class="estado estado-pendiente" style="margin-top: 0.35rem;">
                             Falta: {{ paciente.datos_pendientes|join:", " }}
