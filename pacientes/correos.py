@@ -9,7 +9,11 @@ from django.urls import reverse
 logger = logging.getLogger(__name__)
 
 
+<<<<<<< HEAD
 def enviar_resultados(orden):
+=======
+def enviar_resultados(orden, request=None):
+>>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
     """Envía al correo del paciente el informe PDF adjunto + un link al visor
     web del estudio (donde ve las imágenes que dejó seleccionadas la
     radióloga). El visor pide los últimos 4 dígitos del DPI para abrirse.
@@ -26,8 +30,26 @@ def enviar_resultados(orden):
 
     token = orden.asegurar_token_publico()
     ac = base64.urlsafe_b64encode(str(token).encode('ascii')).decode('ascii').rstrip('=')
+<<<<<<< HEAD
     link_visor = (
         settings.VISOR_BASE_URL + reverse('visor_estudio')
+=======
+    
+    # Construcción dinámica de la URL del visor
+    if request:
+        # Usamos la URI absoluta de la petición actual (está en el puerto 8000)
+        base_url = request.build_absolute_uri('/')
+    else:
+        # Fallback a la configuración de settings si no hay request
+        base_url = settings.VISOR_BASE_URL if settings.VISOR_BASE_URL else 'http://127.0.0.1:8000/'
+    
+    # Aseguramos que base_url termine en / para evitar errores de concatenación
+    if not base_url.endswith('/'):
+        base_url += '/'
+
+    link_visor = (
+        base_url + reverse('visor_estudio')
+>>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
         + '?' + urlencode({'studyId': orden.id, 'tab': 'images', 'ac': ac})
     )
 
@@ -66,4 +88,8 @@ Clínica de Imágenes
         logger.exception('No se pudo enviar el correo de resultados de la orden #%s', orden.id)
         return False
 
+<<<<<<< HEAD
     return True
+=======
+    return True
+>>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])

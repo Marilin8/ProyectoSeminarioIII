@@ -49,7 +49,11 @@ urlpatterns = [
         name='ingresar_correo_envio',
     ),
     path(
+<<<<<<< HEAD
         'pacientes/historial/estudio/<int:cita_id>/cobrar/',
+=======
+        'pagos/<int:cobro_id>/cobrar/',
+>>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
         views.marcar_cobrado,
         name='marcar_cobrado',
     ),

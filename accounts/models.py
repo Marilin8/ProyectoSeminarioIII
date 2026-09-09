@@ -243,6 +243,14 @@ class PagoPlanilla(models.Model):
         default=False,
         help_text='El OCR del comprobante confirmó el monto (y el número de boleta, si se indicó).',
     )
+<<<<<<< HEAD
+=======
+    es_adelanto = models.BooleanField(
+        default=False,
+        verbose_name='adelanto de sueldo',
+        help_text='Si se marca, permite procesar el pago aunque el mes no haya terminado o iniciado.',
+    )
+>>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
     verificacion_nota = models.CharField(max_length=255, blank=True)
     notas = models.CharField(max_length=255, blank=True)
     registrado_por = models.ForeignKey(

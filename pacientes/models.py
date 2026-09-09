@@ -250,8 +250,13 @@ class Cita(models.Model):
     ESTADO_RECHAZADA = 'rechazada'
 
     ESTADO_CHOICES = [
+<<<<<<< HEAD
         (ESTADO_PENDIENTE, 'Pendiente de confirmación'),
         (ESTADO_AGENDADA, 'Agendada'),
+=======
+        (ESTADO_PENDIENTE, 'Pendiente de confirmar'),
+        (ESTADO_AGENDADA, 'Confirmada'),
+>>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
         (ESTADO_EN_ESPERA, 'En espera'),
         (ESTADO_EN_PROCESO, 'En proceso'),
         (ESTADO_PROCESADA, 'Procesada'),

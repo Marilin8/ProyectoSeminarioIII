@@ -527,7 +527,12 @@ def _enviar_estudio_y_registrar(request, cita, orden):
         )
         return
 
+<<<<<<< HEAD
     if not enviar_resultados(orden):
+=======
+    # Pasamos el objeto 'request' a enviar_resultados para construir la URL dinámica
+    if not enviar_resultados(orden, request=request):
+>>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
         messages.error(
             request,
             'No se pudo enviar el correo. El sistema todavía no tiene configurado el '
@@ -557,6 +562,7 @@ def enviar_estudio(request, cita_id):
     dispara la recepcionista a mano desde "Estudios realizados", una vez
     que quiere confirmar el envío (botón "Enviar estudio"). Si el paciente
     todavía no tiene correo registrado, primero la manda a completarlo."""
+<<<<<<< HEAD
     cita = get_object_or_404(Cita, id=cita_id, estado=Cita.ESTADO_PROCESADA)
     orden = get_object_or_404(OrdenTrabajo, cita=cita)
 
@@ -564,6 +570,41 @@ def enviar_estudio(request, cita_id):
         return redirect('ingresar_correo_envio', cita_id=cita.id)
 
     _enviar_estudio_y_registrar(request, cita, orden)
+=======
+    # 1. Obtener primero la Cita
+    cita = get_object_or_404(Cita, id=cita_id)
+
+    # 2. Validar estado de la cita (debe estar procesada para enviar resultados)
+    if cita.estado != Cita.ESTADO_PROCESADA:
+        messages.error(request, 'El estudio debe estar en estado "Procesada" para poder enviar los resultados.')
+        return redirect('historial_paciente', paciente_id=cita.paciente_id)
+
+    # 3. Recuperar OrdenTrabajo mediante la relación directa
+    # Si no existe, la creamos automáticamente para evitar el 404
+    orden = getattr(cita, 'orden_trabajo', None)
+    if not orden:
+        orden = OrdenTrabajo.objects.create(
+            cita=cita,
+            motivo='Orden generada automáticamente al momento del envío.',
+            creada_por=request.user
+        )
+        messages.info(request, 'Se ha generado una orden de trabajo automática para este estudio.')
+
+    # 4. Validación estricta: solo se pueden enviar resultados si el estudio está PAGADO
+    cobro = getattr(cita, 'cobro', None)
+    if not cobro or cobro.estado != Cobro.ESTADO_PAGADO:
+        messages.error(request, 'No se pueden enviar los resultados porque el estudio aún está PENDIENTE de pago.')
+        return redirect('pagos_pendientes')
+
+    # 5. Verificar correo del paciente
+    if not cita.paciente.correo:
+        return redirect('ingresar_correo_envio', cita_id=cita.id)
+
+    # 6. Intentar envío y registro
+    # _enviar_estudio_y_registrar ya maneja sus propios mensajes de error/éxito
+    _enviar_estudio_y_registrar(request, cita, orden)
+    
+>>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
     return redirect('historial_paciente', paciente_id=cita.paciente_id)
 
 
@@ -705,6 +746,7 @@ def ingresar_correo_envio(request, cita_id):
 @login_required
 @user_passes_test(es_caja)
 @require_POST
+<<<<<<< HEAD
 def marcar_cobrado(request, cita_id):
     """Registra la boleta desde que existe una orden de trabajo."""
     cita = get_object_or_404(
@@ -724,6 +766,34 @@ def marcar_cobrado(request, cita_id):
     cobro.forma_pago = form.cleaned_data['forma_pago']
     cobro.numero_boleta = form.cleaned_data['numero_boleta']
     cobro.marcar_pagado(request.user, notas=form.cleaned_data['notas'])
+=======
+def marcar_cobrado(request, cobro_id):
+    """Registra la boleta desde la pantalla de pagos."""
+    cobro = get_object_or_404(
+        Cobro.objects.select_related('cita'),
+        id=cobro_id,
+    )
+    cita = cobro.cita
+
+    if request.method != 'POST':
+        return redirect('pagos_pendientes')
+
+    # Validación manual de forma_pago (obligatorio)
+    forma_pago = request.POST.get('forma_pago', '').strip()
+    if not forma_pago:
+        messages.error(request, 'Debe seleccionar una forma de pago obligatoriamente.')
+        return redirect('pagos_pendientes')
+
+    form = RegistrarPagoEstudioForm(request.POST)
+    # No validamos el formulario completo para permitir boleta vacía, 
+    # pero usamos los datos si el form es válido para mantener consistencia
+    numero_boleta = request.POST.get('numero_boleta', '').strip()
+    notas = request.POST.get('notas', '').strip()
+
+    cobro.forma_pago = forma_pago
+    cobro.numero_boleta = numero_boleta
+    cobro.marcar_pagado(request.user, notas=notas)
+>>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
     cobro.save(update_fields=['forma_pago', 'numero_boleta'])
 
     Bitacora.registrar(
@@ -1002,7 +1072,12 @@ def agendar_cita(request, convenio):
         mismas, otras = _estado_franja(
             cd['fecha'], cd['hora'], cd['tipo_estudio'].duracion_minutos, convenio,
         )
+<<<<<<< HEAD
         cupo_lleno = mismas >= CUPO_PARALELO_POR_SERVICIO
+=======
+        limite_cupo = 2 if cd['hora'].hour == 7 else CUPO_PARALELO_POR_SERVICIO
+        cupo_lleno = mismas >= limite_cupo
+>>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
         hay_conflicto = cupo_lleno or bool(otras)
 
         if hay_conflicto and not cd['es_emergencia']:
@@ -1035,6 +1110,30 @@ def agendar_cita(request, convenio):
                     return redirect(calendario_url)
 
             paciente = obtener_o_actualizar_paciente(cd)
+<<<<<<< HEAD
+=======
+            if Cita.objects.filter(
+                paciente=paciente,
+                tipo_estudio=cd['tipo_estudio'],
+                fecha=cd['fecha'],
+                hora=cd['hora'],
+            ).exists():
+                form.add_error(
+                    None,
+                    f'El paciente ya tiene solicitada una cita para el estudio {cd["tipo_estudio"]} en este horario.'
+                )
+                return render(request, 'pacientes/agendar_cita.html', {
+                    'form': form,
+                    'convenio': convenio,
+                    'convenio_nombre': convenio_nombre,
+                    'calendario_url': calendario_url,
+                    'fecha_valor': fecha,
+                    'hora_valor': hora,
+                    'requiere_carnet_igss': convenio in (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS),
+                    'hay_conflicto': hay_conflicto,
+                })
+
+>>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
             cita = Cita.objects.create(
                 paciente=paciente,
                 tipo_estudio=cd['tipo_estudio'],
@@ -1124,7 +1223,12 @@ def agendar_cita_privado(request):
                 cd['fecha'], cd['hora'], cd['tipo_estudio'].duracion_minutos,
                 Cita.CONVENIO_PRIVADO,
             )
+<<<<<<< HEAD
             if mismas >= CUPO_PARALELO_POR_SERVICIO:
+=======
+            limite_cupo = 2 if cd['hora'].hour == 7 else CUPO_PARALELO_POR_SERVICIO
+            if mismas >= limite_cupo:
+>>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
                 messages.error(
                     request,
                     f'El servicio Privado ya tiene sus {CUPO_PARALELO_POR_SERVICIO} cupos '
@@ -1137,6 +1241,30 @@ def agendar_cita_privado(request):
             )
 
             paciente = obtener_o_actualizar_paciente(cd)
+<<<<<<< HEAD
+=======
+            if Cita.objects.filter(
+                paciente=paciente,
+                tipo_estudio=cd['tipo_estudio'],
+                fecha=cd['fecha'],
+                hora=cd['hora'],
+            ).exists():
+                form.add_error(
+                    None,
+                    f'El paciente ya tiene solicitada una cita para el estudio {cd["tipo_estudio"]} en este horario.'
+                )
+                return render(request, 'pacientes/agendar_cita.html', {
+                    'form': form,
+                    'convenio': convenio,
+                    'convenio_nombre': convenio_nombre,
+                    'calendario_url': calendario_url,
+                    'fecha_valor': fecha,
+                    'hora_valor': hora,
+                    'requiere_carnet_igss': convenio in (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS),
+                    'hay_conflicto': hay_conflicto,
+                })
+
+>>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
             cita = Cita.objects.create(
                 paciente=paciente,
                 tipo_estudio=cd['tipo_estudio'],

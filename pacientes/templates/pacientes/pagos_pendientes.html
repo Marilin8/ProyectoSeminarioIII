@@ -33,7 +33,11 @@
     {% else %}<span class="badge badge-warning">Pendiente de pago</span>{% endif %}
   </div>
   {% if cobro.estado != 'pagado' %}
+<<<<<<< HEAD
   <form method="post" action="{% url 'marcar_cobrado' cita_id=cobro.cita_id %}" class="flex gap-1" style="align-items:flex-end;">
+=======
+  <form method="post" action="{% url 'marcar_cobrado' cobro_id=cobro.id %}" class="flex gap-1" style="align-items:flex-end;" onsubmit="return confirm('¿Está seguro de registrar este pago?');">
+>>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
     {% csrf_token %}
     <select name="forma_pago" required><option value="">Forma de pago</option><option value="efectivo">Efectivo</option><option value="tarjeta">Tarjeta</option><option value="transferencia">Transferencia</option></select>
     <input name="numero_boleta" placeholder="Boleta / referencia">
