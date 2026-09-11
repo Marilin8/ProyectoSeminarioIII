@@ -40,17 +40,6 @@
             padding: 0.3rem 0.4rem;
             font-size: 0.75rem;
         }
-        .filtro-busqueda {
-            display: flex;
-            gap: 0.4rem;
-            align-items: center;
-            margin: 0.6rem 0 1rem;
-        }
-        .filtro-busqueda input[type="search"] {
-            flex: 1;
-            max-width: 26rem;
-            padding: 0.4rem 0.6rem;
-        }
     </style>
 {% endblock %}
 
@@ -74,29 +63,6 @@
             <svg width="14" height="14"><use href="#i-arrow-right"/></svg>
         </a>
     </div>
-
-    <form method="get" class="filtro-busqueda">
-        <input type="hidden" name="fecha" value="{{ fecha|date:'Y-m-d' }}">
-        <input
-            type="search" name="q" value="{{ busqueda }}"
-            placeholder="Buscar por nombre o DPI del paciente…"
-            aria-label="Buscar paciente"
-        >
-        <select name="estado" aria-label="Filtrar por estado">
-            <option value="">Todos los estados</option>
-            {% for valor, etiqueta in estados_cita %}
-                <option value="{{ valor }}" {% if filtro_estado == valor %}selected{% endif %}>{{ etiqueta }}</option>
-            {% endfor %}
-        </select>
-        <select name="tipo_estudio" aria-label="Filtrar por tipo de estudio">
-            <option value="">Todos los estudios</option>
-            {% for estudio in tipos_estudio %}
-                <option value="{{ estudio.id }}" {% if filtro_tipo_estudio == estudio.id|stringformat:'s' %}selected{% endif %}>{{ estudio.nombre }}</option>
-            {% endfor %}
-        </select>
-        <button type="submit" class="btn btn-primary btn-sm">Buscar</button>
-        {% if busqueda or filtro_estado or filtro_tipo_estudio %}<a class="btn btn-outline btn-sm" href="?fecha={{ fecha|date:'Y-m-d' }}">Limpiar</a>{% endif %}
-    </form>
 
     {% if citas %}
         <div class="card">
@@ -151,12 +117,7 @@
                                     {% endif %}
                                 {% elif cita.estado == 'agendada' and cita.hora_llegada %}
                                     <span class="llego-a">Llegó a las {{ cita.hora_llegada|time:'H:i' }}</span>
-                                    <div class="acciones">
-                                        <a class="btn btn-primary btn-sm" href="{% url generar_orden_url_name cita_id=cita.id %}">
-                                            <svg width="14" height="14"><use href="#i-file-medical"/></svg>
-                                            Procesar estudio
-                                        </a>
-                                    </div>
+                                    <p class="ayuda" style="margin:0.25rem 0 0;">El estudio se procesa desde la <a href="{% url 'pantalla_turnos' %}">Pantalla de turnos</a>.</p>
                                 {% elif cita.estado == 'en_proceso' %}
                                     <span class="llego-a">Orden enviada al técnico</span>
                                 {% elif cita.estado == 'ausente' %}
@@ -178,6 +139,6 @@
             </table>
         </div>
     {% else %}
-        <p class="vacio">{% if busqueda %}No hay citas que coincidan con «{{ busqueda }}» en esta fecha.{% else %}No hay citas agendadas este día.{% endif %}</p>
+        <p class="vacio">No hay citas agendadas este día.</p>
     {% endif %}
 {% endblock %}

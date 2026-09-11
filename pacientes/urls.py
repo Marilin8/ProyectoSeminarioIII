@@ -31,8 +31,6 @@ urlpatterns = [
     path('estudios/radiologos-por-estudio/', views.radiologos_por_estudio, name='radiologos_por_estudio'),
     path('pacientes/historial/', views.historial_pacientes, name='historial_pacientes'),
     path('pacientes/historial/<int:paciente_id>/', views.historial_paciente, name='historial_paciente'),
-    path('pagos/', views.pagos_pendientes, name='pagos_pendientes'),
-    path('pagos/<int:cobro_id>/boleta/', views.boleta_pago_pdf, name='boleta_pago_pdf'),
     path(
         'pacientes/historial/estudio/<int:cita_id>/',
         views.ver_estudio_historial,
@@ -49,14 +47,12 @@ urlpatterns = [
         name='ingresar_correo_envio',
     ),
     path(
-<<<<<<< HEAD
         'pacientes/historial/estudio/<int:cita_id>/cobrar/',
-=======
-        'pagos/<int:cobro_id>/cobrar/',
->>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
         views.marcar_cobrado,
         name='marcar_cobrado',
     ),
+    path('pagos/', views.pagos_pendientes, name='pagos_pendientes'),
+    path('pagos/<int:cobro_id>/boleta/', views.boleta_pago_pdf, name='boleta_pago_pdf'),
     path(
         'citas/calendario/coex/',
         views.seleccionar_horario,
@@ -186,8 +182,11 @@ urlpatterns = [
         name='procesar_ticket_emergencia',
     ),
     path('turnos/', views.pantalla_turnos, name='pantalla_turnos'),
+    path('sala-espera/', views.pantalla_sala_espera, name='pantalla_sala_espera'),
+    path('sala-espera/estado/', views.estado_sala_espera, name='estado_sala_espera'),
     path('turnos/<int:ticket_id>/siguiente/', views.avanzar_turno, name='avanzar_turno'),
-    path('turnos/<int:ticket_id>/reordenar/<str:direccion>/', views.reordenar_turno, name='reordenar_turno'),
+    path('turnos/<int:ticket_id>/mover/', views.mover_turno, name='mover_turno'),
+    path('turnos/<int:ticket_id>/procesar/', views.procesar_turno, name='procesar_turno'),
     path('notificaciones/pendientes/', views.notificaciones_pendientes, name='notificaciones_pendientes'),
     path(
         'notificaciones/<int:notificacion_id>/marcar-leida/',

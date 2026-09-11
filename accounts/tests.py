@@ -212,22 +212,26 @@ class PlanillaTests(TestCase):
         )
         return cita
 
-    def test_planilla_suma_salario_base_y_comisiones_del_mes(self):
+    def _comprobante(self, nombre='boleta.jpg'):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        return SimpleUploadedFile(nombre, b'\xff\xd8\xff\xe0datos', content_type='image/jpeg')
+
+    def test_planilla_muestra_salario_y_comisiones_pendientes(self):
         from decimal import Decimal
 
         self._cita_procesada()
         self.client.force_login(self.admin)
 
-        respuesta = self.client.get(reverse('planilla'), {'mes': '2026-08'})
+        respuesta = self.client.get(reverse('planilla'), {'modo': 'mes', 'mes': '2026-08'})
 
         self.assertEqual(respuesta.status_code, 200)
         filas = {f['usuario'].username: f for f in respuesta.context['filas']}
+        self.assertEqual(filas['tec_planilla']['salario_base'], Decimal('3000'))
         self.assertEqual(filas['tec_planilla']['comisiones'], Decimal('50.00'))
-        self.assertEqual(filas['tec_planilla']['total'], Decimal('3050.00'))
         self.assertEqual(filas['rad_planilla']['comisiones'], Decimal('100.00'))
-        self.assertEqual(filas['rad_planilla']['total'], Decimal('6100.00'))
 
-    def test_detalle_empleado_lista_cada_comision_y_agrupa(self):
+    def test_detalle_empleado_marca_lo_pendiente(self):
         import datetime
         from decimal import Decimal
 
@@ -236,179 +240,174 @@ class PlanillaTests(TestCase):
         self.client.force_login(self.admin)
 
         respuesta = self.client.get(
-            reverse('planilla_empleado', args=[self.tecnico.id]), {'mes': '2026-08'},
+            reverse('planilla_empleado', args=[self.tecnico.id]), {'modo': 'mes', 'mes': '2026-08'},
         )
 
         self.assertEqual(respuesta.status_code, 200)
         self.assertEqual(len(respuesta.context['lineas']), 2)
-        self.assertEqual(respuesta.context['total_comisiones'], Decimal('100.00'))
-        self.assertEqual(len(respuesta.context['resumen']), 1)
-        grupo = respuesta.context['resumen'][0]
-        self.assertEqual(grupo['cantidad'], 2)
-        self.assertEqual(grupo['pct'], Decimal('5.00'))
-        horas = [hora.strftime('%H:%M') for _, hora in grupo['momentos']]
-        self.assertEqual(horas, ['08:00', '10:00'])
+        self.assertEqual(respuesta.context['total_pendiente'], Decimal('100.00'))
+        self.assertEqual(respuesta.context['total_pagado'], Decimal('0.00'))
 
-    def test_cita_fuera_del_periodo_no_cuenta(self):
+    def test_periodo_semana_y_quincena(self):
         import datetime
         from decimal import Decimal
 
-        self.fecha = datetime.date(2026, 7, 15)
+        self.fecha = datetime.date(2026, 8, 4)   # martes de la 1ª quincena
         self._cita_procesada()
         self.client.force_login(self.admin)
 
-        respuesta = self.client.get(reverse('planilla'), {'mes': '2026-08'})
-
-        filas = {f['usuario'].username: f for f in respuesta.context['filas']}
-        self.assertEqual(filas['tec_planilla']['comisiones'], Decimal('0.00'))
-
-    def test_rango_de_fechas_personalizado(self):
-        import datetime
-        from decimal import Decimal
-
-        self.fecha = datetime.date(2026, 8, 10)
-        self._cita_procesada()
-        self.fecha = datetime.date(2026, 8, 20)
-        self._cita_procesada()
-        self.client.force_login(self.admin)
-
-        respuesta = self.client.get(
-            reverse('planilla'), {'desde': '2026-08-01', 'hasta': '2026-08-15'},
-        )
-
-        filas = {f['usuario'].username: f for f in respuesta.context['filas']}
+        r = self.client.get(reverse('planilla'), {'modo': 'semana', 'semana': '2026-08-05'})
+        filas = {f['usuario'].username: f for f in r.context['filas']}
         self.assertEqual(filas['tec_planilla']['comisiones'], Decimal('50.00'))
+        self.assertEqual(r.context['periodo']['desde'], datetime.date(2026, 8, 3))
+
+        r = self.client.get(reverse('planilla'), {'modo': 'quincena', 'quincena': '2026-08', 'q': '2'})
+        filas = {f['usuario'].username: f for f in r.context['filas']}
+        self.assertEqual(filas['tec_planilla']['comisiones'], Decimal('0.00'))  # día 4 no cae en 16–31
 
     def test_solo_el_administrador_ve_la_planilla(self):
         self.client.force_login(self.tecnico)
         respuesta = self.client.get(reverse('planilla'))
         self.assertNotEqual(respuesta.status_code, 200)
 
-    def _comprobante(self, nombre='boleta.jpg'):
-        from django.core.files.uploadedfile import SimpleUploadedFile
-
-        return SimpleUploadedFile(nombre, b'\xff\xd8\xff\xe0datos', content_type='image/jpeg')
-
-    def test_registrar_pago_guarda_comprobante_y_montos(self):
+    def test_pago_salario_registra_el_monto_del_salario_base(self):
         from decimal import Decimal
 
-        from accounts.models import Bitacora, PagoPlanilla
+        from accounts.models import Bitacora, PagoSalario
 
-        self._cita_procesada()
         self.client.force_login(self.admin)
-
         respuesta = self.client.post(
-            reverse('registrar_pago_planilla', args=[self.tecnico.id]) + '?mes=2026-08',
-            {'comprobante': self._comprobante(), 'notas': 'transferencia BI 123'},
+            reverse('registrar_pago_salario', args=[self.tecnico.id]) + '?modo=mes&mes=2026-08',
+            {'comprobante': self._comprobante(), 'notas': 'transferencia'},
         )
 
-        self.assertRedirects(respuesta, reverse('planilla') + '?mes=2026-08')
-        pago = PagoPlanilla.objects.get(usuario=self.tecnico, anio=2026, mes=8)
-        self.assertEqual(pago.total, Decimal('3050.00'))
-        self.assertEqual(pago.comisiones, Decimal('50.00'))
-        self.assertEqual(pago.registrado_por, self.admin)
+        self.assertRedirects(respuesta, reverse('planilla') + '?modo=mes&mes=2026-08')
+        pago = PagoSalario.objects.get(usuario=self.tecnico, anio=2026, mes=8)
+        self.assertEqual(pago.monto, Decimal('3000'))
         self.assertTrue(pago.comprobante.name)
         self.assertTrue(
             Bitacora.objects.filter(accion=Bitacora.ACCION_REGISTRAR_PAGO_PLANILLA).exists()
         )
         pago.comprobante.delete(save=False)
 
+    def test_pago_comision_crea_lineas_y_deja_de_estar_pendiente(self):
+        from decimal import Decimal
+
+        from accounts.models import PagoComision, PagoComisionLinea
+
+        self._cita_procesada()   # técnico gana Q50
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.post(
+            reverse('registrar_pago_comision', args=[self.tecnico.id]) + '?modo=mes&mes=2026-08',
+            {'comprobante': self._comprobante(), 'notas': ''},
+        )
+
+        self.assertRedirects(respuesta, reverse('planilla') + '?modo=mes&mes=2026-08')
+        pago = PagoComision.objects.get(usuario=self.tecnico)
+        self.assertEqual(pago.monto, Decimal('50.00'))
+        self.assertEqual(PagoComisionLinea.objects.filter(pago=pago).count(), 1)
+
+        r = self.client.get(reverse('planilla'), {'modo': 'mes', 'mes': '2026-08'})
+        filas = {f['usuario'].username: f for f in r.context['filas']}
+        self.assertEqual(filas['tec_planilla']['comisiones'], Decimal('0.00'))
+        pago.comprobante.delete(save=False)
+
+    def test_comision_ya_pagada_no_se_vuelve_a_cobrar_en_otro_rango(self):
+        import datetime
+        from decimal import Decimal
+
+        from accounts.models import PagoComision
+
+        self.fecha = datetime.date(2026, 8, 10)
+        self._cita_procesada(hora=datetime.time(8, 0))   # comisión del día 10, mañana
+        self.client.force_login(self.admin)
+
+        # Pago del 1 al 12.
+        self.client.post(
+            reverse('registrar_pago_comision', args=[self.tecnico.id])
+            + '?modo=rango&desde=2026-08-01&hasta=2026-08-12',
+            {'comprobante': self._comprobante(), 'notas': ''},
+        )
+        # Más tarde ese mismo día 10 el técnico hace otro estudio.
+        self._cita_procesada(hora=datetime.time(15, 0))
+
+        # Rango del 10 al 20: solo debe contar la comisión nueva del día 10.
+        r = self.client.get(
+            reverse('planilla'),
+            {'modo': 'rango', 'desde': '2026-08-10', 'hasta': '2026-08-20'},
+        )
+        filas = {f['usuario'].username: f for f in r.context['filas']}
+        self.assertEqual(filas['tec_planilla']['comisiones'], Decimal('50.00'))
+        for p in PagoComision.objects.all():
+            p.comprobante.delete(save=False)
+
     def test_pago_rechaza_archivo_no_permitido(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
 
-        from accounts.models import PagoPlanilla
+        from accounts.models import PagoSalario
 
         self.client.force_login(self.admin)
         respuesta = self.client.post(
-            reverse('registrar_pago_planilla', args=[self.tecnico.id]) + '?mes=2026-08',
+            reverse('registrar_pago_salario', args=[self.tecnico.id]) + '?modo=mes&mes=2026-08',
             {'comprobante': SimpleUploadedFile('pago.txt', b'x'), 'notas': ''},
         )
         self.assertEqual(respuesta.status_code, 200)
-        self.assertFalse(PagoPlanilla.objects.exists())
-
-    def test_planilla_marca_empleado_ya_pagado(self):
-        self._cita_procesada()
-        self.client.force_login(self.admin)
-        self.client.post(
-            reverse('registrar_pago_planilla', args=[self.tecnico.id]) + '?mes=2026-08',
-            {'comprobante': self._comprobante(), 'notas': ''},
-        )
-
-        respuesta = self.client.get(reverse('planilla'), {'mes': '2026-08'})
-
-        filas = {f['usuario'].username: f for f in respuesta.context['filas']}
-        self.assertIsNotNone(filas['tec_planilla']['pago'])
-        self.assertIsNone(filas['rad_planilla'].get('pago'))
-        filas['tec_planilla']['pago'].comprobante.delete(save=False)
-
-    def test_no_se_puede_pagar_en_modo_rango(self):
-        from accounts.models import PagoPlanilla
-
-        self.client.force_login(self.admin)
-        respuesta = self.client.post(
-            reverse('registrar_pago_planilla', args=[self.tecnico.id])
-            + '?desde=2026-08-01&hasta=2026-08-20',
-            {'comprobante': self._comprobante(), 'notas': ''},
-        )
-        self.assertEqual(respuesta.status_code, 302)
-        self.assertFalse(PagoPlanilla.objects.exists())
+        self.assertFalse(PagoSalario.objects.exists())
 
     def test_bloquea_pago_si_el_comprobante_no_coincide(self):
         from accounts import verificacion_boleta
-        from accounts.models import PagoPlanilla
+        from accounts.models import PagoSalario
 
-        self._cita_procesada()  # total del técnico = Q3050.00
         self.client.force_login(self.admin)
-
-        # OCR simulado: la boleta dice otro monto y otro número.
         original = verificacion_boleta._leer_texto
         verificacion_boleta._leer_texto = lambda *a, **k: 'Deposito Q1,000.00\nBoleta No. 42'
         try:
             respuesta = self.client.post(
-                reverse('registrar_pago_planilla', args=[self.tecnico.id]) + '?mes=2026-08',
+                reverse('registrar_pago_salario', args=[self.tecnico.id]) + '?modo=mes&mes=2026-08',
                 {'comprobante': self._comprobante(), 'numero_boleta': '999', 'notas': ''},
             )
             self.assertEqual(respuesta.status_code, 200)
-            self.assertFalse(PagoPlanilla.objects.exists())
+            self.assertFalse(PagoSalario.objects.exists())
 
-            # Con la casilla de confirmación marcada, se registra pero sin verificar.
             respuesta = self.client.post(
-                reverse('registrar_pago_planilla', args=[self.tecnico.id]) + '?mes=2026-08',
+                reverse('registrar_pago_salario', args=[self.tecnico.id]) + '?modo=mes&mes=2026-08',
                 {
                     'comprobante': self._comprobante(), 'numero_boleta': '999',
                     'notas': '', 'confirmar_pese_a_diferencia': 'on',
                 },
             )
-            self.assertRedirects(respuesta, reverse('planilla') + '?mes=2026-08')
-            pago = PagoPlanilla.objects.get()
+            self.assertRedirects(respuesta, reverse('planilla') + '?modo=mes&mes=2026-08')
+            pago = PagoSalario.objects.get()
             self.assertFalse(pago.verificado)
             pago.comprobante.delete(save=False)
         finally:
             verificacion_boleta._leer_texto = original
 
-    def test_pago_verificado_cuando_el_comprobante_coincide(self):
-        from decimal import Decimal
-
+    def test_historial_pagos_lista_salario_y_comisiones(self):
         from accounts import verificacion_boleta
-        from accounts.models import PagoPlanilla
 
         self._cita_procesada()
         self.client.force_login(self.admin)
-
         original = verificacion_boleta._leer_texto
-        verificacion_boleta._leer_texto = lambda *a, **k: 'Transferencia\nMonto Q3,050.00\nRef 12345'
+        verificacion_boleta._leer_texto = lambda *a, **k: None  # no verificable, deja pasar
         try:
-            respuesta = self.client.post(
-                reverse('registrar_pago_planilla', args=[self.tecnico.id]) + '?mes=2026-08',
-                {'comprobante': self._comprobante(), 'numero_boleta': '12345', 'notas': ''},
+            self.client.post(
+                reverse('registrar_pago_salario', args=[self.tecnico.id]) + '?modo=mes&mes=2026-08',
+                {'comprobante': self._comprobante(), 'notas': ''},
             )
-            self.assertRedirects(respuesta, reverse('planilla') + '?mes=2026-08')
-            pago = PagoPlanilla.objects.get()
-            self.assertTrue(pago.verificado)
-            self.assertEqual(pago.total, Decimal('3050.00'))
-            pago.comprobante.delete(save=False)
+            self.client.post(
+                reverse('registrar_pago_comision', args=[self.tecnico.id]) + '?modo=mes&mes=2026-08',
+                {'comprobante': self._comprobante(), 'notas': ''},
+            )
         finally:
             verificacion_boleta._leer_texto = original
+
+        respuesta = self.client.get(reverse('historial_pagos'))
+        tipos = sorted(p['tipo'] for p in respuesta.context['pagos'])
+        self.assertEqual(tipos, ['Comisiones', 'Salario base'])
+        for p in respuesta.context['pagos']:
+            p['comprobante'].delete(save=False)
 
 
 class VerificacionBoletaTests(TestCase):
@@ -465,262 +464,6 @@ class VerificacionBoletaTests(TestCase):
             self.assertEqual(r.estado, verificacion_boleta.ESTADO_NO_VERIFICABLE)
         finally:
             verificacion_boleta._leer_texto = original
-
-
-class Bloque5ConstanciaHistorialLiquidacionTests(TestCase):
-    """Bloque 5: constancia PDF del pago (5A), historial de pagos del
-    empleado (5B) y líneas de comisión liquidadas que evitan cobrar dos
-    veces (5C)."""
-
-    def setUp(self):
-        import datetime
-        from decimal import Decimal
-
-        from pacientes.models import Cita, PrecioEstudio, TipoEstudio
-
-        self.admin = crear_usuario('admin_bloque5', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
-        self.financiero = crear_usuario(
-            'fin_bloque5', rol=Usuario.ROL_ADMINISTRADOR_FINANCIERO,
-        )
-        self.tecnico = crear_usuario(
-            'tec_bloque5', rol=Usuario.ROL_TECNICO_IMAGENES, salario_base=Decimal('3000'),
-        )
-        self.tecnico.porcentaje_privado = Decimal('5')
-        self.tecnico.save()
-        self.radiologo = crear_usuario(
-            'rad_bloque5', rol=Usuario.ROL_MEDICO_RADIOLOGO, salario_base=Decimal('6000'),
-        )
-        self.radiologo.porcentaje_privado = Decimal('10')
-        self.radiologo.save()
-
-        from pacientes.models import Paciente
-
-        self.paciente = Paciente.objects.create(
-            dpi='9990001112234', nombre='Luis', apellido='Paz',
-            fecha_nacimiento=datetime.date(1992, 1, 1),
-        )
-        self.estudio = TipoEstudio.objects.create(
-            nombre='RX rodilla bloque5', modalidad=TipoEstudio.MODALIDAD_RX,
-        )
-        PrecioEstudio.objects.create(
-            tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
-            horario_habil=True, precio=Decimal('1000'),
-        )
-        self.fecha = datetime.date(2026, 9, 10)
-
-    def _comprobante(self, nombre='boleta.jpg'):
-        from django.core.files.uploadedfile import SimpleUploadedFile
-
-        return SimpleUploadedFile(nombre, b'\xff\xd8\xff\xe0datos', content_type='image/jpeg')
-
-    def _cita_procesada(self, hora=None):
-        import datetime
-
-        from django.core.files.uploadedfile import SimpleUploadedFile
-
-        from pacientes.models import Cita, ImagenEstudio, OrdenTrabajo
-
-        cita = Cita.objects.create(
-            paciente=self.paciente, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
-            estado=Cita.ESTADO_PROCESADA, fecha=self.fecha, hora=hora or datetime.time(9, 0),
-            creada_por=self.admin, radiologo=self.radiologo,
-        )
-        orden = OrdenTrabajo.objects.create(cita=cita, motivo='motivo', creada_por=self.admin)
-        ImagenEstudio.objects.create(
-            orden=orden, subida_por=self.tecnico,
-            archivo=SimpleUploadedFile('img.jpg', b'fake'),
-        )
-        return cita
-
-    def _pagar_tecnico(self, mes='2026-09'):
-        self.client.force_login(self.admin)
-        return self.client.post(
-            reverse('registrar_pago_planilla', args=[self.tecnico.id]) + f'?mes={mes}',
-            {'comprobante': self._comprobante(), 'notas': ''},
-        )
-
-    # --- 5C: líneas de comisión liquidadas (no cobrar dos veces) ----------
-
-    def test_registrar_pago_liquida_las_comisiones_del_empleado(self):
-        from accounts.models import LineaComisionLiquidada, PagoPlanilla
-
-        cita = self._cita_procesada()
-        self._pagar_tecnico()
-
-        pago = PagoPlanilla.objects.get(usuario=self.tecnico, anio=2026, mes=9)
-        lineas = LineaComisionLiquidada.objects.filter(usuario=self.tecnico)
-        self.assertEqual(lineas.count(), 1)
-        self.assertEqual(lineas.first().cita_id, cita.id)
-        self.assertEqual(lineas.first().comision, pago.comisiones)
-        self.assertEqual(lineas.first().pago, pago)
-
-    def test_comision_ya_pagada_no_se_vuelve_a_ofrecer(self):
-        from decimal import Decimal
-
-        from accounts.models import PagoPlanilla
-
-        self._cita_procesada()
-        self._pagar_tecnico()
-        pago_guardado = PagoPlanilla.objects.get(usuario=self.tecnico, anio=2026, mes=9)
-        pago_guardado.comprobante.delete(save=False)
-
-        self.client.force_login(self.admin)
-        respuesta = self.client.get(reverse('planilla'), {'mes': '2026-09'})
-        filas = {f['usuario'].username: f for f in respuesta.context['filas']}
-        self.assertEqual(filas['tec_bloque5']['comisiones'], Decimal('0.00'))
-
-    def test_cita_reprocesada_de_un_mes_ya_pagado_no_cobra_dos_veces(self):
-        from decimal import Decimal
-
-        from accounts.models import PagoPlanilla
-
-        cita = self._cita_procesada()
-        self._pagar_tecnico()
-        pago_guardado = PagoPlanilla.objects.get(usuario=self.tecnico, anio=2026, mes=9)
-        pago_guardado.comprobante.delete(save=False)
-
-        cita.estado = cita.ESTADO_EN_ESPERA
-        cita.save()
-        cita.estado = cita.ESTADO_PROCESADA
-        cita.save()
-
-        self.client.force_login(self.admin)
-        respuesta = self.client.get(reverse('planilla'), {'mes': '2026-09'})
-        filas = {f['usuario'].username: f for f in respuesta.context['filas']}
-        self.assertEqual(filas['tec_bloque5']['comisiones'], Decimal('0.00'))
-        self.assertEqual(filas['rad_bloque5']['comisiones'], Decimal('100.00'))
-
-    def test_reemplazo_de_pago_reliquida_sin_duplicar(self):
-        from decimal import Decimal
-
-        from accounts.models import LineaComisionLiquidada, PagoPlanilla
-
-        self._cita_procesada()
-        self._pagar_tecnico()
-        pago_guardado = PagoPlanilla.objects.get(usuario=self.tecnico, anio=2026, mes=9)
-        pago_guardado.comprobante.delete(save=False)
-
-        self.client.force_login(self.admin)
-        respuesta = self.client.post(
-            reverse('registrar_pago_planilla', args=[self.tecnico.id]) + '?mes=2026-09',
-            {'comprobante': self._comprobante('nueva.jpg'), 'notas': 'reemplazo'},
-        )
-        self.assertEqual(respuesta.status_code, 302)
-
-        pago = PagoPlanilla.objects.get(usuario=self.tecnico, anio=2026, mes=9)
-        self.assertEqual(pago.comisiones, Decimal('50.00'))
-        self.assertEqual(pago.notas, 'reemplazo')
-        self.assertEqual(
-            LineaComisionLiquidada.objects.filter(usuario=self.tecnico).count(), 1,
-        )
-        pago.comprobante.delete(save=False)
-
-    def test_reemplazo_recalcula_comisiones_con_el_estado_actual(self):
-        from decimal import Decimal
-
-        from accounts.models import PagoPlanilla
-
-        self._cita_procesada()
-        self._pagar_tecnico()
-        pago_guardado = PagoPlanilla.objects.get(usuario=self.tecnico, anio=2026, mes=9)
-        pago_guardado.comprobante.delete(save=False)
-
-        self.tecnico.porcentaje_privado = Decimal('7')
-        self.tecnico.save()
-
-        self.client.force_login(self.admin)
-        respuesta = self.client.post(
-            reverse('registrar_pago_planilla', args=[self.tecnico.id]) + '?mes=2026-09',
-            {'comprobante': self._comprobante('nueva.jpg'), 'notas': ''},
-        )
-        pago = PagoPlanilla.objects.get(usuario=self.tecnico, anio=2026, mes=9)
-        self.assertEqual(pago.comisiones, Decimal('70.00'))
-        pago.comprobante.delete(save=False)
-
-    # --- 5A: constancia de pago imprimible (PDF) --------------------------
-
-    def test_constancia_pdf_genera_documento_valido(self):
-        self._cita_procesada()
-        self._pagar_tecnico()
-        from accounts.models import PagoPlanilla
-
-        pago = PagoPlanilla.objects.get(usuario=self.tecnico, anio=2026, mes=9)
-
-        self.client.force_login(self.admin)
-        respuesta = self.client.get(reverse('constancia_pago_pdf', args=[pago.id]))
-
-        self.assertEqual(respuesta.status_code, 200)
-        self.assertEqual(respuesta['Content-Type'], 'application/pdf')
-        self.assertTrue(respuesta.content.startswith(b'%PDF'))
-        self.assertIn('constancia', respuesta['Content-Disposition'])
-        pago.comprobante.delete(save=False)
-
-    def test_constancia_solo_para_admin_o_el_propio_empleado(self):
-        self._cita_procesada()
-        self._pagar_tecnico()
-        from accounts.models import PagoPlanilla
-
-        pago = PagoPlanilla.objects.get(usuario=self.tecnico, anio=2026, mes=9)
-
-        self.client.force_login(self.radiologo)
-        respuesta = self.client.get(reverse('constancia_pago_pdf', args=[pago.id]))
-        self.assertEqual(respuesta.status_code, 403)
-
-        self.client.force_login(self.tecnico)
-        respuesta = self.client.get(reverse('constancia_pago_pdf', args=[pago.id]))
-        self.assertEqual(respuesta.status_code, 200)
-        self.assertEqual(respuesta['Content-Type'], 'application/pdf')
-        pago.comprobante.delete(save=False)
-
-    def test_constancia_requiere_login(self):
-        from accounts.models import PagoPlanilla
-
-        cita = self._cita_procesada()
-        self._pagar_tecnico()
-        pago = PagoPlanilla.objects.get(usuario=self.tecnico, anio=2026, mes=9)
-
-        self.client.logout()
-        respuesta = self.client.get(reverse('constancia_pago_pdf', args=[pago.id]))
-        self.assertEqual(respuesta.status_code, 302)
-        self.assertIn('next=/pagos/', respuesta.url)
-        pago.comprobante.delete(save=False)
-
-    # --- 5B: historial de pagos del empleado ------------------------------
-
-    def test_historial_pagos_muestra_solo_sus_pagos(self):
-        self._cita_procesada()
-        self._pagar_tecnico()
-        from accounts.models import PagoPlanilla
-
-        pago = PagoPlanilla.objects.get(usuario=self.tecnico, anio=2026, mes=9)
-
-        self.client.force_login(self.tecnico)
-        respuesta = self.client.get(reverse('mi_historial_pagos'))
-
-        self.assertEqual(respuesta.status_code, 200)
-        self.assertEqual(len(respuesta.context['pagos']), 1)
-        self.assertEqual(respuesta.context['pagos'][0], pago)
-        self.assertContains(respuesta, 'Constancia PDF')
-        pago.comprobante.delete(save=False)
-
-    def test_historial_pagos_vacio_sin_pagos(self):
-        self.client.force_login(self.radiologo)
-        respuesta = self.client.get(reverse('mi_historial_pagos'))
-        self.assertEqual(respuesta.status_code, 200)
-        self.assertEqual(respuesta.context['pagos'], [])
-        self.assertContains(respuesta, 'No tiene pagos')
-
-    def test_pantallas_por_rol_incluyen_mi_historial_de_pagos(self):
-        from accounts.pantallas import pantallas_de
-
-        for rol in (
-            Usuario.ROL_TECNICO_IMAGENES,
-            Usuario.ROL_MEDICO_RADIOLOGO,
-            Usuario.ROL_MEDICO_REMITENTE,
-        ):
-            usuario = crear_usuario(f'rol_{rol}', rol=rol)
-            nombres = [p['nombre'] for p in pantallas_de(usuario)]
-            self.assertIn('Mi historial de pagos', nombres)
 
    
 

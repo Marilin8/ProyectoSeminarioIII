@@ -40,9 +40,6 @@ PANTALLAS_POR_ROL = {
                 {'nombre': 'Agendar cita', 'url_name': 'calendario_coex'},
                 {'nombre': 'Procesar cita', 'url_name': 'procesar_citas_coex'},
             ],
-            Usuario.ROL_CAJA: [
-                {'nombre': 'Pagos de estudios', 'url_name': 'pagos_pendientes'},
-            ],
         },
         {
             'nombre': 'PRIVADO',
@@ -73,15 +70,22 @@ PANTALLAS_POR_ROL = {
     ],
     Usuario.ROL_TECNICO_IMAGENES: [
         {'nombre': 'Órdenes pendientes', 'url_name': 'ordenes_pendientes'},
-        {'nombre': 'Mi historial de pagos', 'url_name': 'mi_historial_pagos'},
     ],
     Usuario.ROL_MEDICO_RADIOLOGO: [
         {'nombre': 'Solicitudes de citas', 'url_name': 'solicitudes_pendientes'},
         {'nombre': 'Citas procesadas', 'url_name': 'citas_procesadas'},
-        {'nombre': 'Mi historial de pagos', 'url_name': 'mi_historial_pagos'},
     ],
-    Usuario.ROL_MEDICO_REMITENTE: [
-        {'nombre': 'Mi historial de pagos', 'url_name': 'mi_historial_pagos'},
+    Usuario.ROL_MEDICO_REMITENTE: [],
+    Usuario.ROL_ADMINISTRADOR_FINANCIERO: [
+        {
+            'nombre': 'Reportes diarios',
+            'clave': 'reportes_diarios',
+            'submenu': [
+                {'nombre': 'COEX', 'url_name': 'lista_reportes_diarios_coex'},
+                {'nombre': 'Privado', 'url_name': 'lista_reportes_diarios_privado'},
+                {'nombre': 'Emergencia IGSS', 'url_name': 'lista_reportes_diarios_emergencia_igss'},
+            ],
+        },
     ],
 }
 
@@ -91,7 +95,11 @@ def pantallas_de(usuario):
         pantallas = list(PANTALLAS_POR_ROL[Usuario.ROL_ADMINISTRADOR])
     else:
         pantallas = list(PANTALLAS_POR_ROL.get(usuario.rol, []))
-    if usuario.puede_operar_caja and not any(item.get('url_name') == 'pagos_pendientes' for item in pantallas):
+    # Permiso aparte del rol (ver Usuario.puede_operar_caja): cualquier
+    # usuario con este permiso ve la pantalla de Caja, sin duplicarla si su
+    # rol ya la tuviera.
+    ya_tiene_caja = any(item.get('url_name') == 'pagos_pendientes' for item in pantallas)
+    if usuario.puede_operar_caja and not ya_tiene_caja:
         pantallas.append({'nombre': 'Caja - pagos de estudios', 'url_name': 'pagos_pendientes'})
     return pantallas
 

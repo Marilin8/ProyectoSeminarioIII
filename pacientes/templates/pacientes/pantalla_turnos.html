@@ -30,11 +30,22 @@
             color: var(--text-muted);
             margin-top: 0.15rem;
         }
+        .acciones-turno { display: flex; gap: 0.35rem; align-items: center; }
+        .acciones-turno form { display: inline; margin: 0; }
+        .btn-mover {
+            width: 30px; height: 30px; padding: 0; line-height: 1;
+            font-size: 1rem; font-weight: 700;
+        }
+        .btn-mover[disabled] { opacity: 0.35; cursor: default; }
     </style>
 {% endblock %}
 
 {% block topbar_actions %}
     {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'pantalla_sala_espera' %}" target="_blank" rel="noopener">
+        <svg width="14" height="14"><use href="#i-external-link"/></svg>
+        Abrir sala de espera (TV)
+    </a>
     <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
         <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
         Volver al panel
@@ -74,6 +85,7 @@
                         <tr>
                             <th>Turno</th>
                             <th>Paciente</th>
+                            <th>Estudio / Radiólogo</th>
                             <th>Prioridad</th>
                             <th>Hora de llegada</th>
                             {% if not es_hoy %}<th>Estado</th>{% endif %}
@@ -88,49 +100,52 @@
                                     <span class="turno-origen">{{ ticket.get_servicio_display }}</span>
                                 </td>
                                 <td>{{ ticket.paciente.nombre }} {{ ticket.paciente.apellido }}</td>
+                                <td>
+                                    {% if ticket.cita %}
+                                        {{ ticket.cita.tipo_estudio.nombre }}
+                                        <span class="turno-origen">
+                                            {% if ticket.cita.radiologo %}
+                                                {{ ticket.cita.radiologo.get_full_name|default:ticket.cita.radiologo.username }}
+                                            {% else %}
+                                                Sin radiólogo asignado
+                                            {% endif %}
+                                        </span>
+                                    {% else %}
+                                        <span class="text-muted">Sin cita (se define al procesar)</span>
+                                    {% endif %}
+                                </td>
                                 <td><span class="badge prioridad-{{ ticket.prioridad }}">{{ ticket.get_prioridad_display }}</span></td>
                                 <td>{{ ticket.creado_en|time:'H:i' }}</td>
                                 {% if not es_hoy %}
                                     <td><span class="estado estado-{{ ticket.estado }}">{{ ticket.get_estado_display }}</span></td>
                                 {% endif %}
-<td>
-                                {% if ticket.servicio == 'emergencia_igss' and ticket.estado == 'en_espera' %}
-                                    <a class="btn btn-primary btn-sm" href="{% url 'procesar_ticket_emergencia' ticket.id %}">
-                                        <svg width="14" height="14"><use href="#i-file-medical"/></svg>
-                                        Procesar
-                                    </a>
-                                {% endif %}
-                                {% if es_hoy and ticket.estado == 'en_espera' %}
-                                    <div class="btn-group btn-group-sm" role="group" aria-label="Reordenar">
-                                        {% if ticket.puede_tope %}
-                                            <form method="post" action="{% url 'reordenar_turno' ticket.id 'tope' %}">
+                                <td>
+                                    {% if es_hoy and ticket.estado == 'en_espera' %}
+                                        <div class="acciones-turno">
+                                            <form method="post" action="{% url 'mover_turno' ticket.id %}">
                                                 {% csrf_token %}
-                                                <button type="submit" class="btn btn-outline" title="Ir al tope de su prioridad">
-                                                    <svg width="12" height="12"><use href="#i-arrow-top"/></svg> Tope
+                                                <input type="hidden" name="direccion" value="subir">
+                                                <button type="submit" class="btn btn-outline btn-sm btn-mover"
+                                                        title="Subir un lugar" {% if forloop.first %}disabled{% endif %}>&uarr;</button>
+                                            </form>
+                                            <form method="post" action="{% url 'mover_turno' ticket.id %}">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="direccion" value="bajar">
+                                                <button type="submit" class="btn btn-outline btn-sm btn-mover"
+                                                        title="Bajar un lugar" {% if forloop.last %}disabled{% endif %}>&darr;</button>
+                                            </form>
+                                            <form method="post" action="{% url 'procesar_turno' ticket.id %}">
+                                                {% csrf_token %}
+                                                <button type="submit" class="btn btn-primary btn-sm">
+                                                    <svg width="14" height="14"><use href="#i-file-medical"/></svg>
+                                                    Procesar
                                                 </button>
                                             </form>
-                                        {% endif %}
-                                        {% if ticket.puede_subir %}
-                                            <form method="post" action="{% url 'reordenar_turno' ticket.id 'subir' %}">
-                                                {% csrf_token %}
-                                                <button type="submit" class="btn btn-outline" title="Subir un lugar">
-                                                    <svg width="12" height="12"><use href="#i-arrow-up"/></svg>
-                                                </button>
-                                            </form>
-                                        {% endif %}
-                                        {% if ticket.puede_bajar %}
-                                            <form method="post" action="{% url 'reordenar_turno' ticket.id 'bajar' %}">
-                                                {% csrf_token %}
-                                                <button type="submit" class="btn btn-outline" title="Bajar un lugar">
-                                                    <svg width="12" height="12"><use href="#i-arrow-down"/></svg>
-                                                </button>
-                                            </form>
-                                        {% endif %}
-                                    </div>
-                                {% elif ticket.servicio != 'emergencia_igss' %}
-                                    —
-                                {% endif %}
-                            </td>
+                                        </div>
+                                    {% else %}
+                                        —
+                                    {% endif %}
+                                </td>
                             </tr>
                         {% endfor %}
                     </tbody>

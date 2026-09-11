@@ -188,7 +188,7 @@ def verificar(contenido: bytes, monto_esperado, numero_esperado: str = '',
             mensaje=(
                 'No se pudo leer el comprobante automáticamente '
                 '(Tesseract no está instalado o el archivo es un PDF/imagen ilegible). '
-                'Verifique los datos manualmente.'
+                'Verificá los datos a mano.'
             ),
         )
 

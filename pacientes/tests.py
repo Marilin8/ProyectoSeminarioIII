@@ -1,7 +1,6 @@
 import base64
 import datetime
-import os
-from unittest import mock
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -11,14 +10,15 @@ from django.utils import timezone
 
 from pacientes import horarios
 from pacientes.forms import AgendarCitaForm, RegistrarTicketForm
-from accounts.models import Bitacora
 from pacientes.models import (
     Cita,
+    Cobro,
+    Combo,
     ImagenEstudio,
     Notificacion,
     OrdenTrabajo,
     Paciente,
-    ReporteDiario,
+    PrecioEstudio,
     Ticket,
     TipoEstudio,
 )
@@ -94,26 +94,56 @@ class FlujoPrivadoTests(TestCase):
         self.assertEqual(cita.estado, Cita.ESTADO_AGENDADA)
         self.assertEqual(cita.radiologo, self.radiologo)
 
+    def test_agendar_privado_no_duplica_estudio_mismo_paciente_y_horario(self):
+        self._agendar()
+
+        respuesta = self._agendar()
+
+        self.assertEqual(
+            Cita.objects.filter(
+                paciente__dpi='9090909090901',
+                tipo_estudio=self.estudio,
+                fecha=self.fecha,
+                hora='10:00',
+            ).count(),
+            1,
+        )
+        self.assertContains(respuesta, 'ya tiene agendado ese mismo estudio')
+
+    def test_agendar_privado_con_varios_radiologos_exige_elegir(self):
+        otro = crear_usuario('rad_priv_2', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.estudio.radiologos.add(otro)
+
+        respuesta = self._agendar()
+        self.assertContains(respuesta, 'varios radiólogos')
+        self.assertFalse(Cita.objects.filter(paciente__dpi='9090909090901').exists())
+
+        self.client.force_login(self.recepcionista)
+        self.client.post(reverse('agendar_cita_privado'), {
+            'dpi': '9090909090901', 'nombre': 'Marco', 'apellido': 'Privado',
+            'sexo': Paciente.SEXO_MASCULINO, 'telefono': '55551234', 'correo': '',
+            'fecha_nacimiento': '1990-01-01', 'tipo_estudio': self.estudio.id,
+            'radiologo': otro.id, 'fecha': self.fecha.isoformat(), 'hora': '10:00',
+            'motivo': 'Control',
+        })
+        cita = Cita.objects.get(paciente__dpi='9090909090901')
+        self.assertEqual(cita.radiologo, otro)
+
     def test_privado_no_aparece_en_solicitudes_del_radiologo(self):
         self._agendar()
         self.client.force_login(self.radiologo)
         lista = self.client.get(reverse('solicitudes_pendientes'))
         self.assertNotContains(lista, 'Marco')
 
-    def test_privado_puede_compartir_franja_hasta_agotar_el_cupo(self):
-        self._agendar(dpi='2020202020202', nombre='Segundo', hora='10:00')
-        respuesta = self._agendar(dpi='3030303030303', nombre='Tercero', hora='10:00')
-        self.assertEqual(
-            Cita.objects.filter(fecha=self.fecha, hora=datetime.time(10, 0)).count(), 2,
+    def test_agendar_privado_avisa_si_turno_ocupado(self):
+        crear_cita(
+            self.recepcionista, tipo_estudio=self.estudio,
+            fecha=self.fecha, hora=datetime.time(10, 0),
+            paciente=crear_paciente(dpi='1010101010101'),
         )
-        self.assertNotContains(respuesta, 'cupos ocupados')
-
-    def test_privado_bloquea_cuando_el_cupo_de_la_franja_esta_lleno(self):
-        for i in range(3):
-            self._agendar(dpi=f'404040404040{i}', hora='11:00')
-        respuesta = self._agendar(dpi='5050505050505', hora='11:00')
-        self.assertContains(respuesta, 'cupos ocupados')
-        self.assertEqual(Cita.objects.filter(paciente__dpi='5050505050505').count(), 0)
+        respuesta = self._agendar(dpi='2020202020202', nombre='Segundo')
+        self.assertContains(respuesta, 'ya estaba ocupado')
+        self.assertEqual(Cita.objects.filter(paciente__dpi='2020202020202').count(), 1)
 
     def test_cola_de_procesamiento_llegada_y_orden(self):
         self._agendar()
@@ -162,104 +192,6 @@ class FlujoPrivadoTests(TestCase):
         self.assertEqual(cola, [ticket_privado, ticket_coex])
         # El número de turno oficial no cambia aunque se haya adelantado.
         self.assertEqual(ticket_privado.numero, 2)
-
-
-class CupoParaleloTests(TestCase):
-    """Bloque 2 · Cambios 2 y 3: cupo de 3 estudios en paralelo por servicio en
-    la misma franja horaria (la emergencia confirmada puede superarlo, con el
-    tope diario de emergencias ya existente) y el calendario muestra la
-    ocupación por servicio (n/3)."""
-
-    def setUp(self):
-        self.recepcionista = crear_usuario('recep_cupo', rol=Usuario.ROL_RECEPCIONISTA)
-        self.radiologo = crear_usuario('rad_cupo', rol=Usuario.ROL_MEDICO_RADIOLOGO)
-        self.estudio = TipoEstudio.objects.create(
-            nombre='Radiografía de tórax cupo', duracion_minutos=20,
-        )
-        self.estudio.radiologos.add(self.radiologo)
-        self.fecha = horarios.inicio_semana(timezone.localdate()) + datetime.timedelta(days=3)
-        self.client.force_login(self.recepcionista)
-
-    def _post_coex(self, dpi='6060606060601', hora='09:00', es_emergencia=''):
-        return self.client.post(reverse('agendar_cita_coex'), {
-            'dpi': dpi,
-            'nombre': 'Paciente',
-            'apellido': 'Cupo',
-            'sexo': Paciente.SEXO_MASCULINO,
-            'telefono': '55551234',
-            'correo': 'paciente_cupo@correo.com',
-            'fecha_nacimiento': '1990-01-01',
-            'carnet_igss': dpi,
-            'tipo_estudio': self.estudio.id,
-            'radiologo': self.radiologo.id,
-            'medico_referente': '',
-            'fecha': self.fecha.isoformat(),
-            'hora': hora,
-            'notas': '',
-            'es_emergencia': es_emergencia,
-        }, follow=True)
-
-    def test_coex_no_supera_el_cupo_sin_emergencia(self):
-        for i in range(3):
-            self._post_coex(dpi=f'606060606060{i}', hora='09:30')
-        self.assertEqual(
-            Cita.objects.filter(convenio=Cita.CONVENIO_COEX, fecha=self.fecha).count(), 3,
-        )
-        respuesta = self._post_coex(dpi='6060606060607', hora='09:30')
-        self.assertContains(respuesta, 'cupos ocupados')
-        self.assertEqual(Cita.objects.filter(paciente__dpi='6060606060607').count(), 0)
-
-    def test_emergencia_confirmada_supera_el_cupo(self):
-        for i in range(3):
-            self._post_coex(dpi=f'707070707070{i}', hora='10:00')
-        respuesta = self._post_coex(dpi='7070707070707', hora='10:00', es_emergencia='1')
-        self.assertEqual(respuesta.status_code, 200)
-        cita = Cita.objects.get(paciente__dpi='7070707070707')
-        self.assertTrue(cita.es_emergencia_forzada)
-        self.assertEqual(Cita.objects.filter(fecha=self.fecha, hora=datetime.time(10, 0)).count(), 4)
-
-    def test_calendario_muestra_ocupacion_por_servicio(self):
-        for i in range(2):
-            crear_cita(
-                self.recepcionista, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_COEX,
-                fecha=self.fecha, hora=datetime.time(9, 0),
-                paciente=crear_paciente(dpi=f'808080808080{i}'),
-            )
-        crear_cita(
-            self.recepcionista, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
-            fecha=self.fecha, hora=datetime.time(9, 0),
-            paciente=crear_paciente(dpi='8080808080809'),
-        )
-        self.client.force_login(self.recepcionista)
-        respuesta = self.client.get(reverse('calendario_coex'))
-        for fila in respuesta.context['filas']:
-            for celda in fila['celdas']:
-                if celda['dia'] == self.fecha and celda['hora'] == datetime.time(9, 0):
-                    self.assertEqual(celda['cupo'], 2)
-                    self.assertTrue(celda['ocupado'])
-                    self.assertEqual(celda['convenios'], 'Privado')
-
-    def test_reagenda_no_supera_el_cupo_lleno(self):
-        cita = crear_cita(
-            self.recepcionista, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
-            fecha=self.fecha, hora=datetime.time(8, 0), estado=Cita.ESTADO_AUSENTE,
-            paciente=crear_paciente(dpi='9090909090901'),
-        )
-        for i in range(3):
-            crear_cita(
-                self.recepcionista, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
-                fecha=self.fecha, hora=datetime.time(11, 0),
-                paciente=crear_paciente(dpi=f'919191919191{i}'),
-            )
-        self.client.force_login(self.recepcionista)
-        respuesta = self.client.post(
-            reverse('confirmar_reagenda_privado', args=[cita.id]),
-            {'fecha': self.fecha.isoformat(), 'hora': '11:00'},
-            follow=True,
-        )
-        self.assertContains(respuesta, 'no está disponible')
-        cita.refresh_from_db()
-        self.assertEqual(cita.hora, datetime.time(8, 0))
 
 
 class VisorEstudioTests(TestCase):
@@ -338,6 +270,21 @@ class PacienteModelTests(TestCase):
     def test_str_incluye_nombre_apellido_y_dpi(self):
         paciente = crear_paciente(nombre='Juana', apellido='Pérez', dpi='1111222233330')
         self.assertEqual(str(paciente), 'Juana Pérez (1111222233330)')
+
+    def test_el_sistema_asigna_un_expediente_correlativo(self):
+        p1 = crear_paciente(dpi='1000000000001')
+        p2 = crear_paciente(dpi='1000000000002')
+        self.assertTrue(p1.expediente)
+        self.assertEqual(len(p1.expediente), 6)
+        self.assertEqual(int(p2.expediente), int(p1.expediente) + 1)
+
+    def test_no_reasigna_el_expediente_al_editar(self):
+        paciente = crear_paciente(dpi='1000000000003')
+        original = paciente.expediente
+        paciente.telefono = '55550000'
+        paciente.save()
+        paciente.refresh_from_db()
+        self.assertEqual(paciente.expediente, original)
 
 
 class CitaModelTests(TestCase):
@@ -453,6 +400,98 @@ class OrdenTrabajoModelTests(TestCase):
         self.assertEqual(orden.edad_paciente, 19)
 
 
+class CalendarioRadiologoTests(TestCase):
+    """El selector de radiólogo del calendario: al elegir uno, el calendario
+    muestra solo la agenda de ese radiólogo."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_cal', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(self.recepcion)
+        self.rad1 = crear_usuario('rad_uno', rol=Usuario.ROL_MEDICO_RADIOLOGO, first_name='Radiologo', last_name='Uno')
+        self.rad2 = crear_usuario('rad_dos', rol=Usuario.ROL_MEDICO_RADIOLOGO, first_name='Radiologo', last_name='Dos')
+        self.estudio = TipoEstudio.objects.create(nombre='RX cal')
+        manana = horarios.inicio_semana(timezone.localdate()) + datetime.timedelta(days=1)
+        self.dia = manana
+        self.cita1 = crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_COEX,
+            estado=Cita.ESTADO_AGENDADA, radiologo=self.rad1, fecha=self.dia,
+            hora=datetime.time(8, 0), paciente=crear_paciente(dpi='1112223334445'),
+        )
+        self.cita2 = crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_COEX,
+            estado=Cita.ESTADO_AGENDADA, radiologo=self.rad2, fecha=self.dia,
+            hora=datetime.time(9, 0), paciente=crear_paciente(dpi='5556667778889'),
+        )
+
+    def _celda(self, respuesta, hora):
+        for fila in respuesta.context['filas']:
+            if fila['hora'] == hora:
+                return next(c for c in fila['celdas'] if c['dia'] == self.dia)
+        raise AssertionError('hora no encontrada')
+
+    def test_sin_filtro_ve_las_citas_de_todos(self):
+        r = self.client.get(reverse('calendario_coex'), {'semana': self.dia.isoformat()})
+        self.assertTrue(self._celda(r, datetime.time(8, 0))['asignado'])
+        self.assertTrue(self._celda(r, datetime.time(9, 0))['asignado'])
+
+    def test_filtrando_por_radiologo_solo_ve_su_agenda(self):
+        r = self.client.get(reverse('calendario_coex'), {
+            'semana': self.dia.isoformat(), 'radiologo': self.rad1.id,
+        })
+        self.assertEqual(r.context['radiologo_seleccionado'], self.rad1)
+        self.assertTrue(self._celda(r, datetime.time(8, 0))['asignado'])   # cita del rad1
+        celda9 = self._celda(r, datetime.time(9, 0))
+        self.assertFalse(celda9['asignado'])   # la cita del rad2 no aparece
+        self.assertFalse(celda9['ocupado'])
+
+    def test_celda_ocupada_trae_el_detalle_de_las_citas(self):
+        # otra cita a la misma hora que cita1 (8:00), otro paciente/estudio
+        crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
+            estado=Cita.ESTADO_AGENDADA, radiologo=self.rad2, fecha=self.dia,
+            hora=datetime.time(8, 0), paciente=crear_paciente(dpi='7778889990001'),
+        )
+        r = self.client.get(reverse('calendario_coex'), {'semana': self.dia.isoformat()})
+        celda = self._celda(r, datetime.time(8, 0))
+        self.assertEqual(len(celda['citas']), 2)
+        estudios = {c['estudio'] for c in celda['citas']}
+        self.assertEqual(estudios, {'RX cal'})
+        radiologos = {c['radiologo'] for c in celda['citas']}
+        self.assertEqual(radiologos, {'Radiologo Uno', 'Radiologo Dos'})
+        clave = f"{self.dia.isoformat()}|08:00"
+        self.assertIn(clave, r.context['slots_detalle'])
+
+
+class ListaEstudiosTests(TestCase):
+    """Lista de estudios del admin: buscador, filtro por categoría y
+    paginación de 20 por hoja."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_estudios', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.client.force_login(self.admin)
+        # (la migración de catálogo ya deja ~131 estudios en la BD de test)
+        for i in range(25):
+            TipoEstudio.objects.create(nombre=f'ZZTEST RX {i:02d}', modalidad=TipoEstudio.MODALIDAD_RX)
+
+    def test_pagina_muestra_maximo_20(self):
+        r = self.client.get(reverse('lista_estudios'))
+        self.assertEqual(len(r.context['pagina'].object_list), 20)
+
+    def test_filtro_y_buscador_combinados_pagina_de_20(self):
+        r = self.client.get(reverse('lista_estudios'), {'q': 'ZZTEST', 'modalidad': TipoEstudio.MODALIDAD_RX})
+        self.assertEqual(r.context['pagina'].paginator.count, 25)
+        self.assertEqual(len(r.context['pagina'].object_list), 20)
+        self.assertEqual(r.context['pagina'].paginator.num_pages, 2)
+
+    def test_buscador_por_nombre_exacto(self):
+        r = self.client.get(reverse('lista_estudios'), {'q': 'ZZTEST RX 03'})
+        self.assertEqual(r.context['pagina'].paginator.count, 1)
+
+    def test_segunda_pagina_del_filtro(self):
+        r = self.client.get(reverse('lista_estudios'), {'q': 'ZZTEST', 'page': '2'})
+        self.assertEqual(len(r.context['pagina'].object_list), 5)
+
+
 class HorariosTests(TestCase):
 
     def test_horarios_disponibles_va_de_inicio_a_fin_cada_15_minutos(self):
@@ -558,16 +597,13 @@ class TicketModelTests(TestCase):
 
     def test_ticket_urgente_de_emergencia_siempre_va_primero(self):
         p1, p2 = (crear_paciente(dpi=f'{n:013d}') for n in (5, 6))
-        ticket_coex = Ticket.objects.create(
-            paciente=p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
-        )
-        # Sin pasar prioridad: Ticket.save debe asignar la máxima (Crítica).
+        ticket_coex = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
         ticket_emergencia = Ticket.objects.create(
-            paciente=p2, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS, registrado_por=self.usuario,
+            paciente=p2, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
+            prioridad=Ticket.PRIORIDAD_URGENTE, registrado_por=self.usuario,
         )
-        self.assertEqual(ticket_emergencia.prioridad, Ticket.PRIORIDAD_CRITICA)
 
-        # Adelantar de más no debe poder pasar por encima de la emergencia.
+        # Adelantar de más no debe poder pasar por encima del urgente.
         ticket_coex.adelantar(5)
 
         cola = list(Ticket.objects.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden'))
@@ -584,309 +620,6 @@ class TicketModelTests(TestCase):
         ticket.save(update_fields=['estado'])
 
         self.assertEqual(ticket.turno, turno_original)
-
-    def test_emergencia_recibe_prioridad_critica_automatica(self):
-        paciente = crear_paciente(dpi='6666111122222')
-        ticket = Ticket.objects.create(
-            paciente=paciente, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS, registrado_por=self.usuario,
-        )
-        # La prioridad se asigna automáticamente (Crítica = máxima), sin que el
-        # registro dependa de quién crea el ticket.
-        self.assertEqual(ticket.prioridad, Ticket.PRIORIDAD_CRITICA)
-
-    def test_coex_y_privado_siguen_siendo_prioridad_normal(self):
-        p1 = crear_paciente(dpi='7777888899999')
-        p2 = crear_paciente(dpi='8888999900000')
-        ticket_coex = Ticket.objects.create(
-            paciente=p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
-        )
-        ticket_privado = Ticket.objects.create(
-            paciente=p2, servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario,
-        )
-        self.assertEqual(ticket_coex.prioridad, Ticket.PRIORIDAD_NORMAL)
-        self.assertEqual(ticket_privado.prioridad, Ticket.PRIORIDAD_NORMAL)
-
-    def test_una_emergencia_nueva_se_coloca_al_frente_de_coex_y_privado(self):
-        p1, p2, p3 = (crear_paciente(dpi=f'{n:013d}') for n in (21, 22, 23))
-        ticket_coex = Ticket.objects.create(
-            paciente=p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
-        )
-        ticket_privado = Ticket.objects.create(
-            paciente=p2, servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario,
-        )
-        # Llega DESPUÉS de los anteriores, pero debe ponerse al frente de la cola.
-        ticket_emergencia = Ticket.objects.create(
-            paciente=p3, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS, registrado_por=self.usuario,
-        )
-
-        cola = list(Ticket.objects.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden'))
-        self.assertEqual(cola, [ticket_emergencia, ticket_coex, ticket_privado])
-
-    def test_entre_emergencias_el_orden_es_el_de_llegada(self):
-        """La prioridad Crítica pone a todas las emergencias al frente, pero
-        entre ellas (y frente a otras subidas manualmente a Crítica) se
-        respeta el orden de llegada (FIFO)."""
-        p1, p2 = (crear_paciente(dpi=f'{n:013d}') for n in (24, 25))
-        emergencia_1 = Ticket.objects.create(
-            paciente=p1, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS, registrado_por=self.usuario,
-        )
-        coexistencia = Ticket.objects.create(
-            paciente=p2, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
-        )
-        emergencia_2 = Ticket.objects.create(
-            paciente=crear_paciente(dpi='2626262626262'),
-            servicio=Ticket.SERVICIO_EMERGENCIA_IGSS, registrado_por=self.usuario,
-        )
-
-        cola = list(Ticket.objects.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden'))
-        self.assertEqual(cola, [emergencia_1, emergencia_2, coexistencia])
-
-    def _cola(self):
-        return list(Ticket.objects.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden'))
-
-    def test_subir_mueve_un_lugar_dentro_del_mismo_bloque_de_prioridad(self):
-        t1, t2, t3 = self._tres_normales()
-
-        t3.subir()
-        self.assertEqual(self._cola(), [t1, t3, t2])
-        # El número de turno oficial no cambia.
-        self.assertEqual(t3.turno, '003')
-
-    def test_bajar_mueve_un_lugar_dentro_del_mismo_bloque_de_prioridad(self):
-        t1, t2, t3 = self._tres_normales()
-
-        t1.bajar()
-        self.assertEqual(self._cola(), [t2, t1, t3])
-
-    def test_ir_al_tope_lleva_al_frente_del_bloque_pero_no_delante_de_mayor_prioridad(self):
-        p1, p2, p3 = (crear_paciente(dpi=f'{n:013d}') for n in (31, 32, 33))
-        emergencia = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
-                                           registrado_por=self.usuario)
-        t2 = Ticket.objects.create(paciente=p2, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        t3 = Ticket.objects.create(paciente=p3, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-
-        t3.ir_al_tope()
-
-        # 003 queda al frente de los normales, pero jamás antes de la emergencia.
-        self.assertEqual(self._cola(), [emergencia, t3, t2])
-
-    def test_subir_no_salta_a_un_bloque_de_mayor_prioridad(self):
-        p1, p2, p3 = (crear_paciente(dpi=f'{n:013d}') for n in (34, 35, 36))
-        emergencia = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
-                                           registrado_por=self.usuario)
-        coex = Ticket.objects.create(paciente=p2, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        privado = Ticket.objects.create(paciente=p3, servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario)
-
-        # El primero del bloque normal no puede subir más.
-        self.assertFalse(coex.subir())
-        self.assertEqual(self._cola(), [emergencia, coex, privado])
-
-    def test_bajar_no_cae_a_un_bloque_de_menor_prioridad(self):
-        p1, p2, p3 = (crear_paciente(dpi=f'{n:013d}') for n in (37, 38, 39))
-        coex = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        privado = Ticket.objects.create(paciente=p2, servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario)
-        emergencia = Ticket.objects.create(paciente=p3, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
-                                           registrado_por=self.usuario)
-
-        # El último del bloque crítico (emergencia) no puede bajar.
-        self.assertFalse(emergencia.bajar())
-        self.assertEqual(self._cola(), [emergencia, coex, privado])
-
-    def test_el_orden_siempre_queda_correlativo_tras_reordenar(self):
-        t1, t2, t3 = self._tres_normales()
-
-        t3.subir()
-        t3.subir()
-        t1.bajar()
-
-        ordenes = [t.orden for t in self._cola()]
-        self.assertEqual(ordenes, [1, 2, 3])
-
-    def test_ticket_atendido_no_participa_en_el_reordenamiento(self):
-        p1, p2, p3 = (crear_paciente(dpi=f'{n:013d}') for n in (40, 41, 42))
-        t1 = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        t2 = Ticket.objects.create(paciente=p2, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        t3 = Ticket.objects.create(paciente=p3, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        # t2 ya no está en espera: la cola es [t1, t3].
-        t2.estado = Ticket.ESTADO_ATENDIDO
-        t2.atendido_en = timezone.now()
-        t2.save(update_fields=['estado', 'atendido_en'])
-
-        # t1 (primero) no puede bajar porque detrás de él ya no hay un igual
-        # en espera? Sí: t3 es normal, así que sí puede. Subir t3 lo deja antes.
-        t3.subir()
-        self.assertEqual(self._cola(), [t3, t1])
-
-    def test_mover_un_ticket_no_en_espera_no_hace_nada(self):
-        p1, p2 = (crear_paciente(dpi=f'{n:013d}') for n in (43, 44))
-        t1 = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        t_atendido = Ticket.objects.create(paciente=p2, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        t_atendido.estado = Ticket.ESTADO_ATENDIDO
-        t_atendido.atendido_en = timezone.now()
-        t_atendido.save(update_fields=['estado', 'atendido_en'])
-
-        self.assertFalse(t_atendido.subir())
-
-    def test_adelantar_sigue_respetando_los_limites_de_prioridad(self):
-        p1, p2, p3 = (crear_paciente(dpi=f'{n:013d}') for n in (45, 46, 47))
-        emergencia = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
-                                           registrado_por=self.usuario)
-        coex = Ticket.objects.create(paciente=p2, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        privado = Ticket.objects.create(paciente=p3, servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario)
-
-        privado.adelantar(5)
-        self.assertEqual(self._cola(), [emergencia, privado, coex])
-
-    def test_mezcla_de_reordenamientos_entre_bloques_queda_estable(self):
-        p1, p2, p3, p4 = (crear_paciente(dpi=f'{n:013d}') for n in (48, 49, 50, 51))
-        emergencia = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
-                                           registrado_por=self.usuario)
-        t3 = Ticket.objects.create(paciente=p2, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        t4 = Ticket.objects.create(paciente=p3, servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario)
-        t5 = Ticket.objects.create(paciente=p4, servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario)
-
-        # t5 sube dentro de privados y t4 baja: ningún movimiento sale del bloque.
-        t5.subir()
-        t4.bajar()
-        t3.ir_al_tope()
-
-        cola = self._cola()
-        # Emergencia primero; luego COEX (t3 al frente de normales); luego los
-        # dos privados en orden [t5, t4] (t5 subió delante de t4).
-        self.assertEqual(cola[0], emergencia)
-        privados = [t for t in cola if t.servicio == Ticket.SERVICIO_PRIVADO]
-        self.assertEqual(privados, [t5, t4])
-
-    def _tres_normales(self):
-        p1, p2, p3 = (crear_paciente(dpi=f'{n:013d}') for n in (28, 29, 30))
-        t1 = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        t2 = Ticket.objects.create(paciente=p2, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        t3 = Ticket.objects.create(paciente=p3, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        return t1, t2, t3
-
-
-class ReordenarTicketRigorTests(TestCase):
-    """Pruebas rigurosas sobre la invariante central del Bloque 4: ningún
-    reordenamiento puede romper el orden por prioridad (`-prioridad, orden`),
-    ni dejar los `orden` duplicados o no correlativos dentro de la fila."""
-
-    def setUp(self):
-        self.usuario = crear_usuario('recepcionista_rigor')
-        # Fila con mezcla de las TRES prioridades: 2 críticas, 2 urgentes, 2 normales.
-        p1, p2, p3, p4, p5, p6 = (crear_paciente(dpi=f'{n:013d}') for n in (60, 61, 62, 63, 64, 65))
-        self.crit_1 = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
-                                            registrado_por=self.usuario)
-        self.crit_2 = Ticket.objects.create(paciente=p2, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
-                                            registrado_por=self.usuario)
-        self.urg_1 = Ticket.objects.create(paciente=p3, servicio=Ticket.SERVICIO_COEX,
-                                           registrado_por=self.usuario)
-        self.urg_1.prioridad = Ticket.PRIORIDAD_URGENTE
-        self.urg_1.save(update_fields=['prioridad'])
-        self.urg_2 = Ticket.objects.create(paciente=p4, servicio=Ticket.SERVICIO_PRIVADO,
-                                           registrado_por=self.usuario)
-        self.urg_2.prioridad = Ticket.PRIORIDAD_URGENTE
-        self.urg_2.save(update_fields=['prioridad'])
-        self.norm_1 = Ticket.objects.create(paciente=p5, servicio=Ticket.SERVICIO_COEX,
-                                            registrado_por=self.usuario)
-        self.norm_2 = Ticket.objects.create(paciente=p6, servicio=Ticket.SERVICIO_COEX,
-                                            registrado_por=self.usuario)
-
-    def _cola(self):
-        return list(Ticket.objects.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden'))
-
-    def _prioridades_en_orden(self, cola):
-        return [t.prioridad for t in cola]
-
-    def _assert_invariantes(self):
-        """Tras cualquier secuencia de reordenación: la cola debe estar
-        ordenada por prioridad no creciente y los `orden` deben ser 1..n."""
-        cola = self._cola()
-        prioridades = [t.prioridad for t in cola]
-        # No creciente: ningún elemento mayor que el que le sigue.
-        self.assertEqual(prioridades, sorted(prioridades, reverse=True))
-        # Orden es una permutación correlativa 1..n.
-        self.assertEqual([t.orden for t in cola], list(range(1, len(cola) + 1)))
-
-    def test_la_mezcla_respeta_prioridades_desde_el_inicio(self):
-        self._assert_invariantes()
-        self.assertEqual(self._prioridades_en_orden(self._cola()), [3, 3, 2, 2, 1, 1])
-
-    def test_subir_urgente_no_cruza_a_las_criticas(self):
-        self.urg_2.subir()
-        self.urg_2.subir()
-        self._assert_invariantes()
-        # El urgente queda al frente de URGENTE, pero nunca antes de ninguna Crítica.
-        cola = self._cola()
-        self.assertEqual(self._prioridades_en_orden(cola), [3, 3, 2, 2, 1, 1])
-        self.assertEqual(cola[2].servicio, self.urg_2.servicio)
-
-    def test_bajar_critico_no_cae_entre_los_urgentes(self):
-        # La Crítica 1 es la primera de todo: sólo puede bajar dentro de Críticas.
-        self.crit_1.bajar()
-        self._assert_invariantes()
-        self.assertEqual(self._cola(), [self.crit_2, self.crit_1, self.urg_1, self.urg_2, self.norm_1, self.norm_2])
-
-    def test_bajar_urgente_no_cae_detra_s_de_normales(self):
-        # urg_2 es la última de URGENTE: no puede bajarse hacia Normales.
-        self.assertFalse(self.urg_2.bajar())
-        self._assert_invariantes()
-
-    def test_adelantar_grande_se_recorta_al_inicio_del_bloque(self):
-        self.norm_2.adelantar(50)
-        self._assert_invariantes()
-        cola = self._cola()
-        # Se recortó al frente de NORMAL (índice 4), sin pasar a los URGENTES.
-        self.assertEqual(cola[4], self.norm_2)
-        self.assertEqual(cola[5], self.norm_1)
-
-    def test_adelantar_urgente_grande_se_recorta_al_inicio_urgente(self):
-        self.urg_2.adelantar(50)
-        self._assert_invariantes()
-        cola = self._cola()
-        self.assertEqual(self._prioridades_en_orden(cola), [3, 3, 2, 2, 1, 1])
-        self.assertEqual(cola[2], self.urg_2)
-
-    def test_si_todo_critico_se_va_pueden_subir_los_urgentes_al_tope(self):
-        # Se atienden las dos críticas: dejan de estar en espera.
-        for c in (self.crit_1, self.crit_2):
-            c.estado = Ticket.ESTADO_ATENDIDO
-            c.atendido_en = timezone.now()
-            c.save(update_fields=['estado', 'atendido_en'])
-        # Ahora los urgentes son el tope de toda la fila: subir/tope funcionan.
-        self.assertTrue(self.urg_2.subir())
-        self._assert_invariantes()
-        self.assertEqual(self._cola(), [self.urg_2, self.urg_1, self.norm_1, self.norm_2])
-
-    def test_arribar_un_nuevo_ticket_normal_no_rompe_la_correlatividad(self):
-        # Reordenamos primero: norm_2 pasa al frente de los normales.
-        self.norm_2.adelantar(10)
-        self._assert_invariantes()
-        # Entra un nuevo ticket de COEX (Normal): su orden debe ser el siguiente.
-        nuevo = Ticket.objects.create(paciente=crear_paciente(dpi='6061626363640'),
-                                      servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        self.assertEqual(nuevo.orden, 7)
-        self._assert_invariantes()
-
-    def test_movimientos_repetidos_en_cadena_conservan_la_invariante(self):
-        secuencia = [
-            (self.crit_1, 'bajar'),
-            (self.norm_2, 'subir'),
-            (self.urg_2, 'tope'),
-            (self.crit_2, 'subir'),
-            (self.urg_1, 'bajar'),
-            (self.norm_1, 'subir'),
-        ]
-        operaciones = {
-            'subir': lambda t: t.subir(),
-            'bajar': lambda t: t.bajar(),
-            'tope': lambda t: t.ir_al_tope(),
-        }
-        for ticket, op in secuencia:
-            operaciones[op](ticket)
-            self._assert_invariantes()
-
-        # Y debe seguir habiendo dos de cada prioridad, en orden no creciente.
-        self.assertEqual(self._prioridades_en_orden(self._cola()), [3, 3, 2, 2, 1, 1])
 
 
 class RegistrarTicketEmergenciaViewTests(TestCase):
@@ -914,7 +647,7 @@ class RegistrarTicketEmergenciaViewTests(TestCase):
         ticket = Ticket.objects.get(paciente=paciente)
         self.assertEqual(ticket.servicio, Ticket.SERVICIO_EMERGENCIA_IGSS)
         self.assertEqual(ticket.estado, Ticket.ESTADO_EN_ESPERA)
-        self.assertEqual(ticket.prioridad, Ticket.PRIORIDAD_CRITICA)
+        self.assertEqual(ticket.prioridad, Ticket.PRIORIDAD_URGENTE)
         self.assertEqual(ticket.registrado_por, self.usuario)
 
     def test_registrar_ticket_reutiliza_paciente_existente_por_dpi(self):
@@ -926,7 +659,7 @@ class RegistrarTicketEmergenciaViewTests(TestCase):
         ticket = Ticket.objects.get()
         self.assertEqual(ticket.paciente_id, paciente_existente.id)
 
-    def test_registrar_ticket_no_pisa_datos_ya_guardados_pero_completa_los_vacios(self):
+    def test_registrar_ticket_no_pisa_nombre_pero_actualiza_contacto_y_completa_vacios(self):
         crear_paciente(
             dpi='6666666666666', nombre='Nombre Viejo', telefono='00000000',
             sexo='', fecha_nacimiento=None,
@@ -935,9 +668,10 @@ class RegistrarTicketEmergenciaViewTests(TestCase):
         self.client.post(reverse('registrar_ticket_emergencia'), self.datos_formulario)
 
         paciente = Paciente.objects.get(dpi='6666666666666')
-        # Lo que ya estaba guardado NO se cambia, aunque el form traiga otra cosa.
+        # El nombre ya guardado NO se cambia, aunque el form traiga otra cosa.
         self.assertEqual(paciente.nombre, 'Nombre Viejo')
-        self.assertEqual(paciente.telefono, '00000000')
+        # El teléfono SÍ se corrige.
+        self.assertEqual(paciente.telefono, '55551234')
         # Lo que estaba vacío SÍ se completa.
         self.assertEqual(paciente.sexo, Paciente.SEXO_MASCULINO)
         self.assertEqual(paciente.fecha_nacimiento, datetime.date(1985, 3, 10))
@@ -952,104 +686,26 @@ class RegistrarTicketEmergenciaViewTests(TestCase):
         self.assertEqual(Ticket.objects.count(), 0)
 
 
-class ReporteDiarioFinDeDiaTests(TestCase):
-    """Cambio 1B: el reporte del día de HOY puede verse y enviarse a partir
-    de las 18:00 (cuando termina el día operativo), pero no antes. Las vistas
-    usan timezone.localtime()/localdate(), así que se simulan distintas horas
-    del día congelando esas funciones en django.utils.timezone."""
+class HistorialPacientesBusquedaTests(TestCase):
+    """La lista "Estudios realizados" también se puede buscar por el N° de
+    expediente que el sistema le asigna a cada paciente."""
 
     def setUp(self):
-        self.recepcionista = crear_usuario('recep_reportes', rol=Usuario.ROL_RECEPCIONISTA)
-        self.client.force_login(self.recepcionista)
-        self.hoy = timezone.localdate()
-        self.convenio = Cita.CONVENIO_COEX
-        self.crear_reporte = lambda fecha: ReporteDiario.objects.create(
-            convenio=self.convenio, fecha=fecha,
-        )
+        self.recepcion = crear_usuario('recep_historial', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(self.recepcion)
+        self.paciente = crear_paciente(dpi='4004004004001', nombre='Elena', apellido='Ramírez')
+        crear_cita(self.recepcion, paciente=self.paciente, estado=Cita.ESTADO_PROCESADA)
+        self.otro = crear_paciente(dpi='4004004004002', nombre='Otro', apellido='Paciente')
+        crear_cita(self.recepcion, paciente=self.otro, estado=Cita.ESTADO_PROCESADA)
 
-    def _fijar_hora(self, hora):
-        """Congela timezone.localtime() a un día/hora local dados, de modo
-        que timezone.localdate() derive de ahí."""
-        fijo = timezone.make_aware(datetime.datetime.combine(self.hoy, hora))
-        return mock.patch('django.utils.timezone.localtime', return_value=fijo)
+    def test_busca_por_numero_de_expediente(self):
+        respuesta = self.client.get(reverse('historial_pacientes'), {'q': self.paciente.expediente})
+        encontrados = [p.id for p in respuesta.context['pacientes']]
+        self.assertEqual(encontrados, [self.paciente.id])
 
-    def test_antes_de_las_18_no_se_lista_el_reporte_de_hoy(self):
-        self.crear_reporte(self.hoy)
-        self.crear_reporte(self.hoy - datetime.timedelta(days=1))
-        fecha_url = f'lista_reportes_diarios_{self.convenio}'
-
-        with self._fijar_hora(datetime.time(10, 0)):
-            # 18:00 justo no termina el día: se espera 00:00..17:59.
-            respuesta = self.client.get(reverse(fecha_url))
-
-        fechas = list(r.fecha for r in respuesta.context['reportes'])
-        self.assertNotIn(self.hoy, fechas)
-        self.assertIn(self.hoy - datetime.timedelta(days=1), fechas)
-
-    def test_desde_las_18_se_lista_el_reporte_de_hoy(self):
-        self.crear_reporte(self.hoy)
-        self.crear_reporte(self.hoy - datetime.timedelta(days=1))
-        fecha_url = f'lista_reportes_diarios_{self.convenio}'
-
-        with self._fijar_hora(datetime.time(18, 0)):
-            respuesta = self.client.get(reverse(fecha_url))
-
-        fechas = list(r.fecha for r in respuesta.context['reportes'])
-        self.assertIn(self.hoy, fechas)
-
-    def test_no_se_puede_enviar_el_reporte_de_hoy_antes_de_las_18(self):
-        reporte = self.crear_reporte(self.hoy)
-        url = reverse('enviar_reporte_diario', args=[self.convenio, self.hoy])
-
-        with self._fijar_hora(datetime.time(17, 59)):
-            respuesta = self.client.post(url)
-
-        self.assertRedirects(respuesta, reverse('ver_reporte_diario', args=[self.convenio, self.hoy]))
-        reporte.refresh_from_db()
-        self.assertEqual(reporte.estado, ReporteDiario.ESTADO_BORRADOR)
-
-    def test_desde_las_18_si_se_puede_enviar_el_reporte_de_hoy(self):
-        reporte = self.crear_reporte(self.hoy)
-        url = reverse('enviar_reporte_diario', args=[self.convenio, self.hoy])
-
-        with self._fijar_hora(datetime.time(18, 0)):
-            respuesta = self.client.post(url)
-
-        self.assertRedirects(respuesta, reverse('ver_reporte_diario', args=[self.convenio, self.hoy]))
-        reporte.refresh_from_db()
-        self.assertEqual(reporte.estado, ReporteDiario.ESTADO_ENVIADO)
-        self.assertEqual(reporte.enviado_por, self.recepcionista)
-        self.assertIsNotNone(reporte.enviado_en)
-
-    def test_no_se_puede_enviar_un_reporte_de_fecha_futura(self):
-        reporte_futuro = ReporteDiario.objects.create(
-            convenio=self.convenio, fecha=self.hoy + datetime.timedelta(days=1),
-        )
-        url = reverse(
-            'enviar_reporte_diario',
-            args=[self.convenio, reporte_futuro.fecha.strftime('%Y-%m-%d')],
-        )
-
-        respuesta = self.client.post(url)
-
-        self.assertRedirects(
-            respuesta, reverse('ver_reporte_diario', args=[self.convenio, reporte_futuro.fecha]),
-        )
-        reporte_futuro.refresh_from_db()
-        self.assertEqual(reporte_futuro.estado, ReporteDiario.ESTADO_BORRADOR)
-
-    def test_si_se_puede_enviar_un_reporte_de_ayer(self):
-        # Sin congelar la hora: hoy cualquiera, ayer ya terminó.
-        reporte_ayer = self.crear_reporte(self.hoy - datetime.timedelta(days=1))
-        url = reverse(
-            'enviar_reporte_diario',
-            args=[self.convenio, reporte_ayer.fecha.strftime('%Y-%m-%d')],
-        )
-
-        self.client.post(url)
-
-        reporte_ayer.refresh_from_db()
-        self.assertEqual(reporte_ayer.estado, ReporteDiario.ESTADO_ENVIADO)
+    def test_la_lista_muestra_el_expediente(self):
+        respuesta = self.client.get(reverse('historial_pacientes'))
+        self.assertContains(respuesta, f'Expediente: {self.paciente.expediente}')
 
 
 class BuscarPacientePorDpiViewTests(TestCase):
@@ -1128,128 +784,68 @@ class AgendarCitaViewTests(TestCase):
         cita = Cita.objects.get(paciente__dpi='2020202020202')
         self.assertEqual(cita.paciente_id, paciente_existente.id)
 
-    def test_agendar_cita_no_pisa_datos_ya_guardados_pero_completa_los_vacios(self):
+    def test_agendar_cita_no_pisa_datos_ya_guardados_pero_actualiza_contacto(self):
         crear_paciente(
             dpi='2020202020202', nombre='Nombre Viejo', telefono='00000000',
-            sexo='', fecha_nacimiento=None, correo=None,
+            sexo='', fecha_nacimiento=None, correo='viejo@correo.com',
         )
 
         self.client.post(self._url(), self.datos_formulario)
 
         paciente = Paciente.objects.get(dpi='2020202020202')
-        # Datos ya guardados: intactos.
+        # Nombre/apellido ya guardados: intactos.
         self.assertEqual(paciente.nombre, 'Nombre Viejo')
-        self.assertEqual(paciente.telefono, '00000000')
-        # Datos que estaban vacíos: se completan desde el formulario.
-        self.assertEqual(paciente.sexo, Paciente.SEXO_MASCULINO)
+        # Teléfono y correo SÍ se corrigen desde el formulario.
+        self.assertEqual(paciente.telefono, '55599999')
         self.assertEqual(paciente.correo, 'luis.marroquin@correo.com')
+        # Datos que estaban vacíos: se completan.
+        self.assertEqual(paciente.sexo, Paciente.SEXO_MASCULINO)
 
+    def test_estudio_con_un_solo_radiologo_se_asigna_solo(self):
+        datos = dict(self.datos_formulario, radiologo='')
+        self.client.post(self._url(), datos)
+        cita = Cita.objects.get(paciente__dpi='2020202020202')
+        self.assertEqual(cita.radiologo, self.radiologo)
 
-class FiltroEstudioRadiologoTests(TestCase):
+    def test_estudio_con_varios_radiologos_exige_elegir_uno(self):
+        otro = crear_usuario('radiologa_2', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.tipo_estudio.radiologos.add(otro)
 
-    def setUp(self):
-        self.recepcionista = crear_usuario('recep_filtro', rol=Usuario.ROL_RECEPCIONISTA)
-        self.client.force_login(self.recepcionista)
-        self.estudio = TipoEstudio.objects.create(nombre='Radiografía de tórax filtro')
-        self.otro_estudio = TipoEstudio.objects.create(nombre='Ultrasonido filtro')
-        self.estudio_sin_radiologo = TipoEstudio.objects.create(nombre='Mamografía sin asignar')
-        self.radiologo_a = crear_usuario('radiologa_filtro_a', rol=Usuario.ROL_MEDICO_RADIOLOGO)
-        self.radiologo_b = crear_usuario('radiologo_filtro_b', rol=Usuario.ROL_MEDICO_RADIOLOGO)
-        # En el M2M pueden quedar usuarios inactivos o de otro rol: no deben
-        # aparecer en data-radiologos (el campo y el endpoint tampoco los ofrecen).
-        self.radiologo_inactivo = crear_usuario(
-            'radiologa_inactiva', rol=Usuario.ROL_MEDICO_RADIOLOGO, is_active=False,
-        )
-        self.no_radiologo = crear_usuario('secretaria_en_m2m', rol=Usuario.ROL_RECEPCIONISTA)
-        self.estudio.radiologos.add(self.radiologo_a, self.radiologo_b)
-        self.estudio.radiologos.add(self.radiologo_inactivo, self.no_radiologo)
-        self.otro_estudio.radiologos.add(self.radiologo_a)
-        self.manana = timezone.localdate() + datetime.timedelta(days=1)
+        datos = dict(self.datos_formulario, radiologo='')
+        respuesta = self.client.post(self._url(), datos)
 
-    def _url(self):
-        return f"{reverse('agendar_cita_coex')}?fecha={self.manana}&hora=10:00"
+        self.assertFalse(Cita.objects.filter(paciente__dpi='2020202020202').exists())
+        self.assertContains(respuesta, 'varios radiólogos')
 
-    def _opcion_html(self, contenido, estudio_id):
-        marca = f'value="{estudio_id}"'
-        inicio = contenido.find(marca)
-        self.assertNotEqual(inicio, -1, f'No se encontró la opción del estudio {estudio_id}')
-        return contenido[inicio:contenido.find('>', inicio)]
+        datos['radiologo'] = otro.id
+        self.client.post(self._url(), datos)
+        cita = Cita.objects.get(paciente__dpi='2020202020202')
+        self.assertEqual(cita.radiologo, otro)
 
-    def test_el_select_de_estudio_lleva_data_radiologos_en_cada_opcion(self):
-        respuesta = self.client.get(self._url())
-        contenido = respuesta.content.decode()
-
-        # El estudio lo realizan dos radiólogos: ambos ids en el atributo.
-        opcion = self._opcion_html(contenido, self.estudio.id)
-        self.assertIn(f'data-radiologos="{self.radiologo_a.id},{self.radiologo_b.id}"', opcion)
-        # Un estudio de un solo radiólogo: solo su id.
-        self.assertIn(
-            f'data-radiologos="{self.radiologo_a.id}"',
-            self._opcion_html(contenido, self.otro_estudio.id),
-        )
-        # Sin radiólogos asignados: el atributo no se emite.
-        self.assertNotIn('data-radiologos', self._opcion_html(contenido, self.estudio_sin_radiologo.id))
-
-    def test_el_servidor_rechaza_radiologo_que_no_realiza_el_estudio(self):
-        datos = {
-            'dpi': '3030303030303',
-            'nombre': 'Karla',
-            'apellido': 'Soto',
-            'sexo': Paciente.SEXO_FEMENINO,
-            'telefono': '',
-            'correo': 'karla.soto@correo.com',
-            'fecha_nacimiento': '1990-01-01',
-            'carnet_igss': '3030303030',
-            'tipo_estudio': self.estudio.id,
-            'radiologo': self.radiologo_a.id,
-            'fecha': self.manana,
-            'hora': '10:00',
-            'notas': '',
-        }
-        # Radiólogo sin relación alguna con el estudio elegido: el servidor
-        # debe rechazar la combinación aunque el JS no llegue a ejecutarse.
-        radiologo_sin_estudio = crear_usuario('memo_filtro', rol=Usuario.ROL_MEDICO_RADIOLOGO)
-        datos['radiologo'] = radiologo_sin_estudio.id
+    def test_estudio_sin_radiologos_no_se_puede_agendar(self):
+        sin_rad = TipoEstudio.objects.create(nombre='Estudio sin radiologo')
+        datos = dict(self.datos_formulario, tipo_estudio=sin_rad.id, radiologo='')
 
         respuesta = self.client.post(self._url(), datos)
 
-        self.assertNotEqual(respuesta.status_code, 302)
-        self.assertContains(respuesta, 'no realiza estudios de')
-        self.assertEqual(Cita.objects.count(), 0)
+        self.assertFalse(Cita.objects.filter(paciente__dpi='2020202020202').exists())
+        self.assertContains(respuesta, 'no tiene radiólogos asignados')
 
-    def test_data_radiologos_omite_inactivos_y_usuarios_de_otro_rol(self):
-        respuesta = self.client.get(self._url())
-        opcion = self._opcion_html(respuesta.content.decode(), self.estudio.id)
+    def test_no_permite_agendar_el_mismo_estudio_dos_veces_al_mismo_horario(self):
+        self.client.post(self._url(), self.datos_formulario)
 
-        # Aunque el M2M tiene tambien un radiólogo inactivo y un usuario de
-        # otro rol, solo deben aparecer los radiólogos activos (a y b).
-        self.assertIn(f'data-radiologos="{self.radiologo_a.id},{self.radiologo_b.id}"', opcion)
-        self.assertNotIn(str(self.radiologo_inactivo.id), opcion)
-        self.assertNotIn(str(self.no_radiologo.id), opcion)
+        respuesta = self.client.post(self._url(), self.datos_formulario)
 
-    def test_el_modulo_privado_tambien_emite_data_radiologos(self):
-        url = f"{reverse('agendar_cita_privado')}?fecha={self.manana}&hora=10:00"
-        respuesta = self.client.get(url)
-        contenido = respuesta.content.decode()
-
-        self.assertIn(
-            f'data-radiologos="{self.radiologo_a.id},{self.radiologo_b.id}"',
-            self._opcion_html(contenido, self.estudio.id),
+        self.assertEqual(
+            Cita.objects.filter(
+                paciente__dpi='2020202020202',
+                tipo_estudio=self.tipo_estudio,
+                fecha=self.manana,
+                hora='10:00',
+            ).count(),
+            1,
         )
-        self.assertNotIn('data-radiologos', self._opcion_html(contenido, self.estudio_sin_radiologo.id))
-
-    def test_el_template_agendar_cita_incluye_el_filtro_inverso(self):
-        plantilla = os.path.join(
-            os.path.dirname(__file__), 'templates', 'pacientes', 'agendar_cita.html',
-        )
-        with open(plantilla, encoding='utf-8') as archivo:
-            contenido = archivo.read()
-
-        # El JS del filtro radiólogo -> estudio está conectado al combo y
-        # usa el atributo data-radiologos (regresión guard de la parte del
-        # Bloque 3 que solo se ejecuta en el navegador).
-        self.assertIn("radiologoSelect.addEventListener('change', filtrarEstudios)", contenido)
-        self.assertIn("opcion.getAttribute('data-radiologos')", contenido)
+        self.assertContains(respuesta, 'ya tiene agendado ese mismo estudio')
 
 
 class PantallaTurnosViewTests(TestCase):
@@ -1283,7 +879,8 @@ class PantallaTurnosViewTests(TestCase):
             paciente=p2, servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario,
         )
         ticket_emergencia = Ticket.objects.create(
-            paciente=p3, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS, registrado_por=self.usuario,
+            paciente=p3, servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
+            prioridad=Ticket.PRIORIDAD_URGENTE, registrado_por=self.usuario,
         )
 
         respuesta = self.client.get(reverse('pantalla_turnos'))
@@ -1307,149 +904,259 @@ class PantallaTurnosViewTests(TestCase):
         respuesta = self.client.get(reverse('pantalla_turnos'))
         self.assertEqual(respuesta.context['actual'], ticket_2)
 
+    def test_mover_turno_sube_y_baja_una_posicion(self):
+        p1, p2, p3 = (crear_paciente(dpi=f'{n:013d}') for n in (30, 31, 32))
+        t1 = Ticket.objects.create(paciente=p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
+        t2 = Ticket.objects.create(paciente=p2, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
+        t3 = Ticket.objects.create(paciente=p3, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
 
-class ReordenarTurnoViewTests(TestCase):
+        self.client.post(reverse('mover_turno', args=[t3.id]), {'direccion': 'subir'})
+        cola = list(Ticket.objects.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden'))
+        self.assertEqual(cola, [t1, t3, t2])
+
+        self.client.post(reverse('mover_turno', args=[t3.id]), {'direccion': 'bajar'})
+        cola = list(Ticket.objects.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden'))
+        self.assertEqual(cola, [t1, t2, t3])
+
+    def test_procesar_turno_de_cita_genera_orden_y_marca_atendido(self):
+        recepcion = self.usuario
+        radiologo = crear_usuario('rad_turno', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        estudio = TipoEstudio.objects.create(nombre='RX turno')
+        estudio.radiologos.add(radiologo)
+        cita = crear_cita(
+            recepcion, tipo_estudio=estudio, convenio=Cita.CONVENIO_COEX,
+            estado=Cita.ESTADO_AGENDADA, radiologo=radiologo, notas='Dolor lumbar',
+            hora_llegada=timezone.now(),
+            paciente=crear_paciente(dpi='4040404040404'),
+        )
+        ticket = Ticket.objects.create(
+            paciente=cita.paciente, cita=cita, servicio=Ticket.SERVICIO_COEX,
+            registrado_por=recepcion,
+        )
+
+        respuesta = self.client.post(reverse('procesar_turno', args=[ticket.id]))
+
+        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
+        cita.refresh_from_db()
+        ticket.refresh_from_db()
+        self.assertEqual(cita.estado, Cita.ESTADO_EN_PROCESO)
+        self.assertTrue(OrdenTrabajo.objects.filter(cita=cita).exists())
+        self.assertEqual(OrdenTrabajo.objects.get(cita=cita).motivo, 'Dolor lumbar')
+        self.assertEqual(ticket.estado, Ticket.ESTADO_ATENDIDO)
+
+    def test_procesar_turno_de_cita_ya_procesada_solo_saca_el_turno(self):
+        recepcion = self.usuario
+        cita = crear_cita(
+            recepcion, convenio=Cita.CONVENIO_COEX, estado=Cita.ESTADO_PROCESADA,
+            hora_llegada=timezone.now(), paciente=crear_paciente(dpi='6060606060606'),
+        )
+        ticket = Ticket.objects.create(
+            paciente=cita.paciente, cita=cita, servicio=Ticket.SERVICIO_COEX,
+            registrado_por=recepcion,
+        )
+
+        respuesta = self.client.post(reverse('procesar_turno', args=[ticket.id]))
+
+        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.estado, Ticket.ESTADO_ATENDIDO)
+
+    def test_procesar_turno_de_emergencia_sin_cita_va_a_su_pantalla(self):
+        ticket = Ticket.objects.create(
+            paciente=crear_paciente(dpi='5050505050505'),
+            servicio=Ticket.SERVICIO_EMERGENCIA_IGSS, registrado_por=self.usuario,
+        )
+        respuesta = self.client.post(reverse('procesar_turno', args=[ticket.id]))
+        self.assertRedirects(
+            respuesta, reverse('procesar_ticket_emergencia', args=[ticket.id]),
+            target_status_code=200,
+        )
+
+
+class PantallaSalaEsperaTests(TestCase):
+    """Pantalla pública (sin login) para el televisor de la sala de espera:
+    muestra el último turno llamado y los próximos en espera."""
 
     def setUp(self):
-        self.usuario = crear_usuario('recepcionista_reordenar', rol=Usuario.ROL_RECEPCIONISTA)
-        self.client.force_login(self.usuario)
-        self.p1, self.p2, self.p3 = (crear_paciente(dpi=f'{n:013d}') for n in (52, 53, 54))
-        self.t1 = Ticket.objects.create(paciente=self.p1, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        self.t2 = Ticket.objects.create(paciente=self.p2, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
-        self.t3 = Ticket.objects.create(paciente=self.p3, servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario)
+        self.usuario = crear_usuario('recepcionista_sala_espera', rol=Usuario.ROL_RECEPCIONISTA)
 
-    def _cola_vista(self):
-        return list(self.client.get(reverse('pantalla_turnos')).context['cola'])
+    def test_no_requiere_login(self):
+        respuesta = self.client.get(reverse('pantalla_sala_espera'))
+        self.assertEqual(respuesta.status_code, 200)
 
-    def test_subir_reordena_y_registra_bitacora(self):
-        respuesta = self.client.post(reverse('reordenar_turno', args=[self.t3.id, 'subir']))
+    def test_sin_turno_atendido_no_hay_actual(self):
+        Ticket.objects.create(
+            paciente=crear_paciente(dpi='1231231231231'),
+            servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
+        )
 
-        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
-        self.assertEqual(self._cola_vista(), [self.t1, self.t3, self.t2])
-        ultimo = Bitacora.objects.filter(
-            accion=Bitacora.ACCION_REORDENAR_TICKET, usuario=self.usuario,
-        ).order_by('-id').first()
-        self.assertIsNotNone(ultimo)
-        self.assertIn(self.t3.turno, ultimo.descripcion)
+        respuesta = self.client.get(reverse('pantalla_sala_espera'))
 
-    def test_bajar_reordena_y_registra_bitacora(self):
-        self.client.post(reverse('reordenar_turno', args=[self.t1.id, 'bajar']))
-        self.assertEqual(self._cola_vista(), [self.t2, self.t1, self.t3])
+        self.assertIsNone(respuesta.context['actual'])
 
-    def test_tope_reordena_y_registra_bitacora(self):
-        self.client.post(reverse('reordenar_turno', args=[self.t3.id, 'tope']))
-        self.assertEqual(self._cola_vista(), [self.t3, self.t1, self.t2])
+    def test_actual_es_el_ultimo_ticket_atendido(self):
+        Ticket.objects.create(
+            paciente=crear_paciente(dpi='1112223334441', nombre='Primero', apellido='Viejo'),
+            servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
+            estado=Ticket.ESTADO_ATENDIDO, atendido_en=timezone.now() - datetime.timedelta(minutes=5),
+        )
+        ultimo = Ticket.objects.create(
+            paciente=crear_paciente(dpi='1112223334442', nombre='Ultimo', apellido='Nuevo'),
+            servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario,
+            estado=Ticket.ESTADO_ATENDIDO, atendido_en=timezone.now(),
+        )
 
-    def test_get_devuelve_405(self):
-        respuesta = self.client.get(reverse('reordenar_turno', args=[self.t2.id, 'subir']))
-        self.assertEqual(respuesta.status_code, 405)
+        respuesta = self.client.get(reverse('pantalla_sala_espera'))
 
-    def test_direccion_invalida_redirige_sin_cambiar_la_cola(self):
-        respuesta = self.client.post(reverse('reordenar_turno', args=[self.t2.id, 'lateral']))
+        self.assertEqual(respuesta.context['actual']['turno'], ultimo.turno)
 
-        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
-        self.assertEqual(self._cola_vista(), [self.t1, self.t2, self.t3])
+    def test_el_paciente_se_muestra_solo_con_iniciales(self):
+        Ticket.objects.create(
+            paciente=crear_paciente(
+                dpi='1112223334449', nombre='Elmer Adrián', apellido='Melendrez Catalán',
+            ),
+            servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
+            estado=Ticket.ESTADO_ATENDIDO, atendido_en=timezone.now(),
+        )
 
-    def test_operacion_sin_efecto_redirige_sin_mover(self):
-        # t1 es el primero de su bloque: no puede subir, no se mueve nada.
-        respuesta = self.client.post(reverse('reordenar_turno', args=[self.t1.id, 'subir']))
+        respuesta = self.client.get(reverse('pantalla_sala_espera'))
 
-        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
-        self.assertEqual(self._cola_vista(), [self.t1, self.t2, self.t3])
+        self.assertEqual(respuesta.context['actual']['paciente'], 'E. A. M. C.')
+        self.assertNotContains(respuesta, 'Melendrez')
 
-    def test_ticket_atendido_da_404(self):
-        self.t2.estado = Ticket.ESTADO_ATENDIDO
-        self.t2.atendido_en = timezone.now()
-        self.t2.save(update_fields=['estado', 'atendido_en'])
+    def test_estado_sala_espera_devuelve_json_con_radiologo_y_sala(self):
+        radiologo = crear_usuario('rad_sala', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        radiologo.first_name, radiologo.last_name, radiologo.sala = 'Juan', 'Pérez', 'Sala 2'
+        radiologo.save()
+        cita = crear_cita(
+            self.usuario, radiologo=radiologo, estado=Cita.ESTADO_EN_PROCESO,
+            paciente=crear_paciente(dpi='1112223334450', nombre='Ana', apellido='Gómez'),
+        )
+        Ticket.objects.create(
+            paciente=cita.paciente, cita=cita, servicio=Ticket.SERVICIO_PRIVADO,
+            registrado_por=self.usuario, estado=Ticket.ESTADO_ATENDIDO, atendido_en=timezone.now(),
+        )
 
-        respuesta = self.client.post(reverse('reordenar_turno', args=[self.t2.id, 'subir']))
-        self.assertEqual(respuesta.status_code, 404)
+        data = self.client.get(reverse('estado_sala_espera')).json()
 
-    def test_ticket_de_otro_dia_no_se_puede_reordenar(self):
-        ayer = timezone.localdate() - datetime.timedelta(days=1)
-        otro_paciente = crear_paciente(dpi='5555666677777')
-        ticket_ayer = Ticket.objects.create(
-            paciente=otro_paciente, servicio=Ticket.SERVICIO_COEX,
+        self.assertEqual(data['actual']['paciente'], 'A. G.')
+        self.assertEqual(data['actual']['radiologo'], 'Juan Pérez')
+        self.assertEqual(data['actual']['sala'], 'Sala 2')
+        self.assertNotIn('estudio', data['actual'])
+
+    def test_estado_sala_espera_sin_login_y_sin_turno(self):
+        data = self.client.get(reverse('estado_sala_espera')).json()
+        self.assertIsNone(data['actual'])
+        self.assertEqual(data['proximos'], [])
+
+    def test_proximos_son_los_en_espera_sin_incluir_al_ya_atendido(self):
+        atendido = Ticket.objects.create(
+            paciente=crear_paciente(dpi='1112223334443'),
+            servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
+            estado=Ticket.ESTADO_ATENDIDO, atendido_en=timezone.now(),
+        )
+        urgente = Ticket.objects.create(
+            paciente=crear_paciente(dpi='1112223334444'),
+            servicio=Ticket.SERVICIO_EMERGENCIA_IGSS, prioridad=Ticket.PRIORIDAD_URGENTE,
             registrado_por=self.usuario,
         )
-        # `creado_en` es auto_now_add; lo retrofechamos con update() para
-        # simular un turno registrado en un día distinto al de hoy.
-        Ticket.objects.filter(pk=ticket_ayer.pk).update(
-            creado_en=timezone.make_aware(datetime.datetime.combine(ayer, datetime.time(9, 0))),
-        )
-        ticket_ayer.refresh_from_db()
-
-        respuesta = self.client.post(reverse('reordenar_turno', args=[ticket_ayer.id, 'subir']))
-
-        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
-        ticket_ayer.refresh_from_db()
-        self.assertEqual(ticket_ayer.orden, ticket_ayer.numero)
-
-    def test_no_recepcionista_no_puede_reordenar(self):
-        self.client.force_login(crear_usuario('no_recep', rol=Usuario.ROL_MEDICO_RADIOLOGO))
-
-        respuesta = self.client.post(reverse('reordenar_turno', args=[self.t2.id, 'subir']))
-        self.assertNotEqual(respuesta.status_code, 200)  # deniega el acceso
-        cola = list(Ticket.objects.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden'))
-        self.assertEqual(cola, [self.t1, self.t2, self.t3])
-
-    def test_pantalla_marca_los_flags_de_reordenamiento(self):
-        respuesta = self.client.get(reverse('pantalla_turnos'))
-        flags = {t.id: (t.puede_subir, t.puede_bajar, t.puede_tope) for t in respuesta.context['cola']}
-        # t1: primero del bloque -> no subir ni tope; sí bajar.
-        self.assertEqual(flags[self.t1.id], (False, True, False))
-        # t2: en medio -> sí todo.
-        self.assertEqual(flags[self.t2.id], (True, True, True))
-        # t3: último del bloque -> sí subir y tope; no bajar.
-        self.assertEqual(flags[self.t3.id], (True, False, True))
-
-    def test_flags_respetan_los_tres_niveles_de_prioridad(self):
-        # Añadimos dos Urgentes entre los críticos y los normales.
-        urg_1 = Ticket.objects.create(paciente=crear_paciente(dpi='303132333340'),
-                                      servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario)
-        urg_1.prioridad = Ticket.PRIORIDAD_URGENTE
-        urg_1.save(update_fields=['prioridad'])
-        urg_2 = Ticket.objects.create(paciente=crear_paciente(dpi='303132333341'),
-                                      servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario)
-        urg_2.prioridad = Ticket.PRIORIDAD_URGENTE
-        urg_2.save(update_fields=['prioridad'])
-
-        respuesta = self.client.get(reverse('pantalla_turnos'))
-        cola = list(respuesta.context['cola'])
-        flags = {t.id: (t.puede_subir, t.puede_bajar, t.puede_tope) for t in cola}
-        prioritario = {t.id: t.prioridad for t in cola}
-
-        # La fila es [urg_1, urg_2, t1, t2, t3] (urgentes primero por prioridad).
-        self.assertEqual([t.id for t in cola][:2], [urg_1.id, urg_2.id])
-        self.assertEqual(prioritario[urg_2.id], Ticket.PRIORIDAD_URGENTE)
-        # urg_1: primero del bloque urgente -> no subir ni tope; sí bajar.
-        self.assertEqual(flags[urg_1.id], (False, True, False))
-        # urg_2: último del bloque urgente -> sí subir y tope; no bajar.
-        self.assertEqual(flags[urg_2.id], (True, False, True))
-        # t1: primero del bloque normal -> no subir ni tope; sí bajar.
-        self.assertEqual(flags[self.t1.id], (False, True, False))
-
-    def test_un_dia_que_no_es_hoy_no_muestra_botones_ni_flags(self):
-        ayer = timezone.localdate() - datetime.timedelta(days=1)
-        # Retrofechamos todos los tickets del día para simular ayer.
-        Ticket.objects.all().update(
-            creado_en=timezone.make_aware(datetime.datetime.combine(ayer, datetime.time(8, 0))),
+        normal = Ticket.objects.create(
+            paciente=crear_paciente(dpi='1112223334445'),
+            servicio=Ticket.SERVICIO_PRIVADO, registrado_por=self.usuario,
         )
 
-        respuesta = self.client.get(reverse('pantalla_turnos'), {'fecha': ayer.isoformat()})
+        respuesta = self.client.get(reverse('pantalla_sala_espera'))
 
-        self.assertEqual(respuesta.context['es_hoy'], False)
-        # En días que no son hoy no se anotan flags de reordenación...
-        for t in respuesta.context['cola']:
-            self.assertFalse(hasattr(t, 'puede_subir'))
-            self.assertFalse(hasattr(t, 'puede_bajar'))
-            self.assertFalse(hasattr(t, 'puede_tope'))
-        # ...y tampoco aparece el formulario de reordenación.
-        self.assertNotContains(respuesta, 'reordenar')
+        proximos = list(respuesta.context['proximos'])
+        self.assertEqual(proximos, [urgente, normal])
+        self.assertNotIn(atendido, proximos)
 
-    def test_el_boton_reordenar_se_renderiza_para_hoy(self):
-        respuesta = self.client.get(reverse('pantalla_turnos'))
-        self.assertContains(respuesta, 'reordenar')
+    def test_proximos_se_limitan_a_cuatro(self):
+        for n in range(6):
+            Ticket.objects.create(
+                paciente=crear_paciente(dpi=f'22233344455{n}'),
+                servicio=Ticket.SERVICIO_COEX, registrado_por=self.usuario,
+            )
+
+        respuesta = self.client.get(reverse('pantalla_sala_espera'))
+
+        self.assertEqual(len(respuesta.context['proximos']), 4)
+
+
+class GuardarSeleccionImagenesTests(TestCase):
+    """Al descartar imágenes de la galería: si el archivo físico está
+    bloqueado (WinError 5 en Windows) la operación no revienta — el estado
+    en la base de datos se actualiza igual y se avisa que quedaron huérfanos."""
+
+    def setUp(self):
+        import tempfile
+
+        from django.test import override_settings
+
+        self._media = tempfile.mkdtemp()
+        self._cm = override_settings(MEDIA_ROOT=self._media)
+        self._cm.enable()
+
+        self.radiologo = crear_usuario('rad_sel', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        recepcion = crear_usuario('recep_sel', rol=Usuario.ROL_RECEPCIONISTA)
+        self.cita = crear_cita(recepcion, estado=Cita.ESTADO_EN_PROCESO)
+        self.orden = OrdenTrabajo.objects.create(cita=self.cita, motivo='x', creada_por=recepcion)
+        self.tecnico = crear_usuario('tec_sel', rol=Usuario.ROL_TECNICO_IMAGENES)
+        self.img_marcada = ImagenEstudio.objects.create(
+            orden=self.orden, subida_por=self.tecnico, seleccionada=True,
+            archivo=SimpleUploadedFile('a.jpg', b'aaa'),
+        )
+        self.img_descartada = ImagenEstudio.objects.create(
+            orden=self.orden, subida_por=self.tecnico, seleccionada=True,
+            archivo=SimpleUploadedFile('b.jpg', b'bbb'),
+        )
+        self.client.force_login(self.radiologo)
+
+    def tearDown(self):
+        import shutil
+
+        self._cm.disable()
+        shutil.rmtree(self._media, ignore_errors=True)
+
+    def _post(self):
+        return self.client.post(
+            reverse('guardar_seleccion_imagenes', args=[self.orden.id]),
+            {'seleccionadas': [str(self.img_marcada.id)]},
+        )
+
+    def test_descarta_la_imagen_y_borra_el_archivo(self):
+        nombre = self.img_descartada.archivo.name
+        storage = self.img_descartada.archivo.storage
+
+        respuesta = self._post()
+
+        self.assertRedirects(respuesta, reverse('adjuntar_informe', args=[self.cita.id]))
+        self.assertFalse(ImagenEstudio.objects.filter(id=self.img_descartada.id).exists())
+        self.assertTrue(ImagenEstudio.objects.filter(id=self.img_marcada.id).exists())
+        self.assertFalse(storage.exists(nombre))
+
+    def test_archivo_bloqueado_no_revienta_y_avisa(self):
+        from django.contrib.messages import get_messages
+        from django.core.files.storage import FileSystemStorage
+
+        import pacientes.views as vistas
+
+        def denegado(self, name):
+            raise PermissionError(5, 'Acceso denegado')
+
+        original, sleep_real = FileSystemStorage.delete, vistas.time.sleep
+        FileSystemStorage.delete = denegado
+        vistas.time.sleep = lambda *_a, **_k: None
+        try:
+            respuesta = self._post()
+        finally:
+            FileSystemStorage.delete = original
+            vistas.time.sleep = sleep_real
+
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertFalse(ImagenEstudio.objects.filter(id=self.img_descartada.id).exists())
+        mensajes = [str(m) for m in get_messages(respuesta.wsgi_request)]
+        self.assertTrue(any('no se pudieron borrar' in m for m in mensajes))
 
 
 class ProcesarTicketEmergenciaViewTests(TestCase):
@@ -1783,244 +1490,248 @@ class NotificacionesPendientesViewTests(TestCase):
         self.assertFalse(ajena.leida)
 
 
-class Bloque6CombosTests(TestCase):
-    """Bloque 6A: combos de estudios con descuento opcional y su gestión."""
+class ComboModelTests(TestCase):
+    """Combo (portado de visual-andres): el precio se calcula al vuelo,
+    nada se guarda."""
 
     def setUp(self):
-        from decimal import Decimal
-
-        from pacientes.models import Combo, PrecioEstudio
-
-        self.Decimal = Decimal
-        self.admin = crear_usuario('admin_combo', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
-        self.recepcionista = crear_usuario('recep_combo', rol=Usuario.ROL_RECEPCIONISTA)
-
-        self.rx = TipoEstudio.objects.create(nombre='Rx tórax A/P')
-        self.rx_lat = TipoEstudio.objects.create(nombre='Rx tórax lateral')
-        for estudio in (self.rx, self.rx_lat):
-            PrecioEstudio.objects.create(
-                tipo_estudio=estudio, convenio=Cita.CONVENIO_PRIVADO,
-                horario_habil=True, precio=Decimal('300'),
-            )
-        self.combo = Combo.objects.create(nombre='Tórax completo')
-        self.combo.estudios.add(self.rx, self.rx_lat)
-
-    def test_total_es_la_suma_de_los_estudios_sin_descuento(self):
-        self.assertEqual(self.combo.total_para('privado', True), self.Decimal('600.00'))
-        self.assertEqual(self.combo.precio_referencia, self.Decimal('600.00'))
-
-    def test_total_aplica_descuento_cuando_corresponde(self):
-        self.combo.aplica_descuento = True
-        self.combo.porcentaje_descuento = self.Decimal('10')
-        self.combo.save()
-        self.assertEqual(self.combo.total_para('privado', True), self.Decimal('540.00'))
-
-    def test_descuento_invalido_ignora_el_porcentaje(self):
-        self.combo.aplica_descuento = True
-        self.combo.porcentaje_descuento = self.Decimal('0')
-        self.combo.save()
-        self.assertEqual(self.combo.total_para('privado', True), self.Decimal('600.00'))
-
-    def test_descuento_solo_aplica_si_esta_marcado(self):
-        self.combo.porcentaje_descuento = self.Decimal('20')
-        self.combo.save()
-        self.assertEqual(self.combo.total_para('privado', True), self.Decimal('600.00'))
-
-    def test_crear_combo_solo_admin_y_registra_bitacora(self):
-        self.client.force_login(self.recepcionista)
-        respuesta = self.client.get(reverse('lista_combos'))
-        self.assertEqual(respuesta.status_code, 302)
-
-        self.client.force_login(self.admin)
-        respuesta = self.client.post(reverse('crear_combo'), {
-            'nombre': 'Abdomen completo',
-            'estudios': [self.rx.id, self.rx_lat.id],
-            'activo': 'on',
-            'aplica_descuento': 'on',
-            'porcentaje_descuento': '15.00',
-        })
-        self.assertRedirects(respuesta, reverse('lista_combos'))
-        self.assertTrue(Bitacora.objects.filter(accion=Bitacora.ACCION_CREAR_COMBO).exists())
-
-    def test_editar_combo_registra_bitacora(self):
-        self.client.force_login(self.admin)
-        respuesta = self.client.post(
-            reverse('editar_combo', args=[self.combo.id]),
-            {
-                'nombre': 'Tórax completo (2 vistas)',
-                'estudios': [self.rx.id],
-                'activo': 'on',
-                'aplica_descuento': '',
-                'porcentaje_descuento': '0.00',
-            },
-        )
-        self.assertRedirects(respuesta, reverse('lista_combos'))
-        self.combo.refresh_from_db()
-        self.assertEqual(self.combo.nombre, 'Tórax completo (2 vistas)')
-        self.assertTrue(Bitacora.objects.filter(accion=Bitacora.ACCION_EDITAR_COMBO).exists())
-
-    def test_porcentaje_de_descuento_fuera_de_rango_se_rechaza(self):
-        self.client.force_login(self.admin)
-        respuesta = self.client.post(reverse('crear_combo'), {
-            'nombre': 'Combo inválido',
-            'estudios': [self.rx.id],
-            'activo': 'on',
-            'aplica_descuento': 'on',
-            'porcentaje_descuento': '150.00',
-        })
-        self.assertEqual(respuesta.status_code, 200)
-        self.assertContains(respuesta, 'entre 0 y 100')
-
-
-class Bloque6CobrosTests(TestCase):
-    """Bloque 6B/6C: registro de cobro/pago por caja y bloqueo
-    del envío de resultados si el estudio tiene un cobro pendiente."""
-
-    def setUp(self):
-        from decimal import Decimal
-
-        from pacientes.models import Cobro, PrecioEstudio
-
-        self.admin = crear_usuario('admin_cobro', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
-        self.recepcionista = crear_usuario('recep_cobro', rol=Usuario.ROL_RECEPCIONISTA)
-        self.caja = crear_usuario(
-            'caja_cobro', rol=Usuario.ROL_RECEPCIONISTA, puede_operar_caja=True,
-        )
-        self.tecnico = crear_usuario('tec_cobro', rol=Usuario.ROL_TECNICO_IMAGENES)
-
-        self.paciente = crear_paciente(correo='p@correo.clinica', dpi='9988776655443')
-        self.estudio = TipoEstudio.objects.create(nombre='Rx cobro')
+        self.e1 = TipoEstudio.objects.create(nombre='RX Torax combo')
+        self.e2 = TipoEstudio.objects.create(nombre='RX Columna combo')
         PrecioEstudio.objects.create(
-            tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
-            horario_habil=True, precio=Decimal('250'),
+            tipo_estudio=self.e1, convenio=Cita.CONVENIO_PRIVADO,
+            horario_habil=True, precio=Decimal('200'),
         )
-        self.cita = crear_cita(
-            self.recepcionista, paciente=self.paciente, tipo_estudio=self.estudio,
-            estado=Cita.ESTADO_PROCESADA,
-        )
-        self.orden = OrdenTrabajo.objects.create(
-            cita=self.cita, motivo='x', creada_por=self.recepcionista, informe_texto='Sin hallazgos.',
+        PrecioEstudio.objects.create(
+            tipo_estudio=self.e2, convenio=Cita.CONVENIO_PRIVADO,
+            horario_habil=True, precio=Decimal('300'),
         )
 
-    def test_marcar_cobrado_crea_cobro_pagado_y_registra_bitacora(self):
-        self.client.force_login(self.caja)
-        respuesta = self.client.post(reverse('marcar_cobrado', args=[self.cita.id]), {
-            'forma_pago': 'efectivo',
-            'numero_boleta': 'EF-001',
+    def test_total_para_suma_los_precios_de_sus_estudios(self):
+        combo = Combo.objects.create(nombre='Combo torax-columna')
+        combo.estudios.set([self.e1, self.e2])
+        self.assertEqual(combo.total_para(Cita.CONVENIO_PRIVADO, True), Decimal('500.00'))
+
+    def test_total_para_aplica_el_descuento(self):
+        combo = Combo.objects.create(
+            nombre='Combo con descuento', aplica_descuento=True, porcentaje_descuento=Decimal('10'),
+        )
+        combo.estudios.set([self.e1, self.e2])
+        self.assertEqual(combo.total_para(Cita.CONVENIO_PRIVADO, True), Decimal('450.00'))
+
+    def test_total_para_ignora_descuento_fuera_de_rango(self):
+        combo = Combo.objects.create(
+            nombre='Combo descuento invalido', aplica_descuento=True, porcentaje_descuento=Decimal('150'),
+        )
+        combo.estudios.set([self.e1, self.e2])
+        self.assertEqual(combo.total_para(Cita.CONVENIO_PRIVADO, True), Decimal('500.00'))
+
+    def test_precio_referencia_usa_privado_habil(self):
+        combo = Combo.objects.create(nombre='Combo ref')
+        combo.estudios.set([self.e1])
+        self.assertEqual(combo.precio_referencia, Decimal('200.00'))
+
+
+class ComboViewTests(TestCase):
+    """Los combos (catálogo) se administran íntegro por un administrador,
+    igual que Estudios."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_combo', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.recep = crear_usuario('recep_combo', rol=Usuario.ROL_RECEPCIONISTA)
+        self.estudio = TipoEstudio.objects.create(nombre='RX combo view')
+
+    def test_lista_combos_visible_para_administrador(self):
+        self.client.force_login(self.admin)
+        respuesta = self.client.get(reverse('lista_combos'))
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_lista_combos_no_visible_para_recepcionista(self):
+        self.client.force_login(self.recep)
+        respuesta = self.client.get(reverse('lista_combos'))
+        self.assertNotEqual(respuesta.status_code, 200)
+
+    def test_crear_combo_como_administrador(self):
+        self.client.force_login(self.admin)
+        respuesta = self.client.post(reverse('crear_combo'), {
+            'nombre': 'Combo nuevo', 'estudios': [self.estudio.id],
+            'activo': 'on', 'aplica_descuento': '', 'porcentaje_descuento': '0',
         })
+        self.assertRedirects(respuesta, reverse('lista_combos'))
+        self.assertTrue(Combo.objects.filter(nombre='Combo nuevo').exists())
+
+    def test_recepcionista_no_puede_crear_combo(self):
+        self.client.force_login(self.recep)
+        respuesta = self.client.get(reverse('crear_combo'))
+        self.assertNotEqual(respuesta.status_code, 200)
+
+
+class CajaTests(TestCase):
+    """Rol/permiso de Caja (portado de visual-andres, 2026-09-04): al
+    generar una orden se crea un Cobro pendiente; mientras no se marque
+    pagado, bloquea el envío de resultados; pagos_pendientes/marcar_cobrado
+    son solo para quien tiene el permiso puede_operar_caja (o admin)."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_caja', rol=Usuario.ROL_RECEPCIONISTA)
+        self.caja = crear_usuario(
+            'caja_operador', rol=Usuario.ROL_RECEPCIONISTA, puede_operar_caja=True,
+        )
+
+    def test_generar_orden_crea_un_cobro_pendiente(self):
+        cita = crear_cita(
+            self.recepcion, estado=Cita.ESTADO_AGENDADA, hora_llegada=timezone.now(),
+        )
+        self.client.force_login(self.recepcion)
+
+        respuesta = self.client.post(
+            reverse('generar_orden_privado', args=[cita.id]), {'motivo': 'Dolor lumbar'},
+        )
+
         self.assertEqual(respuesta.status_code, 302)
+        cobro = Cobro.objects.get(cita=cita)
+        self.assertEqual(cobro.estado, Cobro.ESTADO_PENDIENTE)
+        self.assertFalse(cobro.pagado)
 
-        from pacientes.models import Cobro
+    def test_pagos_pendientes_requiere_el_permiso_de_caja(self):
+        self.client.force_login(self.recepcion)
+        respuesta = self.client.get(reverse('pagos_pendientes'))
+        self.assertNotEqual(respuesta.status_code, 200)
 
-        cobro = Cobro.objects.get(cita=self.cita)
-        self.assertEqual(cobro.estado, Cobro.ESTADO_PAGADO)
-        self.assertTrue(cobro.pagado)
-        self.assertEqual(cobro.cobrado_por, self.caja)
-        self.assertEqual(cobro.numero_boleta, 'EF-001')
-        self.assertIsNotNone(cobro.pagado_en)
-        self.assertTrue(Bitacora.objects.filter(accion=Bitacora.ACCION_MARCAR_COBRADO).exists())
-
-    def test_marcar_cobrado_requiere_caja(self):
-        self.client.force_login(self.tecnico)
-        respuesta = self.client.post(reverse('marcar_cobrado', args=[self.cita.id]))
-        self.assertEqual(respuesta.status_code, 302)
-
-    def test_caja_puede_cobrar_orden_aun_en_proceso(self):
-        self.cita.estado = Cita.ESTADO_EN_PROCESO
-        self.cita.save(update_fields=['estado'])
-        self.client.force_login(self.caja)
-        respuesta = self.client.post(reverse('marcar_cobrado', args=[self.cita.id]), {
-            'forma_pago': 'transferencia',
-            'numero_boleta': 'TR-002',
-        })
-        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
-
-    def test_usuario_con_permiso_caja_puede_ver_dashboard(self):
+    def test_pagos_pendientes_visible_con_el_permiso(self):
         self.client.force_login(self.caja)
         respuesta = self.client.get(reverse('pagos_pendientes'))
         self.assertEqual(respuesta.status_code, 200)
 
-    def test_usuario_sin_permiso_caja_no_puede_ver_dashboard(self):
-        self.client.force_login(self.recepcionista)
-        respuesta = self.client.get(reverse('pagos_pendientes'))
-        self.assertEqual(respuesta.status_code, 302)
+    def test_pagos_pendientes_filtra_por_estado(self):
+        cita_pendiente = crear_cita(self.recepcion, estado=Cita.ESTADO_EN_PROCESO)
+        OrdenTrabajo.objects.create(cita=cita_pendiente, motivo='x', creada_por=self.recepcion)
+        cobro_pendiente = Cobro.objects.create(cita=cita_pendiente)
 
-    def test_boleta_pdf_disponible_despues_de_pagar(self):
+        cita_pagada = crear_cita(
+            self.recepcion, estado=Cita.ESTADO_PROCESADA,
+            paciente=crear_paciente(dpi='9998887776665'),
+        )
+        OrdenTrabajo.objects.create(cita=cita_pagada, motivo='x', creada_por=self.recepcion)
+        cobro_pagado = Cobro.objects.create(cita=cita_pagada)
+        cobro_pagado.marcar_pagado(self.caja)
+
         self.client.force_login(self.caja)
-        self.client.post(reverse('marcar_cobrado', args=[self.cita.id]), {
-            'forma_pago': 'efectivo',
-            'numero_boleta': 'PDF-001',
+        respuesta = self.client.get(reverse('pagos_pendientes'), {'estado': 'pagado'})
+
+        cobros = list(respuesta.context['pagina'])
+        self.assertIn(cobro_pagado, cobros)
+        self.assertNotIn(cobro_pendiente, cobros)
+
+    def test_marcar_cobrado_registra_forma_de_pago_y_boleta(self):
+        cita = crear_cita(self.recepcion, estado=Cita.ESTADO_EN_PROCESO)
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        Cobro.objects.create(cita=cita)
+        self.client.force_login(self.caja)
+
+        respuesta = self.client.post(reverse('marcar_cobrado', args=[cita.id]), {
+            'forma_pago': Cobro.FORMA_EFECTIVO, 'numero_boleta': 'B-001', 'notas': 'Pagó en caja',
         })
-        cobro = self.cita.cobro
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
+        cobro = Cobro.objects.get(cita=cita)
+        self.assertTrue(cobro.pagado)
+        self.assertEqual(cobro.forma_pago, Cobro.FORMA_EFECTIVO)
+        self.assertEqual(cobro.numero_boleta, 'B-001')
+        self.assertEqual(cobro.cobrado_por, self.caja)
+        self.assertIsNotNone(cobro.pagado_en)
+
+    def test_boleta_pago_pdf_solo_para_cobros_pagados(self):
+        cita = crear_cita(self.recepcion, estado=Cita.ESTADO_EN_PROCESO)
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        cobro = Cobro.objects.create(cita=cita)
+        self.client.force_login(self.caja)
+
+        respuesta = self.client.get(reverse('boleta_pago_pdf', args=[cobro.id]))
+        self.assertEqual(respuesta.status_code, 404)
+
+        cobro.marcar_pagado(self.caja)
         respuesta = self.client.get(reverse('boleta_pago_pdf', args=[cobro.id]))
         self.assertEqual(respuesta.status_code, 200)
         self.assertEqual(respuesta['Content-Type'], 'application/pdf')
         self.assertTrue(respuesta.content.startswith(b'%PDF'))
 
-    def test_dashboard_caja_filtra_por_fecha_y_pagina(self):
-        from datetime import timedelta
+    def test_comprobante_pagado_visible_para_recepcion_tecnico_y_radiologo(self):
+        cita = crear_cita(self.recepcion, estado=Cita.ESTADO_PROCESADA)
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        cobro = Cobro.objects.create(cita=cita)
+        cobro.marcar_pagado(self.caja)
 
-        for indice in range(21):
-            paciente = crear_paciente(dpi=f'8877665544{indice:03d}')
-            cita = crear_cita(
-                self.recepcionista, paciente=paciente, tipo_estudio=self.estudio,
-                fecha=self.cita.fecha + timedelta(days=indice),
-                estado=Cita.ESTADO_EN_PROCESO,
+        usuarios = [
+            crear_usuario('recep_comprobante', rol=Usuario.ROL_RECEPCIONISTA),
+            crear_usuario('tec_comprobante', rol=Usuario.ROL_TECNICO_IMAGENES),
+            crear_usuario('rad_comprobante', rol=Usuario.ROL_MEDICO_RADIOLOGO),
+        ]
+        for usuario in usuarios:
+            self.client.force_login(usuario)
+            respuesta = self.client.get(reverse('boleta_pago_pdf', args=[cobro.id]))
+            self.assertEqual(respuesta.status_code, 200)
+            self.assertEqual(respuesta['Content-Type'], 'application/pdf')
+
+    def test_boleta_no_muestra_carne_igss_en_estudios_privados(self):
+        from pacientes.views import datos_paciente_boleta
+
+        paciente = crear_paciente(dpi='7778889990001', carnet_igss='IGSS-123456')
+        cita_privada = crear_cita(
+            self.recepcion, paciente=paciente, convenio=Cita.CONVENIO_PRIVADO,
+        )
+        etiquetas = [e for e, _ in datos_paciente_boleta(cita_privada)]
+        self.assertNotIn('Carné IGSS:', etiquetas)
+
+    def test_boleta_muestra_carne_igss_en_estudios_coex_y_emergencia(self):
+        from pacientes.views import datos_paciente_boleta
+
+        for i, convenio in enumerate((Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS)):
+            paciente = crear_paciente(
+                dpi=f'88800000000{i}', carnet_igss=f'IGSS-77{i}',
             )
-            OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcionista)
-            from pacientes.models import Cobro
-            Cobro.objects.create(cita=cita)
-        self.client.force_login(self.caja)
-        respuesta = self.client.get(reverse('pagos_pendientes'), {
-            'desde': self.cita.fecha.isoformat(),
-            'hasta': (self.cita.fecha + timedelta(days=20)).isoformat(),
-        })
-        self.assertEqual(respuesta.status_code, 200)
-        self.assertEqual(respuesta.context['pagina'].paginator.per_page, 20)
-        self.assertEqual(respuesta.context['pagina'].paginator.count, 21)
+            cita = crear_cita(self.recepcion, paciente=paciente, convenio=convenio)
+            filas = dict(datos_paciente_boleta(cita))
+            self.assertEqual(filas['Carné IGSS:'], f'IGSS-77{i}')
 
-    def test_cobro_pendiente_bloquea_envio_de_resultados(self):
-        from pacientes.models import Cobro
+    def test_cobro_pendiente_bloquea_el_envio_de_resultados(self):
+        paciente = crear_paciente(dpi='1112223334446', correo='paciente@example.com')
+        cita = crear_cita(self.recepcion, paciente=paciente, estado=Cita.ESTADO_PROCESADA)
+        orden = OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        Cobro.objects.create(cita=cita)
+        self.client.force_login(self.recepcion)
 
-        Cobro.objects.create(cita=self.cita, estado=Cobro.ESTADO_PENDIENTE)
-        self.client.force_login(self.recepcionista)
+        self.client.post(reverse('enviar_estudio', args=[cita.id]))
 
-        with mock.patch('pacientes.views.enviar_resultados', return_value=True) as enviar:
-            respuesta = self.client.post(reverse('enviar_estudio', args=[self.cita.id]))
-            enviar.assert_not_called()
+        orden.refresh_from_db()
+        self.assertIsNone(orden.resultados_enviados_en)
 
-        self.orden.refresh_from_db()
-        self.assertIsNone(self.orden.resultados_enviados_en)
-        self.assertContains(self.client.get(reverse('historial_paciente', args=[self.paciente.id])), 'cobro')
+    def test_historial_paciente_desactiva_el_boton_de_enviar_si_hay_cobro_pendiente(self):
+        paciente = crear_paciente(dpi='1112223334448', correo='p3@example.com')
+        cita = crear_cita(self.recepcion, paciente=paciente, estado=Cita.ESTADO_PROCESADA)
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        cobro = Cobro.objects.create(cita=cita)
+        self.client.force_login(self.recepcion)
 
-    def test_cobro_pagado_no_bloquea_envio(self):
-        from pacientes.models import Cobro
+        html = self.client.get(
+            reverse('historial_paciente', args=[paciente.id])
+        ).content.decode('utf-8')
+        self.assertIn('Cobro pendiente', html)
+        self.assertIn('tiene un cobro pendiente', html)
+        self.assertIn('<button type="button" class="btn btn-primary btn-sm" disabled', html)
+        self.assertNotIn(f"{reverse('enviar_estudio', args=[cita.id])}", html)
 
-        Cobro.objects.create(cita=self.cita, estado=Cobro.ESTADO_PAGADO, pagado_en=timezone.now(),
-                             cobrado_por=self.recepcionista)
-        self.client.force_login(self.recepcionista)
+        cobro.marcar_pagado(self.caja)
+        html = self.client.get(
+            reverse('historial_paciente', args=[paciente.id])
+        ).content.decode('utf-8')
+        self.assertIn(f"{reverse('enviar_estudio', args=[cita.id])}", html)
+        self.assertIn('>Pagado</span>', html)
 
-        with mock.patch('pacientes.views.enviar_resultados', return_value=True) as enviar:
-            respuesta = self.client.post(reverse('enviar_estudio', args=[self.cita.id]))
+    def test_sin_cobro_no_bloquea_el_envio(self):
+        paciente = crear_paciente(dpi='1112223334447', correo='paciente2@example.com')
+        cita = crear_cita(self.recepcion, paciente=paciente, estado=Cita.ESTADO_PROCESADA)
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
 
-        enviar.assert_called_once()
-        self.assertRedirects(respuesta, reverse('historial_paciente', args=[self.paciente.id]))
-        self.orden.refresh_from_db()
-        self.assertIsNotNone(self.orden.resultados_enviados_en)
-
-    def test_sin_cobro_no_bloquea_envio(self):
-        self.client.force_login(self.recepcionista)
-        with mock.patch('pacientes.views.enviar_resultados', return_value=True) as enviar:
-            respuesta = self.client.post(reverse('enviar_estudio', args=[self.cita.id]))
-        enviar.assert_called_once()
-        self.orden.refresh_from_db()
-        self.assertIsNotNone(self.orden.resultados_enviados_en)
-
-    def test_historial_muestra_estado_de_cobro(self):
-        from pacientes.models import Cobro
-
-        Cobro.objects.create(cita=self.cita, estado=Cobro.ESTADO_PENDIENTE)
-        self.client.force_login(self.recepcionista)
-        respuesta = self.client.get(reverse('historial_paciente', args=[self.paciente.id]))
-        self.assertContains(respuesta, 'Cobro pendiente')
-        self.assertNotContains(respuesta, 'Confirmar cobro')
+        self.assertFalse(hasattr(cita, 'cobro'))
+        from pacientes.views import _cobro_bloquea_envio
+        self.assertFalse(_cobro_bloquea_envio(cita))

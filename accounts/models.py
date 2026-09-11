@@ -1,20 +1,22 @@
+import calendar
+import datetime
+
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, Group, Permission
 from django.db import models
 
 
 class Usuario(AbstractUser):
-    # Compatibilidad con registros históricos; ya no se ofrece ni se crea este rol.
-    ROL_ADMINISTRADOR_FINANCIERO = 'administrador_financiero'
     ROL_ADMINISTRADOR = 'administrador'
+    ROL_ADMINISTRADOR_FINANCIERO = 'administrador_financiero'
     ROL_RECEPCIONISTA = 'recepcionista'
-    ROL_CAJA = 'caja'
     ROL_TECNICO_IMAGENES = 'tecnico_imagenes'
     ROL_MEDICO_RADIOLOGO = 'medico_radiologo'
     ROL_MEDICO_REMITENTE = 'medico_remitente'
 
     ROL_CHOICES = [
         (ROL_ADMINISTRADOR, 'Administrador'),
+        (ROL_ADMINISTRADOR_FINANCIERO, 'Administrador financiero'),
         (ROL_RECEPCIONISTA, 'Recepcionista'),
         (ROL_TECNICO_IMAGENES, 'Técnico de imágenes'),
         (ROL_MEDICO_RADIOLOGO, 'Médico radiólogo'),
@@ -27,10 +29,23 @@ class Usuario(AbstractUser):
         default=ROL_ADMINISTRADOR,
         verbose_name='rol',
     )
+
+    # Permiso adicional, independiente del rol principal (típicamente se
+    # marca en una recepcionista): habilita la pantalla de Caja (pagos de
+    # estudios) sin tener que cambiarle el rol. Portado (2026-09-04) desde
+    # la rama visual-andres de TechBlood.
     puede_operar_caja = models.BooleanField(
         default=False,
         verbose_name='puede operar Caja',
         help_text='Permite consultar y registrar pagos de estudios.',
+    )
+
+    # Sala / consultorio donde atiende un radiólogo. Sale en la pantalla
+    # pública de sala de espera ("PASE A ...") cuando se llama a un turno
+    # asignado a ese radiólogo.
+    sala = models.CharField(
+        max_length=40, blank=True, verbose_name='sala / consultorio',
+        help_text='Solo para radiólogos: la sala donde atiende (ej. "Sala 1").',
     )
 
     # Salario fijo mensual del empleado, antes de comisiones. Se usa en la
@@ -97,7 +112,6 @@ class Bitacora(models.Model):
     ACCION_REGISTRAR_TICKET = 'registrar_ticket'
     ACCION_PROCESAR_TICKET = 'procesar_ticket'
     ACCION_ADELANTAR_TICKET = 'adelantar_ticket'
-    ACCION_REORDENAR_TICKET = 'reordenar_ticket'
     ACCION_AVANZAR_TURNO = 'avanzar_turno'
     ACCION_ENVIAR_REPORTE_DIARIO = 'enviar_reporte_diario'
     ACCION_REGISTRAR_PAGO_PLANILLA = 'registrar_pago_planilla'
@@ -128,7 +142,6 @@ class Bitacora(models.Model):
         (ACCION_REGISTRAR_TICKET, 'Registro de ticket / turno'),
         (ACCION_PROCESAR_TICKET, 'Procesamiento de ticket (genera orden de trabajo)'),
         (ACCION_ADELANTAR_TICKET, 'Adelantó un turno en la fila de espera'),
-        (ACCION_REORDENAR_TICKET, 'Reordenó un turno en la fila de espera'),
         (ACCION_AVANZAR_TURNO, 'Avanzó la pantalla de turnos (siguiente)'),
         (ACCION_ENVIAR_REPORTE_DIARIO, 'Envío de reporte diario'),
         (ACCION_REGISTRAR_PAGO_PLANILLA, 'Registro de pago de planilla'),
@@ -219,19 +232,17 @@ MESES_ES = [
 ]
 
 
-class PagoPlanilla(models.Model):
-    """Pago de planilla a un empleado por un mes: el monto pagado (con la
-    foto de la boleta / transferencia como comprobante) y quién lo registró.
-    Un solo pago por (empleado, mes)."""
+def etiqueta_mes(anio, mes):
+    mes = mes if 1 <= (mes or 0) <= 12 else 0
+    return f'{MESES_ES[mes]} {anio}'.strip()
 
-    usuario = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='pagos_planilla',
-    )
-    anio = models.PositiveIntegerField(verbose_name='año')
-    mes = models.PositiveSmallIntegerField()
-    salario_base = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    comisiones = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+class _PagoBase(models.Model):
+    """Campos comunes de un pago de planilla (salario o comisiones): el monto,
+    la foto de la boleta / transferencia como comprobante, la verificación por
+    OCR y quién lo registró."""
+
+    monto = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     comprobante = models.FileField(
         upload_to='comprobantes_planilla/%Y/%m/',
         verbose_name='comprobante (boleta o transferencia)',
@@ -243,86 +254,97 @@ class PagoPlanilla(models.Model):
         default=False,
         help_text='El OCR del comprobante confirmó el monto (y el número de boleta, si se indicó).',
     )
-<<<<<<< HEAD
-=======
-    es_adelanto = models.BooleanField(
-        default=False,
-        verbose_name='adelanto de sueldo',
-        help_text='Si se marca, permite procesar el pago aunque el mes no haya terminado o iniciado.',
-    )
->>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
     verificacion_nota = models.CharField(max_length=255, blank=True)
     notas = models.CharField(max_length=255, blank=True)
     registrado_por = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
-        related_name='pagos_planilla_registrados',
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='+',
     )
     creado_en = models.DateTimeField(auto_now_add=True)
     actualizado_en = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'pagos_planilla'
-        verbose_name = 'pago de planilla'
-        verbose_name_plural = 'pagos de planilla'
+        abstract = True
+
+
+class PagoSalario(_PagoBase):
+    """Pago del salario base de un empleado por un mes (un solo depósito a fin
+    de mes). Un pago por (empleado, mes)."""
+
+    TIPO = 'salario'
+
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='pagos_salario',
+    )
+    anio = models.PositiveIntegerField(verbose_name='año')
+    mes = models.PositiveSmallIntegerField()
+
+    class Meta:
+        db_table = 'pagos_salario'
+        verbose_name = 'pago de salario'
+        verbose_name_plural = 'pagos de salario'
         unique_together = ('usuario', 'anio', 'mes')
         ordering = ['-anio', '-mes']
 
     def __str__(self):
-        return f'{self.usuario} · {self.periodo_etiqueta} · Q{self.total}'
+        return f'Salario · {self.usuario} · {self.periodo_etiqueta} · Q{self.monto}'
 
     @property
     def periodo_etiqueta(self):
-        mes = self.mes if 1 <= self.mes <= 12 else 0
-        return f'{MESES_ES[mes]} {self.anio}'.strip()
+        return etiqueta_mes(self.anio, self.mes)
+
+    @property
+    def desde(self):
+        return datetime.date(self.anio, self.mes, 1)
+
+    @property
+    def hasta(self):
+        return datetime.date(self.anio, self.mes, calendar.monthrange(self.anio, self.mes)[1])
 
 
-class LineaComisionLiquidada(models.Model):
-    """Puente que recuerda qué comisiones (persona + cita + rol) cubrió un
-    PagoPlanilla.
+class PagoComision(_PagoBase):
+    """Pago de las comisiones de un empleado por un período (rango de fechas
+    libre: puede ser una semana, una quincena, un mes o cualquier rango).
 
-    Las comisiones se calculan al vuelo a partir de las citas procesadas; sin
-    esto, si una cita se reprocesa o un mes ya pagado vuelve a recalcularse,
-    el empleado cobraría dos veces la misma comisión. Al registrar un pago se
-    guarda una línea por cada comisión liquidada y, al recalcular la planilla,
-    se descuenta todo lo ya liquidado (solo se muestra el delta no pagado).
+    Qué comisiones cubre no se deduce del rango: se guardan una por una en
+    `PagoComisionLinea`, así una comisión ganada un día que ya se pagó a
+    medias (más estudios después del pago) queda pendiente para el próximo
+    pago aunque el rango se cruce."""
 
-    La unicidad (usuario, cita, rol) es global y a prueba de re-procesos: una
-    misma comisión solo se puede pagar una vez en la vida del sistema.
-    """
+    TIPO = 'comision'
 
-    rol_tecnico = 'tecnico'
-    rol_radiologo = 'radiologo'
-
-    ROL_EN_CITA_CHOICES = [
-        (rol_tecnico, 'Técnico'),
-        (rol_radiologo, 'Radiólogo'),
-    ]
-
-    pago = models.ForeignKey(
-        PagoPlanilla, on_delete=models.CASCADE, related_name='lineas',
-    )
     usuario = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
-        related_name='lineas_comision_liquidadas',
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='pagos_comision',
     )
-    cita = models.ForeignKey(
-        'pacientes.Cita', on_delete=models.PROTECT,
-        related_name='lineas_comision_liquidadas',
-    )
-    rol_en_cita = models.CharField(max_length=20, choices=ROL_EN_CITA_CHOICES)
-    comision = models.DecimalField(max_digits=10, decimal_places=2)
-    creado_en = models.DateTimeField(auto_now_add=True)
+    desde = models.DateField()
+    hasta = models.DateField(help_text='Último día del período, incluido.')
 
     class Meta:
-        db_table = 'lineas_comision_liquidadas'
-        verbose_name = 'línea de comisión liquidada'
-        verbose_name_plural = 'líneas de comisión liquidadas'
-        constraints = [
-            models.UniqueConstraint(
-                fields=['usuario', 'cita', 'rol_en_cita'],
-                name='uniq_linea_comision_liquidada',
-            ),
-        ]
+        db_table = 'pagos_comision'
+        verbose_name = 'pago de comisiones'
+        verbose_name_plural = 'pagos de comisiones'
+        ordering = ['-hasta', '-desde']
 
     def __str__(self):
-        return f'{self.usuario} · cita {self.cita_id} · {self.get_rol_en_cita_display()}'
+        return f'Comisiones · {self.usuario} · {self.periodo_etiqueta} · Q{self.monto}'
+
+    @property
+    def periodo_etiqueta(self):
+        return f'{self.desde:%d/%m/%Y} – {self.hasta:%d/%m/%Y}'
+
+
+class PagoComisionLinea(models.Model):
+    """Una comisión concreta (una cita, un rol) cubierta por un PagoComision.
+    El `unique_together (cita, rol_en_cita)` garantiza que cada comisión se
+    pague una sola vez."""
+
+    ROL_TECNICO = 'Técnico'
+    ROL_RADIOLOGO = 'Radiólogo'
+
+    pago = models.ForeignKey(PagoComision, on_delete=models.CASCADE, related_name='lineas')
+    cita = models.ForeignKey('pacientes.Cita', on_delete=models.PROTECT, related_name='+')
+    rol_en_cita = models.CharField(max_length=20)
+    monto = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    class Meta:
+        db_table = 'pagos_comision_lineas'
+        unique_together = ('cita', 'rol_en_cita')

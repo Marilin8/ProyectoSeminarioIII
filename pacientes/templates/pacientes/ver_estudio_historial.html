@@ -64,10 +64,9 @@
             </div>
 
             <div class="section-title">Imágenes del estudio</div>
-            {% if orden.imagenes.all %}
+            {% if imagenes %}
                 <div class="imagenes">
-                    {% for img in orden.imagenes.all %}
-                        {% if img.archivo.name %}
+                    {% for img in imagenes %}
                         <a href="{{ img.archivo.url }}" target="_blank">
                             {% if img.archivo.name|lower|slice:"-4:" == '.dcm' %}
                                 <span style="display:flex;align-items:center;justify-content:center;width:110px;height:110px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:1.8rem;color:var(--text-muted);">&#128196;</span>
@@ -79,9 +78,6 @@
                                 Ver completa
                             {% endif %}
                         </a>
-                        {% else %}
-                        <span class="vacio">Hay una imagen registrada sin archivo adjunto.</span>
-                        {% endif %}
                     {% endfor %}
                 </div>
             {% else %}
@@ -92,7 +88,7 @@
             {% if orden.informe_texto %}
                 <div class="informe-texto">{{ orden.informe_texto }}</div>
             {% endif %}
-            {% if orden.informe_archivo.name %}
+            {% if orden.informe_archivo %}
                 <p>
                     <a class="btn btn-primary" href="{{ orden.informe_archivo.url }}" target="_blank">
                         <svg width="14" height="14"><use href="#i-file-medical"/></svg>

@@ -16,7 +16,7 @@ class LoginForm(AuthenticationForm):
 
     error_messages = {
         **AuthenticationForm.error_messages,
-        'inactive': 'Su usuario está inactivo. Solicite al administrador que lo reactive.',
+        'inactive': 'Tu usuario está inactivo. Pedile al administrador que lo reactive.',
     }
 
     def clean(self):
@@ -53,7 +53,7 @@ def _campo_email():
         validators=[validar_dominio_correo],
         error_messages={
             'required': 'El correo es obligatorio.',
-            'invalid': 'Ingrese un correo electrónico válido (ejemplo: nombre@dominio.com).',
+            'invalid': 'Ingresá un correo electrónico válido (ejemplo: nombre@dominio.com).',
         },
     )
 
@@ -88,7 +88,7 @@ class CrearUsuarioForm(UserCreationForm):
         model = Usuario
         fields = (
             'username', 'first_name', 'last_name', 'email', 'rol', 'salario_base',
-            'puede_operar_caja',
+            'puede_operar_caja', 'sala',
             'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
         )
 
@@ -180,7 +180,7 @@ class EditarUsuarioForm(forms.ModelForm):
         model = Usuario
         fields = (
             'first_name', 'last_name', 'email', 'rol', 'salario_base',
-            'puede_operar_caja',
+            'puede_operar_caja', 'sala',
             'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
             'is_active',
         )
@@ -210,9 +210,10 @@ class EditarUsuarioForm(forms.ModelForm):
         return usuario
 
 
-class RegistrarPagoPlanillaForm(forms.Form):
-    """Comprobante de pago de planilla: foto de la boleta o de la
-    transferencia (JPG/PNG/WEBP) o un PDF, el número de boleta y una nota.
+class RegistrarPagoForm(forms.Form):
+    """Comprobante de un pago de planilla (salario o comisiones): foto de la
+    boleta o de la transferencia (JPG/PNG/WEBP) o un PDF, el número de boleta
+    y una nota.
 
     Al validar, corre el OCR del comprobante (``accounts.verificacion_boleta``)
     y compara el monto (y el número de boleta, si se indicó) con lo que se
@@ -269,6 +270,6 @@ class RegistrarPagoPlanillaForm(forms.Form):
             raise forms.ValidationError(
                 'Los datos del comprobante no coinciden con el pago: '
                 f'{self.verificacion.mensaje}. Revisá la boleta; si aun así querés '
-                'registrar el pago, marque la casilla de confirmación.'
+                'registrar el pago, marcá la casilla de confirmación.'
             )
         return cleaned

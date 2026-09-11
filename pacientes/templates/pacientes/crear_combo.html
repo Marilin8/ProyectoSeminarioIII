@@ -27,26 +27,30 @@
                 {{ form.estudios }}
                 {{ form.estudios.errors }}
                 <p class="form-help">
-                    Marcá los estudios que componen este combo. El precio del combo es la suma de los
-                    precios de los estudios marcados.
+                    Marcá los estudios que componen este combo. El precio del combo es la suma
+                    de los precios de los estudios marcados.
                 </p>
 
-                <label for="{{ form.activo.id_for_label }}">Combo activo</label>
-                {{ form.activo }}
+                <label for="{{ form.activo.id_for_label }}" style="display:flex;align-items:center;gap:0.5rem;margin-top:1rem;">
+                    {{ form.activo }}
+                    <span>Combo activo</span>
+                </label>
+                <p class="form-help">Los combos inactivos no se ofrecen al agendar.</p>
                 {{ form.activo.errors }}
-                <p class="form-help">Los combos inactivos no se ofrecen agendables.</p>
 
                 <div class="section-title" style="margin-top: 1.5rem;">Descuento (opcional)</div>
-                <label for="{{ form.aplica_descuento.id_for_label }}">Aplicar descuento</label>
-                {{ form.aplica_descuento }}
+                <label for="{{ form.aplica_descuento.id_for_label }}" style="display:flex;align-items:center;gap:0.5rem;">
+                    {{ form.aplica_descuento }}
+                    <span>Aplicar descuento</span>
+                </label>
                 {{ form.aplica_descuento.errors }}
 
                 <label for="{{ form.porcentaje_descuento.id_for_label }}">% de descuento</label>
                 {{ form.porcentaje_descuento }}
                 {{ form.porcentaje_descuento.errors }}
                 <p class="form-help">
-                    Solo se usa si "Aplicar descuento" está marcado. El total final = suma de precios
-                    de los estudios − este porcentaje.
+                    Solo se usa si "Aplicar descuento" está marcado. El total final = suma de
+                    precios de los estudios − este porcentaje.
                 </p>
 
                 <button type="submit" class="btn btn-primary btn-block" style="margin-top: 1.5rem;">

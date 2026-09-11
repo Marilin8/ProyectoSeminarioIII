@@ -18,8 +18,6 @@ from decimal import Decimal
 
 from pacientes.models import Cita
 
-from .models import LineaComisionLiquidada
-
 CENTAVO = Decimal('0.01')
 
 # convenio de la cita -> campo de % de comisión en Usuario
@@ -41,36 +39,10 @@ def rango_mes(anio, mes):
     return inicio, fin
 
 
-def _liquidadas(pago_a_excluir=None):
-    """Conjunto de (usuario_id, cita_id, rol_en_cita) ya cubiertos por algún
-    pago. Si `pago_a_excluir` está presente, sus propias líneas no cuentan
-    como liquidadas (útil al reemplazar el pago del mismo mes)."""
-    if pago_a_excluir is not None:
-        lineas = LineaComisionLiquidada.objects.exclude(pago=pago_a_excluir)
-    else:
-        lineas = LineaComisionLiquidada.objects.all()
-    return {
-        (l.usuario_id, l.cita_id, l.rol_en_cita) for l in lineas.only(
-            'usuario_id', 'cita_id', 'rol_en_cita',
-        )
-    }
-
-
-def _clave_liquidada(persona_id, cita_id, rol_en_cita):
-    """Clave canónica de una comisión en el modelo puente."""
-    rol_modelo = {
-        ROL_EN_CITA_TECNICO: LineaComisionLiquidada.rol_tecnico,
-        ROL_EN_CITA_RADIOLOGO: LineaComisionLiquidada.rol_radiologo,
-    }.get(rol_en_cita, rol_en_cita)
-    return (persona_id, cita_id, rol_modelo)
-
-
-def lineas_comision(desde, hasta, pago_a_excluir=None):
+def lineas_comision(desde, hasta):
     """Una línea por cada comisión ganada entre `desde` y `hasta` (fin
     exclusivo). Cada línea dice quién la ganó, en qué cita, cuándo, a qué
-    paciente, con qué % y cuánto. Las comisiones ya liquidadas por un pago
-    anterior se descartan (no se cobran dos veces)."""
-    liquidadas = _liquidadas(pago_a_excluir)
+    paciente, con qué % y cuánto."""
     citas = (
         Cita.objects.filter(
             estado=Cita.ESTADO_PROCESADA, fecha__gte=desde, fecha__lt=hasta,
@@ -103,9 +75,6 @@ def lineas_comision(desde, hasta, pago_a_excluir=None):
             if pct <= 0:
                 continue
             comision = (precio * pct / Decimal('100')).quantize(CENTAVO)
-            clave = _clave_liquidada(persona.id, cita.id, rol_en_cita)
-            if clave in liquidadas:
-                continue
             lineas.append({
                 'persona': persona,
                 'persona_id': persona.id,
@@ -156,68 +125,91 @@ def _resumen_agrupado(lineas):
     )
 
 
-def planilla(desde, hasta, usuarios, pago_a_excluir=None):
-    """Fila de planilla por cada usuario de `usuarios`: salario base,
-    comisiones del período y total. Solo muestra el delta no liquidado (el
-    resto ya lo cubrió un pago). `usuarios` es un iterable de Usuario."""
-    lineas = lineas_comision(desde, hasta, pago_a_excluir)
+def _lineas_ya_pagadas(lineas):
+    """Set de (cita_id, rol_en_cita) que ya están cubiertas por algún
+    PagoComision (para no volver a pagarlas)."""
+    from accounts.models import PagoComisionLinea
+
+    if not lineas:
+        return set()
+    cita_ids = {l['cita_id'] for l in lineas}
+    return set(
+        PagoComisionLinea.objects.filter(cita_id__in=cita_ids)
+        .values_list('cita_id', 'rol_en_cita')
+    )
+
+
+def marcar_pagadas(lineas):
+    """Agrega a cada línea la clave `pagada` (bool) según si ya se pagó."""
+    pagadas = _lineas_ya_pagadas(lineas)
+    for linea in lineas:
+        linea['pagada'] = (linea['cita_id'], linea['rol_en_cita']) in pagadas
+    return lineas
+
+
+def planilla(desde, hasta, usuarios):
+    """Fila de planilla por cada usuario: salario base mensual y comisiones
+    del período que TODAVÍA no se han pagado (más un aviso si quedaron
+    comisiones sin pagar de antes del período). `desde`/`hasta` incluidos."""
+    lineas = marcar_pagadas(lineas_comision(desde, hasta + datetime.timedelta(days=1)))
+
+    # Comisiones sin pagar anteriores al período (para avisar al admin).
+    hace_mucho = desde - datetime.timedelta(days=3650)
+    lineas_previas = marcar_pagadas(lineas_comision(hace_mucho, desde))
+
     por_persona = {}
     for linea in lineas:
-        acumulado = por_persona.setdefault(linea['persona_id'], {
-            'comisiones': Decimal('0.00'), 'cantidad': 0,
+        acc = por_persona.setdefault(linea['persona_id'], {
+            'pendiente': Decimal('0.00'), 'cantidad': 0, 'previa': Decimal('0.00'),
         })
-        acumulado['comisiones'] += linea['comision']
-        acumulado['cantidad'] += 1
+        if not linea['pagada']:
+            acc['pendiente'] += linea['comision']
+            acc['cantidad'] += 1
+    for linea in lineas_previas:
+        if not linea['pagada']:
+            acc = por_persona.setdefault(linea['persona_id'], {
+                'pendiente': Decimal('0.00'), 'cantidad': 0, 'previa': Decimal('0.00'),
+            })
+            acc['previa'] += linea['comision']
 
     filas = []
     for usuario in usuarios:
-        acumulado = por_persona.get(usuario.id)
-        comisiones = acumulado['comisiones'] if acumulado else Decimal('0.00')
+        acc = por_persona.get(usuario.id) or {}
         filas.append({
             'usuario': usuario,
             'salario_base': usuario.salario_base,
-            'comisiones': comisiones,
-            'total': (usuario.salario_base + comisiones),
-            'cantidad_comisiones': acumulado['cantidad'] if acumulado else 0,
+            'comisiones': acc.get('pendiente', Decimal('0.00')),
+            'cantidad_comisiones': acc.get('cantidad', 0),
+            'comisiones_previas': acc.get('previa', Decimal('0.00')),
         })
     return filas
 
 
-def detalle_empleado(desde, hasta, usuario, pago_a_excluir=None):
-    """Todo lo que ganó `usuario` en comisiones en el período: el resumen
-    agrupado y el detalle línea por línea (cita, fecha, hora, paciente)."""
+def lineas_pendientes_de(usuario, desde, hasta):
+    """Líneas de comisión de `usuario` en [desde, hasta] (incluidos) que aún
+    no se pagaron, listas para registrar el pago."""
     lineas = [
-        linea for linea in lineas_comision(desde, hasta, pago_a_excluir)
-        if linea['persona_id'] == usuario.id
+        l for l in lineas_comision(desde, hasta + datetime.timedelta(days=1))
+        if l['persona_id'] == usuario.id
     ]
-    total = sum((linea['comision'] for linea in lineas), Decimal('0.00'))
+    marcar_pagadas(lineas)
+    return [l for l in lineas if not l['pagada']]
+
+
+def detalle_empleado(desde, hasta, usuario):
+    """Comisiones de `usuario` en el período: resumen agrupado y detalle
+    línea por línea, marcando cuáles ya se pagaron."""
+    lineas = [
+        l for l in lineas_comision(desde, hasta + datetime.timedelta(days=1))
+        if l['persona_id'] == usuario.id
+    ]
+    marcar_pagadas(lineas)
+    pendientes = [l for l in lineas if not l['pagada']]
+    total_pendiente = sum((l['comision'] for l in pendientes), Decimal('0.00'))
+    total_pagado = sum((l['comision'] for l in lineas if l['pagada']), Decimal('0.00'))
     return {
         'lineas': lineas,
-        'resumen': _resumen_agrupado(lineas),
-        'total_comisiones': total,
-        'total': usuario.salario_base + total,
+        'resumen': _resumen_agrupado(pendientes),
+        'total_pendiente': total_pendiente,
+        'total_pagado': total_pagado,
     }
-
-
-def liquidar_lineas(pago, desde, hasta, usuario):
-    """Guarda una LineaComisionLiquidada por cada comisión (delta no pagado)
-    que cubre este `pago`, para que no se vuelva a cobrar más adelante.
-    Devuelve el monto total de comisiones liquidadas."""
-    lineas = detalle_empleado(desde, hasta, usuario).get('lineas', [])
-    registros = [
-        LineaComisionLiquidada(
-            pago=pago,
-            usuario_id=linea['persona_id'],
-            cita_id=linea['cita_id'],
-            rol_en_cita=(
-                LineaComisionLiquidada.rol_tecnico
-                if linea['rol_en_cita'] == ROL_EN_CITA_TECNICO
-                else LineaComisionLiquidada.rol_radiologo
-            ),
-            comision=linea['comision'],
-        )
-        for linea in lineas
-    ]
-    if registros:
-        LineaComisionLiquidada.objects.bulk_create(registros)
-    return sum((linea['comision'] for linea in lineas), Decimal('0.00'))

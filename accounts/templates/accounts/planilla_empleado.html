@@ -57,16 +57,12 @@
 
     <div class="resumen-cards">
         <div class="card">
-            <div class="rotulo">Salario base</div>
-            <div class="valor">Q{{ empleado.salario_base|floatformat:2 }}</div>
+            <div class="rotulo">Comisiones pendientes de pago</div>
+            <div class="valor">Q{{ total_pendiente|floatformat:2 }}</div>
         </div>
         <div class="card">
-            <div class="rotulo">Comisiones del período</div>
-            <div class="valor">Q{{ total_comisiones|floatformat:2 }}</div>
-        </div>
-        <div class="card">
-            <div class="rotulo">Total a pagar</div>
-            <div class="valor">Q{{ total|floatformat:2 }}</div>
+            <div class="rotulo">Ya pagado en el período</div>
+            <div class="valor">Q{{ total_pagado|floatformat:2 }}</div>
         </div>
         <div class="card">
             <div class="rotulo">Estudios con comisión</div>
@@ -75,7 +71,7 @@
     </div>
 
     {% if resumen %}
-        <div class="seccion-titulo">Resumen</div>
+        <div class="seccion-titulo">Resumen de lo pendiente</div>
         <div class="card">
             <div class="card-body" style="padding:0;overflow-x:auto;">
                 <table>
@@ -118,8 +114,8 @@
                     </tbody>
                     <tfoot>
                         <tr>
-                            <td colspan="7">Total comisiones</td>
-                            <td class="col-num">Q{{ total_comisiones|floatformat:2 }}</td>
+                            <td colspan="7">Total pendiente</td>
+                            <td class="col-num">Q{{ total_pendiente|floatformat:2 }}</td>
                         </tr>
                     </tfoot>
                 </table>
@@ -142,11 +138,12 @@
                             <th class="col-num">Precio</th>
                             <th class="col-num">%</th>
                             <th class="col-num">Comisión</th>
+                            <th></th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for l in lineas %}
-                            <tr>
+                            <tr{% if l.pagada %} class="text-muted"{% endif %}>
                                 <td>{{ l.fecha|date:'d/m/Y' }}</td>
                                 <td>{{ l.hora|time:'H:i' }}</td>
                                 <td>{{ l.paciente.nombre }} {{ l.paciente.apellido }}</td>
@@ -159,6 +156,7 @@
                                 <td class="col-num">Q{{ l.precio|floatformat:2 }}</td>
                                 <td class="col-num">{{ l.pct|floatformat:2 }}%</td>
                                 <td class="col-num text-bold">Q{{ l.comision|floatformat:2 }}</td>
+                                <td>{% if l.pagada %}<span class="badge badge-success">pagada</span>{% else %}<span class="badge badge-warning">pendiente</span>{% endif %}</td>
                             </tr>
                         {% endfor %}
                     </tbody>

@@ -41,6 +41,11 @@ class Paciente(models.Model):
         (SEXO_FEMENINO, 'Femenino'),
     ]
 
+    expediente = models.CharField(
+        max_length=12, unique=True, null=True, blank=True, editable=False,
+        verbose_name='N° de expediente',
+        help_text='Número de expediente que el sistema asigna al registrar al paciente.',
+    )
     dpi = models.CharField(max_length=20, unique=True, verbose_name='DPI')
     carnet_igss = models.CharField(
         max_length=20, unique=True, null=True, blank=True,
@@ -71,6 +76,23 @@ class Paciente(models.Model):
 
     def __str__(self):
         return f'{self.nombre} {self.apellido} ({self.dpi})'
+
+    def save(self, *args, **kwargs):
+        """Al registrar un paciente nuevo, el sistema le asigna el siguiente
+        número de expediente correlativo (000001, 000002, ...)."""
+        if self.expediente:
+            return super().save(*args, **kwargs)
+        with transaction.atomic():
+            ultimo = (
+                Paciente.objects.select_for_update()
+                .exclude(expediente__isnull=True).exclude(expediente='')
+                .order_by('-expediente')
+                .values_list('expediente', flat=True)
+                .first()
+            )
+            siguiente = (int(ultimo) + 1) if (ultimo and ultimo.isdigit()) else 1
+            self.expediente = f'{siguiente:06d}'
+            return super().save(*args, **kwargs)
 
     def campos_pendientes(self):
         """Nombres legibles de los campos opcionales que todavía no se
@@ -182,7 +204,9 @@ class Combo(models.Model):
     El precio se calcula al vuelo: suma de los precios de los estudios que lo
     integran, menos el descuento si aplica. Coherente con el patrón del
     proyecto (nada se guarda, todo se deriva). Es solo administrativo:
-    agrupa el catálogo, no maneja transacciones monetarias."""
+    agrupa el catálogo, no maneja transacciones monetarias.
+
+    Portado (2026-09-04) desde la rama visual-andres de TechBlood."""
 
     nombre = models.CharField(max_length=120, unique=True)
     estudios = models.ManyToManyField(
@@ -250,13 +274,8 @@ class Cita(models.Model):
     ESTADO_RECHAZADA = 'rechazada'
 
     ESTADO_CHOICES = [
-<<<<<<< HEAD
         (ESTADO_PENDIENTE, 'Pendiente de confirmación'),
         (ESTADO_AGENDADA, 'Agendada'),
-=======
-        (ESTADO_PENDIENTE, 'Pendiente de confirmar'),
-        (ESTADO_AGENDADA, 'Confirmada'),
->>>>>>> b802599 (feat: cambios de reglas de negocio en citas, planilla y pagos (05/09/2026) [VERSIÓN SIN PULIR])
         (ESTADO_EN_ESPERA, 'En espera'),
         (ESTADO_EN_PROCESO, 'En proceso'),
         (ESTADO_PROCESADA, 'Procesada'),
@@ -322,12 +341,14 @@ class Cita(models.Model):
     @classmethod
     def marcar_ausentes_vencidas(cls):
         """Pasa a AUSENTE toda cita AGENDADA cuyo día ya pasó, o que es de hoy
-        pero ya son las 18:00 y nadie la marcó ausente/llegada."""
+        pero ya son las 18:00 y nadie la marcó ausente/llegada. No toca las
+        citas donde el paciente sí llegó (`hora_llegada`): esas siguen su
+        curso aunque se procesen después de las 18:00."""
         ahora = timezone.localtime()
         hoy = ahora.date()
         fecha_limite = hoy if ahora.time() >= datetime.time(18, 0) else hoy - datetime.timedelta(days=1)
         return cls.objects.filter(
-            estado=cls.ESTADO_AGENDADA, fecha__lte=fecha_limite
+            estado=cls.ESTADO_AGENDADA, fecha__lte=fecha_limite, hora_llegada__isnull=True,
         ).update(estado=cls.ESTADO_AUSENTE)
 
     @property
@@ -360,10 +381,12 @@ class Cita(models.Model):
 class Cobro(models.Model):
     """Registro administrativo de "cobro/pago" de un estudio (relacionado a
     su cita). El sistema NO maneja transacciones monetarias reales: solo
-    registra si la recepcionista marcó que ya hubo cobro o si sigue
+    registra si la recepcionista/caja marcó que ya hubo cobro o si sigue
     pendiente. Un cobro sin registrar como pagado bloquea únicamente el
     envío de resultados al paciente; no afecta la orden de trabajo ni el
-    trabajo del técnico."""
+    trabajo del técnico.
+
+    Portado (2026-09-04) desde la rama visual-andres de TechBlood."""
 
     ESTADO_PENDIENTE = 'pendiente'
     ESTADO_PAGADO = 'pagado'
@@ -412,9 +435,7 @@ class Cobro(models.Model):
         self.cobrado_por = usuario
         if notas:
             self.notas = notas
-        self.save(
-            update_fields=['estado', 'pagado_en', 'cobrado_por', 'notas'],
-        )
+        self.save(update_fields=['estado', 'pagado_en', 'cobrado_por', 'notas'])
 
 
 class ReporteDiario(models.Model):
@@ -428,7 +449,7 @@ class ReporteDiario(models.Model):
     ESTADO_ENVIADO = 'enviado'
 
     ESTADO_CHOICES = [
-        (ESTADO_BORRADOR, 'Pendiente'),
+        (ESTADO_BORRADOR, 'Borrador'),
         (ESTADO_ENVIADO, 'Enviado'),
     ]
 
@@ -642,7 +663,7 @@ class Ticket(models.Model):
         Se filtra por rango de `creado_en` en vez de `creado_en__date=fecha`
         porque el MySQL local no tiene cargadas las tablas de zonas horarias
         con nombre: con USE_TZ activo, `__date` genera un CONVERT_TZ(...,
-        '<TIME_ZONE>') que devuelve NULL y la consulta no trae nada.
+        TIME_ZONE) que devuelve NULL y la consulta no trae nada.
         """
         inicio = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.min))
         return cls.objects.filter(
@@ -653,14 +674,6 @@ class Ticket(models.Model):
         if self.turno:
             super().save(*args, **kwargs)
             return
-
-        # Los tickets de Emergencia IGSS siempre se atienden primero: se les
-        # asigna la prioridad máxima (Crítica) al crearse, sin depender de
-        # quién los registre. La fila ordena por ``-prioridad, orden``, así
-        # que cada emergencia queda al frente de COEX/Privado (Normal) y
-        # respeta el orden (FIFO) entre las propias emergencias/críticos.
-        if self.servicio == self.SERVICIO_EMERGENCIA_IGSS:
-            self.prioridad = self.PRIORIDAD_CRITICA
 
         fecha = timezone.localdate()
         with transaction.atomic():
@@ -677,108 +690,45 @@ class Ticket(models.Model):
             self.orden = self.numero
             super().save(*args, **kwargs)
 
-    def _cola_espera(self, bloqueo=False):
-        """Fila de espera del día, solo tickets en espera, ordenada por
-        prioridad y posición (`-prioridad, orden`). Con `bloqueo=True` la
-        recupera con lock de fila para reordenar dentro de una transacción
-        (select_for_update exige estar dentro de un atomic)."""
-        queryset = (
-            Ticket.del_dia(timezone.localdate())
-            .filter(estado=self.ESTADO_EN_ESPERA)
-            .order_by('-prioridad', 'orden')
-        )
-        if bloqueo:
-            queryset = queryset.select_for_update()
-        return list(queryset)
+    def mover(self, posiciones):
+        """Mueve este ticket `posiciones` lugares dentro de la fila de espera
+        del día (negativo = adelantar, positivo = atrasar), sin tocar su
+        número de turno oficial (`turno`) — solo reordena la posición en que
+        aparece en la Pantalla de turnos. Nunca cruza tickets de otra
+        prioridad (no adelanta a uno de mayor prioridad ni atrasa detrás de
+        uno de menor)."""
+        if not posiciones or not self.pk:
+            return
 
-    def _limites_grupo(self, cola, idx):
-        """Índices (inicio, fin) del bloque de tickets con la MISMA prioridad
-        que este ticket dentro de la cola. Como la cola está ordenada por
-        `-prioridad`, todas las prioridades iguales son contiguas. Un ticket
-        solo se puede reordenar dentro de su propio bloque: nunca delante de
-        un ticket de mayor prioridad ni detrás de uno de menor prioridad."""
-        prioridad = self.prioridad
-        inicio = idx
-        while inicio > 0 and cola[inicio - 1].prioridad == prioridad:
-            inicio -= 1
-        fin = idx
-        while fin < len(cola) - 1 and cola[fin + 1].prioridad == prioridad:
-            fin += 1
-        return inicio, fin
-
-    def _mover_a(self, nuevo_idx):
-        """Mueve este ticket a `nuevo_idx` dentro de la cola del día y
-        reescribe el campo `orden` de los tickets afectados para que queden
-        correlativos (1, 2, 3...). Devuelve True si realmente se movió."""
-        if not self.pk:
-            return False
-
+        hoy = timezone.localdate()
         with transaction.atomic():
-            cola = self._cola_espera(bloqueo=True)
+            cola = list(
+                Ticket.del_dia(hoy)
+                .select_for_update()
+                .filter(estado=self.ESTADO_EN_ESPERA)
+                .order_by('-prioridad', 'orden')
+            )
             if self not in cola:
-                return False
+                return
+
             idx = cola.index(self)
-            nuevo_idx = max(0, min(len(cola) - 1, nuevo_idx))
+            limite_arriba = sum(1 for t in cola if t.prioridad > self.prioridad)
+            limite_abajo = len(cola) - 1 - sum(1 for t in cola if t.prioridad < self.prioridad)
+            nuevo_idx = min(max(idx + posiciones, limite_arriba), limite_abajo)
             if nuevo_idx == idx:
-                return False
+                return
 
             cola.pop(idx)
             cola.insert(nuevo_idx, self)
             for posicion, ticket in enumerate(cola, start=1):
-                Ticket.objects.filter(pk=ticket.pk).update(orden=posicion)
-                ticket.orden = posicion
-        return True
-
-    def _reordenar(self, posiciones=0, subir=False, bajar=False, tope=False):
-        """Motor común de reordenamiento de la fila. Calcula el índice de
-        destino según la operación pedida (siempre dentro de su bloque de
-        prioridad) y delega el movimiento a `_mover_a`."""
-        posiciones = max(0, posiciones)
-        if posiciones == 0 and not (subir or bajar or tope):
-            return False
-
-        cola = self._cola_espera()
-        if self not in cola:
-            return False
-        idx = cola.index(self)
-        inicio, fin = self._limites_grupo(cola, idx)
-
-        if tope:
-            nuevo_idx = inicio
-        elif subir:
-            nuevo_idx = max(inicio, idx - 1)
-        elif bajar:
-            nuevo_idx = min(fin, idx + 1)
-        else:
-            nuevo_idx = max(inicio, idx - posiciones)
-
-        return self._mover_a(nuevo_idx)
+                if ticket.orden != posicion:
+                    Ticket.objects.filter(pk=ticket.pk).update(orden=posicion)
+                    ticket.orden = posicion
 
     def adelantar(self, posiciones):
-        """Adelanta este ticket `posiciones` lugares dentro de la fila de
-        espera del día, sin tocar su número de turno oficial (`turno`) — solo
-        reordena la posición en que aparece en la Pantalla de turnos. Nunca
-        lo deja delante de un ticket de mayor prioridad (ej. no puede pasar
-        delante de un ticket de Emergencia IGSS)."""
-        return self._reordenar(posiciones=posiciones)
-
-    def subir(self):
-        """Sube este ticket un lugar dentro de su bloque de prioridad (queda
-        antes del que le seguía con la misma prioridad). No puede pasarse de
-        un ticket de mayor prioridad."""
-        return self._reordenar(subir=True)
-
-    def bajar(self):
-        """Baja este ticket un lugar dentro de su bloque de prioridad (queda
-        después del que le antecedía con la misma prioridad). No puede caer
-        detrás de un ticket de menor prioridad."""
-        return self._reordenar(bajar=True)
-
-    def ir_al_tope(self):
-        """Lleva este ticket al frente de su bloque de prioridad (delante de
-        todos sus iguales, pero jamás delante de un ticket de mayor
-        prioridad)."""
-        return self._reordenar(tope=True)
+        """Atajo histórico: adelanta `posiciones` lugares (positivo)."""
+        if posiciones > 0:
+            self.mover(-posiciones)
 
 
 class Notificacion(models.Model):

@@ -56,6 +56,58 @@
         </div>
     </div>
 
+    <script>
+    // Búsqueda en vivo: cualquier <form data-buscar-vivo> se envía solo
+    // mientras se escribe (con una pausa) o al cambiar un <select>, sin
+    // tener que apretar Enter ni el botón. Después de recargar, devuelve el
+    // foco y el cursor al campo donde se estaba escribiendo.
+    (function () {
+        var CLAVE_FOCO = 'buscarVivoFoco';
+
+        try {
+            var guardado = JSON.parse(sessionStorage.getItem(CLAVE_FOCO) || 'null');
+            if (guardado) {
+                sessionStorage.removeItem(CLAVE_FOCO);
+                var campo = document.querySelector(
+                    'form[data-buscar-vivo] [name="' + guardado.name + '"]'
+                );
+                if (campo) {
+                    campo.focus();
+                    if (campo.setSelectionRange && typeof campo.value === 'string') {
+                        var pos = Math.min(guardado.pos, campo.value.length);
+                        campo.setSelectionRange(pos, pos);
+                    }
+                }
+            }
+        } catch (e) { /* sessionStorage no disponible */ }
+
+        function enviar(form, campoActivo) {
+            try {
+                if (campoActivo && campoActivo.name) {
+                    sessionStorage.setItem(CLAVE_FOCO, JSON.stringify({
+                        name: campoActivo.name,
+                        pos: campoActivo.selectionStart || (campoActivo.value || '').length,
+                    }));
+                }
+            } catch (e) { /* ignore */ }
+            if (form.requestSubmit) { form.requestSubmit(); } else { form.submit(); }
+        }
+
+        document.querySelectorAll('form[data-buscar-vivo]').forEach(function (form) {
+            var temporizador = null;
+            form.addEventListener('input', function (e) {
+                var el = e.target;
+                if (el.tagName === 'SELECT') { return; }
+                clearTimeout(temporizador);
+                temporizador = setTimeout(function () { enviar(form, el); }, 350);
+            });
+            form.addEventListener('change', function (e) {
+                if (e.target.tagName === 'SELECT') { enviar(form, e.target); }
+            });
+        });
+    })();
+    </script>
+
     {% if messages %}
         <div class="toast-container" id="toast-container">
             {% for msg in messages %}
