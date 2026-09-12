@@ -53,6 +53,10 @@ urlpatterns = [
     ),
     path('pagos/', views.pagos_pendientes, name='pagos_pendientes'),
     path('pagos/<int:cobro_id>/boleta/', views.boleta_pago_pdf, name='boleta_pago_pdf'),
+    path('pagos/<int:cobro_id>/constancia/', views.constancia_pago_pdf, name='constancia_pago_pdf'),
+    path('pagos/<int:cobro_id>/comprobante-bancario/', views.comprobante_bancario, name='comprobante_bancario'),
+    path('pagos/<int:cobro_id>/constancia-firmada/', views.constancia_firmada, name='constancia_firmada'),
+    path('pagos/<int:cobro_id>/constancia-firmada/subir/', views.subir_constancia_firmada, name='subir_constancia_firmada'),
     path(
         'citas/calendario/coex/',
         views.seleccionar_horario,

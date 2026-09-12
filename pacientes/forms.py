@@ -598,9 +598,32 @@ class RegistrarPagoEstudioForm(forms.Form):
 
     forma_pago = forms.ChoiceField(label='Forma de pago', choices=Cobro.FORMA_PAGO_CHOICES)
     numero_boleta = forms.CharField(label='Número de boleta / referencia', max_length=60, required=False)
+    comprobante_bancario = forms.FileField(
+        label='Boleta o comprobante bancario',
+        required=False,
+        help_text='Suba la boleta del banco, transferencia o comprobante del pago.',
+    )
     notas = forms.CharField(
         label='Notas', max_length=255, required=False,
         widget=forms.Textarea(attrs={'rows': 2}),
+    )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        forma_pago = cleaned_data.get('forma_pago')
+        comprobante = cleaned_data.get('comprobante_bancario')
+        if forma_pago == Cobro.FORMA_TRANSFERENCIA and not comprobante:
+            self.add_error(
+                'comprobante_bancario',
+                'Debe adjuntar la boleta o comprobante de la transferencia.',
+            )
+        return cleaned_data
+
+
+class SubirConstanciaFirmadaForm(forms.Form):
+    constancia_firmada = forms.FileField(
+        label='Constancia firmada',
+        help_text='Suba la constancia interna firmada por los responsables.',
     )
 
 

@@ -41,8 +41,21 @@
             <p>
                 <a class="btn btn-outline btn-sm" href="{% url 'boleta_pago_pdf' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
                     <svg width="14" height="14"><use href="#i-file-text"/></svg>
-                    Ver comprobante de pago
+                    Ver recibo interno
                 </a>
+                <a class="btn btn-outline btn-sm" href="{% url 'constancia_pago_pdf' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                    Generar constancia de pago
+                </a>
+                {% if cita.cobro.comprobante_bancario %}
+                    <a class="btn btn-outline btn-sm" href="{% url 'comprobante_bancario' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                        Ver comprobante subido
+                    </a>
+                {% endif %}
+                {% if cita.cobro.constancia_firmada %}
+                    <a class="btn btn-outline btn-sm" href="{% url 'constancia_firmada' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                        Ver constancia firmada
+                    </a>
+                {% endif %}
             </p>
         {% endif %}
 

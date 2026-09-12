@@ -1655,6 +1655,92 @@ class CajaTests(TestCase):
         self.assertEqual(respuesta['Content-Type'], 'application/pdf')
         self.assertTrue(respuesta.content.startswith(b'%PDF'))
 
+    def test_registrar_pago_guarda_comprobante_bancario(self):
+        cita = crear_cita(self.recepcion, estado=Cita.ESTADO_EN_PROCESO)
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        Cobro.objects.create(cita=cita)
+        self.client.force_login(self.caja)
+
+        archivo = SimpleUploadedFile(
+            'boleta-transferencia.pdf',
+            b'%PDF-1.4 comprobante de prueba',
+            content_type='application/pdf',
+        )
+        respuesta = self.client.post(
+            reverse('marcar_cobrado', args=[cita.id]),
+            {
+                'forma_pago': Cobro.FORMA_TRANSFERENCIA,
+                'numero_boleta': 'TR-001',
+                'comprobante_bancario': archivo,
+                'notas': '',
+            },
+        )
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
+        cobro = Cobro.objects.get(cita=cita)
+        self.assertTrue(cobro.comprobante_bancario)
+        self.assertEqual(
+            self.client.get(reverse('comprobante_bancario', args=[cobro.id])).status_code,
+            200,
+        )
+
+    def test_transferencia_requiere_comprobante_bancario(self):
+        cita = crear_cita(self.recepcion, estado=Cita.ESTADO_EN_PROCESO)
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        Cobro.objects.create(cita=cita)
+        self.client.force_login(self.caja)
+
+        respuesta = self.client.post(
+            reverse('marcar_cobrado', args=[cita.id]),
+            {
+                'forma_pago': Cobro.FORMA_TRANSFERENCIA,
+                'numero_boleta': 'TR-002',
+                'notas': '',
+            },
+        )
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
+        self.assertFalse(Cobro.objects.get(cita=cita).pagado)
+
+    def test_constancia_pago_se_genera_y_constancia_firmada_se_puede_subir(self):
+        cita = crear_cita(self.recepcion, estado=Cita.ESTADO_EN_PROCESO)
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        cobro = Cobro.objects.create(cita=cita)
+        cobro.marcar_pagado(self.caja)
+        self.client.force_login(self.caja)
+
+        respuesta = self.client.get(reverse('constancia_pago_pdf', args=[cobro.id]))
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta['Content-Type'], 'application/pdf')
+        self.assertTrue(respuesta.content.startswith(b'%PDF'))
+
+        archivo = SimpleUploadedFile(
+            'constancia-firmada.pdf',
+            b'%PDF-1.4 constancia firmada',
+            content_type='application/pdf',
+        )
+        respuesta = self.client.post(
+            reverse('subir_constancia_firmada', args=[cobro.id]),
+            {'constancia_firmada': archivo},
+        )
+        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
+        cobro.refresh_from_db()
+        self.assertTrue(cobro.constancia_firmada)
+        self.assertEqual(
+            self.client.get(reverse('constancia_firmada', args=[cobro.id])).status_code,
+            200,
+        )
+
+    def test_documentos_de_pago_no_se_pueden_consultar_mientras_pendiente(self):
+        cita = crear_cita(self.recepcion, estado=Cita.ESTADO_EN_PROCESO)
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        cobro = Cobro.objects.create(cita=cita)
+        self.client.force_login(self.caja)
+
+        for nombre in ('comprobante_bancario', 'constancia_pago_pdf', 'constancia_firmada'):
+            respuesta = self.client.get(reverse(nombre, args=[cobro.id]))
+            self.assertEqual(respuesta.status_code, 404)
+
     def test_comprobante_pagado_visible_para_recepcion_tecnico_y_radiologo(self):
         cita = crear_cita(self.recepcion, estado=Cita.ESTADO_PROCESADA)
         OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)

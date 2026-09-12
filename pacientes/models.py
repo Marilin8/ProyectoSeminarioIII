@@ -414,6 +414,26 @@ class Cobro(models.Model):
     notas = models.CharField(max_length=255, blank=True)
     forma_pago = models.CharField(max_length=20, choices=FORMA_PAGO_CHOICES, blank=True)
     numero_boleta = models.CharField(max_length=60, blank=True, verbose_name='número de boleta / referencia')
+    comprobante_bancario = models.FileField(
+        upload_to='comprobantes_bancarios/%Y/%m/',
+        blank=True,
+        null=True,
+        verbose_name='boleta o comprobante bancario',
+    )
+    constancia_firmada = models.FileField(
+        upload_to='constancias_pago_firmadas/%Y/%m/',
+        blank=True,
+        null=True,
+        verbose_name='constancia firmada',
+    )
+    constancia_subida_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='constancias_pago_subidas',
+    )
+    constancia_subida_en = models.DateTimeField(null=True, blank=True)
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:

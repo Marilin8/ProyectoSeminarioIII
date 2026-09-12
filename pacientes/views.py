@@ -40,6 +40,7 @@ from .forms import (
     ProcesarTicketForm,
     RegistrarPagoEstudioForm,
     RegistrarTicketForm,
+    SubirConstanciaFirmadaForm,
 )
 from .horarios import (
     DIAS_SEMANA,
@@ -849,6 +850,128 @@ def boleta_pago_pdf(request, cobro_id):
 
 
 @login_required
+@user_passes_test(puede_ver_comprobante_pago)
+def comprobante_bancario(request, cobro_id):
+    cobro = get_object_or_404(
+        Cobro.objects.select_related('cita'),
+        id=cobro_id,
+        estado=Cobro.ESTADO_PAGADO,
+    )
+    if not cobro.comprobante_bancario:
+        raise Http404('Este pago no tiene una boleta bancaria cargada.')
+    return FileResponse(
+        cobro.comprobante_bancario.open('rb'),
+        as_attachment=False,
+        filename=cobro.comprobante_bancario.name.rsplit('/', 1)[-1],
+    )
+
+
+@login_required
+@user_passes_test(puede_ver_comprobante_pago)
+def constancia_pago_pdf(request, cobro_id):
+    """Genera la constancia interna, separada de la boleta bancaria."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    cobro = get_object_or_404(
+        Cobro.objects.select_related('cita__paciente', 'cita__tipo_estudio', 'cobrado_por'),
+        id=cobro_id,
+        estado=Cobro.ESTADO_PAGADO,
+    )
+    cita = cobro.cita
+    paciente = cita.paciente
+    estilos = getSampleStyleSheet()
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=letter, topMargin=1.8 * cm, bottomMargin=1.8 * cm,
+        leftMargin=2 * cm, rightMargin=2 * cm,
+        title=f'Constancia de pago {cobro.id}',
+    )
+    datos = [
+        ['Paciente', f'{paciente.nombre} {paciente.apellido}'],
+        ['DPI / expediente', f'{paciente.dpi} / {paciente.expediente or "—"}'],
+        ['Estudio', cita.tipo_estudio.nombre],
+        ['Convenio', cita.get_convenio_display()],
+        ['Monto', f'Q{cita.precio:.2f}'],
+        ['Forma de pago', cobro.get_forma_pago_display() or 'No registrada'],
+        ['Boleta / referencia', cobro.numero_boleta or 'No registrada'],
+        ['Fecha de registro', cobro.pagado_en.strftime('%d/%m/%Y %H:%M') if cobro.pagado_en else ''],
+        ['Registrado por', cobro.cobrado_por.get_full_name() or cobro.cobrado_por.username],
+    ]
+    tabla = Table(datos, colWidths=[5 * cm, 11 * cm])
+    tabla.setStyle(TableStyle([
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#eff6ff')),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    firmas = Table([
+        ['Recepcionista', 'Técnico', 'Radiólogo'],
+        ['\n\n\nFirma y fecha', '\n\n\nFirma y fecha', '\n\n\nFirma y fecha'],
+    ], colWidths=[5.3 * cm] * 3)
+    firmas.setStyle(TableStyle([
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#64748b')),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    doc.build([
+        Paragraph('CONSTANCIA INTERNA DE PAGO RECIBIDO', estilos['Title']),
+        Paragraph(
+            'Esta constancia es un respaldo interno y no sustituye la boleta bancaria '
+            'o comprobante de transferencia.',
+            estilos['BodyText'],
+        ),
+        Spacer(1, 16),
+        tabla,
+        Spacer(1, 36),
+        firmas,
+    ])
+    respuesta = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+    respuesta['Content-Disposition'] = f'inline; filename="constancia_pago_{cobro.id}.pdf"'
+    return respuesta
+
+
+@login_required
+@user_passes_test(puede_ver_comprobante_pago)
+def constancia_firmada(request, cobro_id):
+    cobro = get_object_or_404(
+        Cobro.objects.select_related('cita'),
+        id=cobro_id,
+        estado=Cobro.ESTADO_PAGADO,
+    )
+    if not cobro.constancia_firmada:
+        raise Http404('Este pago todavía no tiene una constancia firmada.')
+    return FileResponse(
+        cobro.constancia_firmada.open('rb'),
+        as_attachment=False,
+        filename=cobro.constancia_firmada.name.rsplit('/', 1)[-1],
+    )
+
+
+@login_required
+@user_passes_test(puede_ver_comprobante_pago)
+@require_POST
+def subir_constancia_firmada(request, cobro_id):
+    cobro = get_object_or_404(Cobro, id=cobro_id, estado=Cobro.ESTADO_PAGADO)
+    form = SubirConstanciaFirmadaForm(request.POST, request.FILES)
+    if not form.is_valid():
+        messages.error(request, 'Seleccione una constancia firmada válida.')
+        return redirect('pagos_pendientes')
+    cobro.constancia_firmada = form.cleaned_data['constancia_firmada']
+    cobro.constancia_subida_por = request.user
+    cobro.constancia_subida_en = timezone.now()
+    cobro.save(update_fields=['constancia_firmada', 'constancia_subida_por', 'constancia_subida_en'])
+    messages.success(request, 'La constancia firmada se cargó correctamente.')
+    return redirect('pagos_pendientes')
+
+
+@login_required
 @user_passes_test(es_caja)
 @require_POST
 def marcar_cobrado(request, cita_id):
@@ -861,15 +984,16 @@ def marcar_cobrado(request, cita_id):
         id=cita_id,
     )
     cobro, _creado = Cobro.objects.get_or_create(cita=cita)
-    form = RegistrarPagoEstudioForm(request.POST)
+    form = RegistrarPagoEstudioForm(request.POST, request.FILES)
     if not form.is_valid():
         messages.error(request, 'Revisá los datos de la boleta antes de guardar.')
         return redirect('pagos_pendientes')
 
     cobro.forma_pago = form.cleaned_data['forma_pago']
     cobro.numero_boleta = form.cleaned_data['numero_boleta']
+    cobro.comprobante_bancario = form.cleaned_data['comprobante_bancario']
     cobro.marcar_pagado(request.user, notas=form.cleaned_data['notas'])
-    cobro.save(update_fields=['forma_pago', 'numero_boleta'])
+    cobro.save(update_fields=['forma_pago', 'numero_boleta', 'comprobante_bancario'])
 
     Bitacora.registrar(
         request=request,
