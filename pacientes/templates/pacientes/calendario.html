@@ -74,6 +74,30 @@
         a.slot-ocupado:hover, button.slot-ocupado:hover {
             background: #fca5a5;
         }
+        button.slot-pendiente {
+            border: 1.5px dashed var(--warning);
+        }
+        .etiqueta-pendiente {
+            display: inline-block;
+            margin-top: 0.15rem;
+            padding: 0.05rem 0.4rem;
+            border-radius: 999px;
+            background: var(--warning);
+            color: #fff;
+            font-size: 0.68rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+        .cal-modal li .estado {
+            display: inline-block;
+            margin-top: 0.25rem;
+            padding: 0.05rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 700;
+        }
+        .cal-modal li .estado.confirmada { background: var(--success-light); color: #166534; }
+        .cal-modal li .estado.pendiente { background: var(--warning); color: #fff; }
         .cal-modal-overlay {
             display: none;
             position: fixed; inset: 0;
@@ -206,11 +230,12 @@
                                 {% elif reagendar_cita %}
                                     <a class="slot" href="{% url reagendar_url_name cita_id=reagendar_cita.id %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}">{{ celda.cantidad }} cita{{ celda.cantidad|pluralize }}</a>
                                 {% elif celda.ocupado or celda.asignado %}
-                                    <button type="button" class="slot-ocupado"
+                                    <button type="button" class="slot-ocupado{% if celda.tiene_pendiente %} slot-pendiente{% endif %}"
                                             data-slot="{{ celda.dia|date:'Y-m-d' }}|{{ celda.hora|time:'H:i' }}"
                                             data-fecha="{{ celda.dia|date:'Y-m-d' }}"
                                             data-hora="{{ celda.hora|time:'H:i' }}">
                                         Ocupado · {{ celda.convenios }}
+                                        {% if celda.tiene_pendiente %}<br><span class="etiqueta-pendiente">Pendiente</span>{% endif %}
                                     </button>
                                 {% else %}
                                     <a class="slot-libre" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}{% if radiologo_seleccionado %}&radiologo={{ radiologo_seleccionado.id }}{% endif %}">Libre</a>
@@ -272,7 +297,10 @@
                 var m = document.createElement('div');
                 m.className = 'meta';
                 m.textContent = c.estudio + ' · ' + c.convenio + ' · Radiólogo: ' + c.radiologo;
-                li.appendChild(p); li.appendChild(m);
+                var e = document.createElement('span');
+                e.className = 'estado ' + (c.estado === 'Pendiente' ? 'pendiente' : 'confirmada');
+                e.textContent = c.estado;
+                li.appendChild(p); li.appendChild(m); li.appendChild(e);
                 lista.appendChild(li);
             });
             var url = AGENDAR_URL + '?fecha=' + encodeURIComponent(fecha) + '&hora=' + encodeURIComponent(hora);

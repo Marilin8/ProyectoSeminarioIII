@@ -48,6 +48,12 @@ class Usuario(AbstractUser):
         help_text='Solo para radiólogos: la sala donde atiende (ej. "Sala 1").',
     )
 
+    # Sesión única por usuario: guarda la session_key de la sesión activa
+    # más reciente. SesionUnicaMiddleware compara esto contra la sesión de
+    # cada request y cierra cualquier sesión vieja en cuanto se detecta un
+    # login más nuevo desde otro equipo.
+    sesion_activa = models.CharField(max_length=40, blank=True, default='')
+
     # Salario fijo mensual del empleado, antes de comisiones. Se usa en la
     # pantalla de Planilla (salario base + comisiones del período = total).
     salario_base = models.DecimalField(
@@ -89,6 +95,23 @@ class Usuario(AbstractUser):
         verbose_name_plural = 'usuarios'
 
 
+def _ip_real_del_visitante(request):
+    """IP del visitante para la bitácora.
+
+    Cuando el sitio se accede vía el Cloudflare Tunnel, la conexión le
+    llega a Django desde 'cloudflared' en esta misma máquina, así que
+    REMOTE_ADDR siempre da 127.0.0.1 — la bitácora no capturaba la IP
+    real de nadie que entrara por la web pública.
+
+    Cloudflare agrega el header CF-Connecting-IP con la IP real del
+    cliente en cada request que pasa por su borde (no se puede
+    falsificar: Cloudflare lo sobreescribe, ignora el que mande el
+    visitante). Si no viene (acceso directo por LAN sin pasar por el
+    túnel), se sigue usando REMOTE_ADDR como antes.
+    """
+    return request.META.get('HTTP_CF_CONNECTING_IP') or request.META.get('REMOTE_ADDR')
+
+
 class Bitacora(models.Model):
     ACCION_LOGIN_EXITOSO = 'login_exitoso'
     ACCION_LOGIN_FALLIDO = 'login_fallido'
@@ -118,6 +141,7 @@ class Bitacora(models.Model):
     ACCION_CREAR_COMBO = 'crear_combo'
     ACCION_EDITAR_COMBO = 'editar_combo'
     ACCION_MARCAR_COBRADO = 'marcar_cobrado'
+    ACCION_AGREGAR_ESTUDIO_EXTRA = 'agregar_estudio_extra'
 
     ACCION_CHOICES = [
         (ACCION_LOGIN_EXITOSO, 'Inicio de sesión'),
@@ -148,6 +172,7 @@ class Bitacora(models.Model):
         (ACCION_CREAR_COMBO, 'Creación de combo de estudios'),
         (ACCION_EDITAR_COMBO, 'Edición de combo de estudios'),
         (ACCION_MARCAR_COBRADO, 'Marcar estudio como cobrado'),
+        (ACCION_AGREGAR_ESTUDIO_EXTRA, 'Agregó un estudio extra a una cita'),
     ]
 
     usuario = models.ForeignKey(
@@ -172,7 +197,7 @@ class Bitacora(models.Model):
 
     @classmethod
     def registrar(cls, *, accion, descripcion='', usuario=None, username_intento='', request=None):
-        ip = request.META.get('REMOTE_ADDR') if request is not None else None
+        ip = _ip_real_del_visitante(request) if request is not None else None
         cls.objects.create(
             usuario=usuario,
             username_intento=username_intento,

@@ -37,6 +37,8 @@
 {% block content %}
     <div class="tabs">
         <a href="{% url 'planilla' %}" class="active">Planilla</a>
+        <a href="{% url 'pendiente_pago' %}">Pendiente de pago</a>
+        <a href="{% url 'pago_adelantado' %}">Pago por adelantado</a>
         <a href="{% url 'historial_comisiones' %}">Historial de comisiones</a>
         <a href="{% url 'historial_pagos' %}">Historial de pagos</a>
     </div>

@@ -52,6 +52,7 @@
     </div>
 </div>
 
+{% include 'includes/telefono_pais.html' %}
 <script>
     (function () {
         var dpiInput = document.querySelector('input[name="dpi"]');
@@ -60,5 +61,6 @@
             this.value = this.value.replace(/\D/g, '').substring(0, 13);
         });
     })();
+    activarSelectorTelefono('telefono');
 </script>
 {% endblock %}

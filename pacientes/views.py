@@ -30,6 +30,7 @@ from .forms import (
     AdjuntarInformeForm,
     AgendarCitaForm,
     AgendarCitaPrivadoForm,
+    AgregarEstudioExtraForm,
     ComboForm,
     CompletarDatosPacienteForm,
     CrearTipoEstudioForm,
@@ -40,6 +41,7 @@ from .forms import (
     ProcesarTicketForm,
     RegistrarPagoEstudioForm,
     RegistrarTicketForm,
+    SubirConstanciaFirmadaForm,
 )
 from .horarios import (
     DIAS_SEMANA,
@@ -56,6 +58,7 @@ from .models import (
     Cita,
     Cobro,
     Combo,
+    EstudioExtra,
     ImagenEstudio,
     Notificacion,
     OrdenTrabajo,
@@ -93,6 +96,23 @@ def es_caja(user):
     (independiente del rol) o por ser administrador. Portado (2026-09-04)
     desde la rama visual-andres de TechBlood."""
     return user.is_authenticated and (user.puede_operar_caja or es_administrador(user))
+
+
+def puede_ver_comprobante_pago(user):
+    """Personal autorizado a consultar el comprobante de un estudio pagado.
+    HU-50/HU-52 (portado 2026-09-12 desde la rama visual-andres de
+    TechBlood): además de Caja/administración, recepción, técnicos y
+    radiólogos necesitan poder revisar la boleta/constancia mientras
+    trabajan la orden."""
+    return user.is_authenticated and (
+        es_administrador(user)
+        or es_caja(user)
+        or user.rol in (
+            Usuario.ROL_RECEPCIONISTA,
+            Usuario.ROL_TECNICO_IMAGENES,
+            Usuario.ROL_MEDICO_RADIOLOGO,
+        )
+    )
 
 
 def es_tecnico(user):
@@ -679,7 +699,7 @@ def datos_paciente_boleta(cita):
 
 
 @login_required
-@user_passes_test(es_caja)
+@user_passes_test(puede_ver_comprobante_pago)
 def boleta_pago_pdf(request, cobro_id):
     """Recibo / boleta de pago imprimible de un cobro ya registrado como
     pagado, con formato de recibo (encabezado, datos del paciente, tabla de
@@ -746,15 +766,17 @@ def boleta_pago_pdf(request, cobro_id):
         ('TOPPADDING', (0, 0), (-1, -1), 3),
     ]))
 
-    # Tabla de servicios (Cantidad / Descripción / Precio).
-    descripcion = cita.tipo_estudio.nombre
-    filas_servicio = [
-        ['Cantidad', 'Descripción', 'Precio'],
-        ['1', descripcion, f'Q{monto:.2f}'],
-        ['', '', ''],
-        ['', '', ''],
-        ['', 'Total:', f'Q{monto:.2f}'],
-    ]
+    # Tabla de servicios (Cantidad / Descripción / Precio): el estudio
+    # agendado más cualquier estudio extra que haya agregado el radiólogo
+    # (ver EstudioExtra), cada uno en su propia fila.
+    items_servicio = [(cita.tipo_estudio.nombre, cita.precio_base)]
+    items_servicio += [(e.tipo_estudio.nombre, e.precio) for e in cita.estudios_extra.all()]
+
+    filas_servicio = [['Cantidad', 'Descripción', 'Precio']]
+    filas_servicio += [['1', nombre, f'Q{precio:.2f}'] for nombre, precio in items_servicio]
+    for _ in range(max(0, 2 - len(items_servicio))):
+        filas_servicio.append(['', '', ''])
+    filas_servicio.append(['', 'Total:', f'Q{monto:.2f}'])
     tabla_servicio = Table(filas_servicio, colWidths=[2.6 * cm, 11.4 * cm, 4.0 * cm])
     tabla_servicio.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), azul),
@@ -836,6 +858,128 @@ def boleta_pago_pdf(request, cobro_id):
 
 
 @login_required
+@user_passes_test(puede_ver_comprobante_pago)
+def comprobante_bancario(request, cobro_id):
+    cobro = get_object_or_404(
+        Cobro.objects.select_related('cita'),
+        id=cobro_id,
+        estado=Cobro.ESTADO_PAGADO,
+    )
+    if not cobro.comprobante_bancario:
+        raise Http404('Este pago no tiene una boleta bancaria cargada.')
+    return FileResponse(
+        cobro.comprobante_bancario.open('rb'),
+        as_attachment=False,
+        filename=cobro.comprobante_bancario.name.rsplit('/', 1)[-1],
+    )
+
+
+@login_required
+@user_passes_test(puede_ver_comprobante_pago)
+def constancia_pago_pdf(request, cobro_id):
+    """Genera la constancia interna, separada de la boleta bancaria."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    cobro = get_object_or_404(
+        Cobro.objects.select_related('cita__paciente', 'cita__tipo_estudio', 'cobrado_por'),
+        id=cobro_id,
+        estado=Cobro.ESTADO_PAGADO,
+    )
+    cita = cobro.cita
+    paciente = cita.paciente
+    estilos = getSampleStyleSheet()
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=letter, topMargin=1.8 * cm, bottomMargin=1.8 * cm,
+        leftMargin=2 * cm, rightMargin=2 * cm,
+        title=f'Constancia de pago {cobro.id}',
+    )
+    datos = [
+        ['Paciente', f'{paciente.nombre} {paciente.apellido}'],
+        ['DPI / expediente', f'{paciente.dpi} / {paciente.expediente or "—"}'],
+        ['Estudio', cita.tipo_estudio.nombre],
+        ['Convenio', cita.get_convenio_display()],
+        ['Monto', f'Q{cita.precio:.2f}'],
+        ['Forma de pago', cobro.get_forma_pago_display() or 'No registrada'],
+        ['Boleta / referencia', cobro.numero_boleta or 'No registrada'],
+        ['Fecha de registro', cobro.pagado_en.strftime('%d/%m/%Y %H:%M') if cobro.pagado_en else ''],
+        ['Registrado por', cobro.cobrado_por.get_full_name() or cobro.cobrado_por.username],
+    ]
+    tabla = Table(datos, colWidths=[5 * cm, 11 * cm])
+    tabla.setStyle(TableStyle([
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#eff6ff')),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    firmas = Table([
+        ['Recepcionista', 'Técnico', 'Radiólogo'],
+        ['\n\n\nFirma y fecha', '\n\n\nFirma y fecha', '\n\n\nFirma y fecha'],
+    ], colWidths=[5.3 * cm] * 3)
+    firmas.setStyle(TableStyle([
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#64748b')),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    doc.build([
+        Paragraph('CONSTANCIA INTERNA DE PAGO RECIBIDO', estilos['Title']),
+        Paragraph(
+            'Esta constancia es un respaldo interno y no sustituye la boleta bancaria '
+            'o comprobante de transferencia.',
+            estilos['BodyText'],
+        ),
+        Spacer(1, 16),
+        tabla,
+        Spacer(1, 36),
+        firmas,
+    ])
+    respuesta = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+    respuesta['Content-Disposition'] = f'inline; filename="constancia_pago_{cobro.id}.pdf"'
+    return respuesta
+
+
+@login_required
+@user_passes_test(puede_ver_comprobante_pago)
+def constancia_firmada(request, cobro_id):
+    cobro = get_object_or_404(
+        Cobro.objects.select_related('cita'),
+        id=cobro_id,
+        estado=Cobro.ESTADO_PAGADO,
+    )
+    if not cobro.constancia_firmada:
+        raise Http404('Este pago todavía no tiene una constancia firmada.')
+    return FileResponse(
+        cobro.constancia_firmada.open('rb'),
+        as_attachment=False,
+        filename=cobro.constancia_firmada.name.rsplit('/', 1)[-1],
+    )
+
+
+@login_required
+@user_passes_test(puede_ver_comprobante_pago)
+@require_POST
+def subir_constancia_firmada(request, cobro_id):
+    cobro = get_object_or_404(Cobro, id=cobro_id, estado=Cobro.ESTADO_PAGADO)
+    form = SubirConstanciaFirmadaForm(request.POST, request.FILES)
+    if not form.is_valid():
+        messages.error(request, 'Seleccione una constancia firmada válida.')
+        return redirect('pagos_pendientes')
+    cobro.constancia_firmada = form.cleaned_data['constancia_firmada']
+    cobro.constancia_subida_por = request.user
+    cobro.constancia_subida_en = timezone.now()
+    cobro.save(update_fields=['constancia_firmada', 'constancia_subida_por', 'constancia_subida_en'])
+    messages.success(request, 'La constancia firmada se cargó correctamente.')
+    return redirect('pagos_pendientes')
+
+
+@login_required
 @user_passes_test(es_caja)
 @require_POST
 def marcar_cobrado(request, cita_id):
@@ -848,15 +992,16 @@ def marcar_cobrado(request, cita_id):
         id=cita_id,
     )
     cobro, _creado = Cobro.objects.get_or_create(cita=cita)
-    form = RegistrarPagoEstudioForm(request.POST)
+    form = RegistrarPagoEstudioForm(request.POST, request.FILES)
     if not form.is_valid():
         messages.error(request, 'Revisá los datos de la boleta antes de guardar.')
         return redirect('pagos_pendientes')
 
     cobro.forma_pago = form.cleaned_data['forma_pago']
     cobro.numero_boleta = form.cleaned_data['numero_boleta']
+    cobro.comprobante_bancario = form.cleaned_data['comprobante_bancario']
     cobro.marcar_pagado(request.user, notas=form.cleaned_data['notas'])
-    cobro.save(update_fields=['forma_pago', 'numero_boleta'])
+    cobro.save(update_fields=['forma_pago', 'numero_boleta', 'comprobante_bancario'])
 
     Bitacora.registrar(
         request=request,
@@ -1067,6 +1212,13 @@ def seleccionar_horario(request, convenio):
         citas_por_dia.setdefault(cita.fecha, []).append((rango, cita))
         asignados_por_dia.setdefault(cita.fecha, {}).setdefault(cita.hora, set()).add(etiqueta)
 
+    def _estado_confirmacion(cita):
+        """El estado de aceptación de la cita, para que recepción vea de una
+        vez si el radiólogo ya la confirmó o todavía está pendiente de
+        revisar (aplica sobre todo a COEX/Emergencia IGSS: Privado se agenda
+        directo, sin pasar por confirmación)."""
+        return 'Pendiente' if cita.estado == Cita.ESTADO_PENDIENTE else 'Confirmada'
+
     def _resumen_cita(cita):
         radiologo = cita.radiologo
         return {
@@ -1077,6 +1229,7 @@ def seleccionar_horario(request, convenio):
             'radiologo': (
                 (radiologo.get_full_name() or radiologo.username) if radiologo else 'Sin asignar'
             ),
+            'estado': _estado_confirmacion(cita),
         }
 
     def _celda(dia, hora):
@@ -1095,6 +1248,7 @@ def seleccionar_horario(request, convenio):
             'asignado': hora in asignados,
             'ocupado': hora not in asignados and bool(cruces),
             'convenios': ', '.join(etiquetas),
+            'tiene_pendiente': any(c.estado == Cita.ESTADO_PENDIENTE for c in cruces),
             'citas': [_resumen_cita(c) for c in sorted(cruces, key=lambda c: c.hora)],
         }
 
@@ -1126,6 +1280,17 @@ def seleccionar_horario(request, convenio):
         'slots_detalle': slots_detalle,
     }
     return render(request, 'pacientes/calendario.html', contexto)
+
+
+def _hay_estudio_duplicado(*, dpi, tipo_estudio, fecha, hora):
+    """Evita agendar el mismo estudio dos veces al mismo paciente en el
+    mismo horario, aunque se intente desde otro convenio."""
+    return Cita.objects.filter(
+        paciente__dpi=dpi,
+        tipo_estudio=tipo_estudio,
+        fecha=fecha,
+        hora=hora,
+    ).exclude(estado=Cita.ESTADO_RECHAZADA).exists()
 
 
 def _hay_conflicto_horario(fecha_dt, hora_time, duracion_minutos):
@@ -1185,6 +1350,29 @@ def agendar_cita(request, convenio):
         if fuera_de_ventana(cd['fecha']):
             messages.error(request, 'Solo se pueden agendar citas hasta 3 semanas después de hoy.')
             return redirect(calendario_url)
+
+        if _hay_estudio_duplicado(
+            dpi=cd['dpi'],
+            tipo_estudio=cd['tipo_estudio'],
+            fecha=cd['fecha'],
+            hora=cd['hora'],
+        ):
+            form.add_error(
+                None,
+                'Este paciente ya tiene agendado ese mismo estudio en la fecha y hora seleccionadas.',
+            )
+            return render(request, 'pacientes/agendar_cita.html', {
+                'form': form,
+                'convenio': convenio,
+                'convenio_nombre': convenio_nombre,
+                'calendario_url': calendario_url,
+                'fecha_valor': fecha,
+                'hora_valor': hora,
+                'requiere_carnet_igss': convenio in (
+                    Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS,
+                ),
+                'hay_conflicto': hay_conflicto,
+            })
 
         hay_conflicto = _hay_conflicto_horario(cd['fecha'], cd['hora'], cd['tipo_estudio'].duracion_minutos)
 
@@ -1292,6 +1480,21 @@ def agendar_cita_privado(request):
             if fuera_de_ventana(cd['fecha']):
                 messages.error(request, 'Solo se pueden agendar citas hasta 3 semanas después de hoy.')
                 return redirect(calendario_url)
+
+            if _hay_estudio_duplicado(
+                dpi=cd['dpi'],
+                tipo_estudio=cd['tipo_estudio'],
+                fecha=cd['fecha'],
+                hora=cd['hora'],
+            ):
+                form.add_error(
+                    None,
+                    'Este paciente ya tiene agendado ese mismo estudio en la fecha y hora seleccionadas.',
+                )
+                return render(request, 'pacientes/agendar_privado.html', {
+                    'form': form,
+                    'calendario_url': calendario_url,
+                })
 
             hay_conflicto = _hay_conflicto_horario(
                 cd['fecha'], cd['hora'], cd['tipo_estudio'].duracion_minutos,
@@ -1736,10 +1939,19 @@ def adjuntar_informe(request, cita_id):
         messages.error(request, 'El técnico todavía no adjunta las imágenes de este estudio.')
         return redirect('citas_procesadas')
     volver_url = reverse('citas_procesadas')
+    puede_agregar_extra = cita.convenio == Cita.CONVENIO_PRIVADO
 
     if request.method == 'POST':
         form = AdjuntarInformeForm(request.POST, request.FILES)
-        if form.is_valid():
+        # El estudio extra se agrega en el mismo envío que el informe (no
+        # tiene su propio botón): solo se valida/crea si de verdad se eligió
+        # uno, para no exigirlo cuando el radiólogo solo quiere guardar el
+        # informe.
+        form_estudio_extra = None
+        if puede_agregar_extra and request.POST.get('tipo_estudio'):
+            form_estudio_extra = AgregarEstudioExtraForm(request.POST)
+
+        if form.is_valid() and (form_estudio_extra is None or form_estudio_extra.is_valid()):
             orden.informe_texto = form.cleaned_data['informe_texto']
             if form.cleaned_data['informe_archivo']:
                 orden.informe_archivo = form.cleaned_data['informe_archivo']
@@ -1750,6 +1962,9 @@ def adjuntar_informe(request, cita_id):
             ])
             cita.estado = Cita.ESTADO_PROCESADA
             cita.save(update_fields=['estado'])
+
+            if form_estudio_extra is not None:
+                _registrar_estudio_extra(request, cita, form_estudio_extra)
 
             _notificar_estudio_completado(cita)
             Bitacora.registrar(
@@ -1762,6 +1977,7 @@ def adjuntar_informe(request, cita_id):
             return redirect(volver_url)
     else:
         form = AdjuntarInformeForm()
+        form_estudio_extra = AgregarEstudioExtraForm() if puede_agregar_extra else None
 
     return render(request, 'pacientes/adjuntar_informe.html', {
         'form': form,
@@ -1770,18 +1986,85 @@ def adjuntar_informe(request, cita_id):
         'edad': cita.paciente.edad_en(cita.fecha),
         'volver_url': volver_url,
         'tiene_dicom_original': any(img.archivo_original for img in orden.imagenes.all()),
+        'form_estudio_extra': form_estudio_extra,
+        'estudios_extra': cita.estudios_extra.select_related('tipo_estudio', 'agregado_por').all(),
     })
+
+
+def _registrar_estudio_extra(request, cita, form):
+    """Crea el EstudioExtra a partir de un form ya validado, notifica a
+    recepción y lo registra en la bitácora. Lo usan tanto
+    agregar_estudio_extra (el endpoint viejo, standalone) como
+    adjuntar_informe (cuando se agrega en el mismo envío que el informe)."""
+    extra = EstudioExtra.objects.create(
+        cita=cita,
+        tipo_estudio=form.cleaned_data['tipo_estudio'],
+        agregado_por=request.user,
+        notas=form.cleaned_data['notas'],
+    )
+    mensaje = (
+        f'{request.user.get_full_name() or request.user.username} agregó el estudio extra '
+        f'"{extra.tipo_estudio.nombre}" (Q{extra.precio:.2f}) para {cita.paciente.nombre} '
+        f'{cita.paciente.apellido}.'
+    )
+    recepcionistas = Usuario.objects.filter(rol=Usuario.ROL_RECEPCIONISTA, is_active=True)
+    Notificacion.notificar_a_varios(
+        usuarios=recepcionistas,
+        tipo=Notificacion.TIPO_ESTUDIO_EXTRA_AGREGADO,
+        mensaje=mensaje,
+        cita=cita,
+        url=reverse('pagos_pendientes'),
+    )
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_AGREGAR_ESTUDIO_EXTRA,
+        descripcion=(
+            f'Agregó el estudio extra "{extra.tipo_estudio.nombre}" (Q{extra.precio:.2f}) '
+            f'a la cita de {cita.paciente} (cita #{cita.id}).'
+        ),
+    )
+    return extra
 
 
 @login_required
 @user_passes_test(es_radiologo)
+@require_POST
+def agregar_estudio_extra(request, cita_id):
+    """El radiólogo avisa que le realizó al paciente un estudio extra al
+    agendado. Solo aplica a Privado: es el único convenio donde Caja le
+    cobra el estudio directamente al paciente. Sube el total de la cita
+    (ver Cita.precio) y le notifica a recepción."""
+    cita = get_object_or_404(
+        Cita, id=cita_id, convenio=Cita.CONVENIO_PRIVADO, estado=Cita.ESTADO_EN_PROCESO,
+    )
+    volver_url = reverse('adjuntar_informe', args=[cita.id])
+    form = AgregarEstudioExtraForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, 'Elegí un estudio válido para agregarlo como extra.')
+        return redirect(volver_url)
+
+    extra = _registrar_estudio_extra(request, cita, form)
+    messages.success(
+        request,
+        f'Estudio extra "{extra.tipo_estudio.nombre}" agregado y notificado a recepción.',
+    )
+    return redirect(volver_url)
+
+
+@login_required
+@user_passes_test(es_radiologo)
+@xframe_options_sameorigin
 def ver_imagenes_jpg(request, orden_id):
     """Galería con las imágenes JPG (ya convertidas si venían de DICOM) de
     un estudio, con casillas para que la radióloga elija cuáles quedan: las
     que deje marcadas son las que se siguen viendo y las que se le envían
     al paciente por correo; las que desmarque se borran de acá (el JPG),
-    pero si tenían un DICOM detrás ese se conserva completo sin tocar. Es
-    a donde manda el botón "Ver JPG" de adjuntar_informe.html."""
+    pero si tenían un DICOM detrás ese se conserva completo sin tocar. Se
+    muestra en un <iframe> dentro de adjuntar_informe.html (no en una
+    pestaña aparte, para no arriesgar el PDF del informe ya elegido —
+    ver el comentario en ese template); @xframe_options_sameorigin permite
+    que el navegador la deje incrustar ahí."""
     orden = get_object_or_404(OrdenTrabajo, id=orden_id)
     imagenes = orden.imagenes.filter(seleccionada=True).exclude(archivo='')
     return render(request, 'pacientes/ver_imagenes_jpg.html', {
@@ -1870,7 +2153,11 @@ def guardar_seleccion_imagenes(request, orden_id):
     else:
         messages.info(request, 'No se descartó ninguna imagen.')
 
-    return redirect('adjuntar_informe', cita_id=orden.cita_id)
+    # Antes volvía a adjuntar_informe; ahora que esta pantalla se muestra
+    # en un <iframe> dentro de esa misma página (ver el comentario en
+    # ver_imagenes_jpg), tiene que quedarse en la galería en vez de intentar
+    # cargar la página completa de "arriba" adentro del iframe.
+    return redirect('ver_imagenes_jpg', orden_id=orden.id)
 
 
 @login_required
@@ -2160,18 +2447,23 @@ def pantalla_turnos(request):
     })
 
 
-def _iniciales_paciente(paciente):
-    """Nombre del paciente reducido a iniciales para la pantalla pública
-    (privacidad): "Elmer Adrián Catalán" -> "E. A. C.""."""
-    partes = f'{paciente.nombre} {paciente.apellido}'.split()
-    return ' '.join(f'{p[0].upper()}.' for p in partes if p)
+# Sala según la modalidad del estudio (no según el radiólogo asignado):
+# todos los estudios de una misma modalidad se atienden en el mismo
+# equipo/sala, sin importar qué radiólogo esté de turno ahí.
+SALA_POR_MODALIDAD = {
+    TipoEstudio.MODALIDAD_RX: 'Sala 1',
+    TipoEstudio.MODALIDAD_RX_CONTRASTE: 'Sala 1',
+    TipoEstudio.MODALIDAD_MAMO_DENSIT: 'Sala 2',
+    TipoEstudio.MODALIDAD_TAC: 'Sala 3',
+    TipoEstudio.MODALIDAD_USG: 'Sala 4',
+}
 
 
 def _turno_actual_sala_espera(hoy):
     """El último turno llamado (marcado atendido) hoy, o None."""
     return (
         Ticket.del_dia(hoy)
-        .select_related('paciente', 'cita__radiologo')
+        .select_related('paciente', 'cita__radiologo', 'cita__tipo_estudio')
         .filter(estado=Ticket.ESTADO_ATENDIDO)
         .order_by('-atendido_en')
         .first()
@@ -2187,28 +2479,31 @@ def _proximos_sala_espera(hoy):
 
 
 def _actual_sala_espera_dict(actual):
-    """Datos del turno actual para la pantalla pública: iniciales del
-    paciente, radiólogo asignado y su sala. NO incluye el tipo de estudio
-    (privacidad)."""
+    """Datos del turno actual para la pantalla pública: nombre completo del
+    paciente, radiólogo asignado y la sala del estudio (según su
+    modalidad — no según el radiólogo). NO incluye el tipo de estudio en
+    sí (privacidad)."""
     if actual is None:
         return None
     radiologo = actual.cita.radiologo if actual.cita_id else None
+    tipo_estudio = actual.cita.tipo_estudio if actual.cita_id else None
     return {
         'turno': actual.turno,
-        'paciente': _iniciales_paciente(actual.paciente),
+        'paciente': f'{actual.paciente.nombre} {actual.paciente.apellido}'.strip(),
         'radiologo': (
             (radiologo.get_full_name() or radiologo.username) if radiologo else ''
         ),
-        'sala': (radiologo.sala if radiologo and radiologo.sala else ''),
+        'sala': (SALA_POR_MODALIDAD.get(tipo_estudio.modalidad, '') if tipo_estudio else ''),
     }
 
 
 def pantalla_sala_espera(request):
     """Pantalla pública para el televisor de la sala de espera (sin login:
     se abre directo en la TV). Muestra el último turno llamado — el que se
-    acaba de marcar atendido en pantalla_turnos, con "favor de pasar", las
-    iniciales del paciente, su radiólogo y sala — y los próximos en espera.
-    Se actualiza sola cada pocos segundos vía estado_sala_espera."""
+    acaba de marcar atendido en pantalla_turnos, con "favor de pasar", el
+    nombre completo del paciente, su radiólogo y la sala (según la
+    modalidad del estudio) — y los próximos en espera. Se actualiza sola
+    cada pocos segundos vía estado_sala_espera."""
     hoy = timezone.localdate()
     actual = _turno_actual_sala_espera(hoy)
     return render(request, 'pacientes/pantalla_sala_espera.html', {

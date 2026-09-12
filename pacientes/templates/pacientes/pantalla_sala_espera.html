@@ -148,12 +148,52 @@
             }
         }
 
+        // Anuncio por voz: nombre del paciente, número de turno y sala. Se
+        // lee una vez apenas cambia el turno actual, y otra vez 4 minutos
+        // después por si no alcanzó a escucharlo la primera vez. Si el
+        // turno vuelve a cambiar antes de esos 4 minutos, se cancela ese
+        // segundo aviso (ya no aplica) y arranca el ciclo del turno nuevo.
+        let turnoAnunciado = {% if actual %}'{{ actual.turno|escapejs }}'{% else %}null{% endif %};
+        let temporizadorRepeticion = null;
+
+        function anunciarTurno(actual) {
+            if (!actual || !('speechSynthesis' in window)) return;
+            let texto = actual.paciente + ', turno ' + actual.turno;
+            if (actual.sala) {
+                texto += ', favor pasar a ' + actual.sala;
+            }
+            texto += '.';
+            const anuncio = new SpeechSynthesisUtterance(texto);
+            anuncio.lang = 'es-GT';
+            anuncio.rate = 0.95;
+            window.speechSynthesis.cancel();
+            window.speechSynthesis.speak(anuncio);
+        }
+
+        function revisarCambioDeTurno(actual) {
+            const turnoNuevo = actual ? actual.turno : null;
+            if (turnoNuevo === turnoAnunciado) return;
+
+            turnoAnunciado = turnoNuevo;
+            if (temporizadorRepeticion) {
+                clearTimeout(temporizadorRepeticion);
+                temporizadorRepeticion = null;
+            }
+            if (!actual) return;
+
+            anunciarTurno(actual);
+            temporizadorRepeticion = setTimeout(function () {
+                anunciarTurno(actual);
+            }, 4 * 60 * 1000);
+        }
+
         async function actualizarSalaEspera() {
             try {
                 const r = await fetch('{% url "estado_sala_espera" %}', { cache: 'no-store' });
                 const data = await r.json();
                 pintarActual(data.actual);
                 pintarProximos(data.proximos);
+                revisarCambioDeTurno(data.actual);
             } catch (e) {
                 console.error('No se pudo actualizar la sala de espera:', e);
             }
