@@ -150,7 +150,12 @@ def marcar_pagadas(lineas):
 def planilla(desde, hasta, usuarios):
     """Fila de planilla por cada usuario: salario base mensual y comisiones
     del período que TODAVÍA no se han pagado (más un aviso si quedaron
-    comisiones sin pagar de antes del período). `desde`/`hasta` incluidos."""
+    comisiones sin pagar de antes del período). `desde`/`hasta` incluidos.
+
+    A quien todavía no había ingresado a la clínica cuando terminó el
+    período (ver Usuario.date_joined) no se le muestra salario de ese
+    período: si no trabajaba acá, no se le puede deber nada."""
+    usuarios = [u for u in usuarios if u.date_joined.date() <= hasta]
     lineas = marcar_pagadas(lineas_comision(desde, hasta + datetime.timedelta(days=1)))
 
     # Comisiones sin pagar anteriores al período (para avisar al admin).

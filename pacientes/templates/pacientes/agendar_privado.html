@@ -7,6 +7,7 @@
     <style>
         .aviso-paciente { display: none; margin-top: 0.75rem; padding: 0.6rem 0.75rem; border-radius: var(--radius); font-size: 0.82rem; background: var(--success-light); color: #166534; border: 1px solid #bbf7d0; }
         .aviso-paciente a { color: inherit; font-weight: bold; margin-left: 0.5rem; }
+        .aviso-paciente.aviso-nuevo { background: var(--info-light); color: var(--primary-dark); border-color: #bfdbfe; }
         .previa-estudio { display: none; margin-top: 0.35rem; padding: 0.4rem 0.65rem; background: var(--info-light); border: 1px solid #bfdbfe; border-radius: var(--radius); font-size: 0.82rem; color: var(--primary-dark); font-weight: 600; }
         .previa-estudio.visible { display: block; }
         .seccion-titulo { font-size: 0.95rem; color: var(--text); margin: 1.5rem 0 0.25rem; border-bottom: 1px solid var(--border-light); padding-bottom: 0.3rem; font-weight: 600; }
@@ -42,6 +43,9 @@
             <div class="aviso-paciente" id="aviso-paciente-existente">
                 Paciente ya registrado — se completaron sus datos.
                 <a href="#" id="btn-buscar-otro">No es este paciente</a>
+            </div>
+            <div class="aviso-paciente aviso-nuevo" id="aviso-paciente-nuevo">
+                Este DPI no está registrado — vas a crear un paciente nuevo con los datos que ingreses.
             </div>
 
             <label for="{{ form.nombre.id_for_label }}">Nombre</label>
@@ -109,6 +113,7 @@
         (function () {
             var dpi = document.getElementById('id_dpi');
             var aviso = document.getElementById('aviso-paciente-existente');
+            var avisoNuevo = document.getElementById('aviso-paciente-nuevo');
             var campos = ['nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento'];
             var CONTACTO_EDITABLE = ['telefono', 'correo'];
             var timer = null;
@@ -120,6 +125,16 @@
                 el.style.background = si ? '#f1f5f9' : '';
             }
 
+            // Limpia lo que haya quedado autocompletado de una búsqueda
+            // anterior (ej. si corrigieron un DPI que ya no coincide con el
+            // paciente que se había cargado).
+            function limpiarAutocompletado() {
+                campos.forEach(function (c) {
+                    var el = document.getElementById('id_' + c);
+                    if (el) { el.value = ''; bloquear(el, false); }
+                });
+            }
+
             function buscar() {
                 var valor = dpi.value.trim();
                 if (valor.length !== 13 || valor === ultimo) return;
@@ -127,7 +142,13 @@
                 fetch('{% url "buscar_paciente_por_dpi" %}?dpi=' + encodeURIComponent(valor))
                     .then(function (r) { return r.json(); })
                     .then(function (d) {
-                        if (!d.encontrado) { aviso.style.display = 'none'; return; }
+                        if (!d.encontrado) {
+                            aviso.style.display = 'none';
+                            limpiarAutocompletado();
+                            avisoNuevo.style.display = 'block';
+                            return;
+                        }
+                        avisoNuevo.style.display = 'none';
                         campos.forEach(function (c) {
                             var el = document.getElementById('id_' + c);
                             if (!el) return;
@@ -139,22 +160,29 @@
                             bloquear(el, !editable && !!d[c]);
                         });
                         aviso.style.display = 'block';
+                    })
+                    .catch(function () {
+                        aviso.style.display = 'none';
+                        avisoNuevo.style.display = 'none';
                     });
             }
 
             dpi.addEventListener('input', function () {
                 clearTimeout(timer);
-                if (dpi.value.trim().length !== 13) { aviso.style.display = 'none'; ultimo = ''; return; }
+                if (dpi.value.trim().length !== 13) {
+                    aviso.style.display = 'none';
+                    avisoNuevo.style.display = 'none';
+                    ultimo = '';
+                    return;
+                }
                 timer = setTimeout(buscar, 300);
             });
             dpi.addEventListener('blur', buscar);
             document.getElementById('btn-buscar-otro').addEventListener('click', function (e) {
                 e.preventDefault();
-                campos.forEach(function (c) {
-                    var el = document.getElementById('id_' + c);
-                    if (el) { el.value = ''; bloquear(el, false); }
-                });
+                limpiarAutocompletado();
                 aviso.style.display = 'none';
+                avisoNuevo.style.display = 'none';
                 ultimo = '';
                 dpi.focus();
             });

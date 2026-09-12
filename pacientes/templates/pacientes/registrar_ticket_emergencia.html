@@ -33,6 +33,10 @@
                     Paciente ya registrado — se completaron sus datos automáticamente.
                     <a href="#" id="btn-buscar-otro" style="font-weight:bold;margin-left:0.5rem;">No es este paciente</a>
                 </div>
+                <div class="info-box" id="aviso-paciente-nuevo" style="display:none;">
+                    <svg style="width:16px;height:16px;vertical-align:middle;margin-right:0.3rem;"><use href="#i-info"/></svg>
+                    Este DPI no está registrado — vas a crear un paciente nuevo con los datos que ingreses.
+                </div>
 
                 <label for="{{ form.nombre.id_for_label }}">Nombre</label>
                 {{ form.nombre }}
@@ -85,11 +89,24 @@
         (function () {
             var dpiInput = document.getElementById('id_dpi');
             var aviso = document.getElementById('aviso-paciente-existente');
+            var avisoNuevo = document.getElementById('aviso-paciente-nuevo');
             var camposAutocompletables = [
                 'nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento', 'carnet_igss',
             ];
             var temporizadorBusqueda = null;
             var ultimoDpiBuscado = '';
+
+            // Limpia lo que haya quedado autocompletado de una búsqueda
+            // anterior (ej. si corrigieron un DPI que ya no coincide con el
+            // paciente que se había cargado).
+            function limpiarAutocompletado() {
+                camposAutocompletables.forEach(function (nombreCampo) {
+                    var elemento = document.getElementById('id_' + nombreCampo);
+                    if (elemento) {
+                        elemento.value = '';
+                    }
+                });
+            }
 
             function buscarPaciente() {
                 var dpi = dpiInput.value.trim();
@@ -102,8 +119,11 @@
                     .then(function (datos) {
                         if (!datos.encontrado) {
                             aviso.style.display = 'none';
+                            limpiarAutocompletado();
+                            avisoNuevo.style.display = 'block';
                             return;
                         }
+                        avisoNuevo.style.display = 'none';
                         camposAutocompletables.forEach(function (nombreCampo) {
                             var elemento = document.getElementById('id_' + nombreCampo);
                             if (elemento) {
@@ -111,6 +131,10 @@
                             }
                         });
                         aviso.style.display = 'block';
+                    })
+                    .catch(function () {
+                        aviso.style.display = 'none';
+                        avisoNuevo.style.display = 'none';
                     });
             }
 
@@ -120,6 +144,7 @@
                 clearTimeout(temporizadorBusqueda);
                 if (dpiInput.value.trim().length !== 13) {
                     aviso.style.display = 'none';
+                    avisoNuevo.style.display = 'none';
                     ultimoDpiBuscado = '';
                     return;
                 }
@@ -129,13 +154,9 @@
 
             document.getElementById('btn-buscar-otro').addEventListener('click', function (evento) {
                 evento.preventDefault();
-                camposAutocompletables.forEach(function (nombreCampo) {
-                    var elemento = document.getElementById('id_' + nombreCampo);
-                    if (elemento) {
-                        elemento.value = '';
-                    }
-                });
+                limpiarAutocompletado();
                 aviso.style.display = 'none';
+                avisoNuevo.style.display = 'none';
                 ultimoDpiBuscado = '';
                 dpiInput.focus();
             });

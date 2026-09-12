@@ -118,6 +118,7 @@ class Bitacora(models.Model):
     ACCION_CREAR_COMBO = 'crear_combo'
     ACCION_EDITAR_COMBO = 'editar_combo'
     ACCION_MARCAR_COBRADO = 'marcar_cobrado'
+    ACCION_AGREGAR_ESTUDIO_EXTRA = 'agregar_estudio_extra'
 
     ACCION_CHOICES = [
         (ACCION_LOGIN_EXITOSO, 'Inicio de sesión'),
@@ -148,6 +149,7 @@ class Bitacora(models.Model):
         (ACCION_CREAR_COMBO, 'Creación de combo de estudios'),
         (ACCION_EDITAR_COMBO, 'Edición de combo de estudios'),
         (ACCION_MARCAR_COBRADO, 'Marcar estudio como cobrado'),
+        (ACCION_AGREGAR_ESTUDIO_EXTRA, 'Agregó un estudio extra a una cita'),
     ]
 
     usuario = models.ForeignKey(

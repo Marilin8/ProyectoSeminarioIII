@@ -46,6 +46,59 @@
             Motivo: {{ orden.motivo }}
         </div>
 
+        {% if cita.cobro and cita.cobro.pagado %}
+            <p>
+                <a class="btn btn-outline btn-sm" href="{% url 'boleta_pago_pdf' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                    <svg width="14" height="14"><use href="#i-file-text"/></svg>
+                    Ver recibo interno
+                </a>
+                <a class="btn btn-outline btn-sm" href="{% url 'constancia_pago_pdf' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                    Generar constancia de pago
+                </a>
+                {% if cita.cobro.comprobante_bancario %}
+                    <a class="btn btn-outline btn-sm" href="{% url 'comprobante_bancario' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                        Ver comprobante subido
+                    </a>
+                {% endif %}
+                {% if cita.cobro.constancia_firmada %}
+                    <a class="btn btn-outline btn-sm" href="{% url 'constancia_firmada' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                        Ver constancia firmada
+                    </a>
+                {% endif %}
+            </p>
+        {% endif %}
+
+        {% if cita.convenio == 'privado' %}
+            <div class="card" style="padding:1rem;margin-bottom:1.25rem;background:#f8fafc;">
+                <div style="font-weight:600;margin-bottom:0.5rem;">Estudios extra realizados</div>
+                {% if estudios_extra %}
+                    <ul style="margin:0 0 0.75rem 0;padding-left:1.1rem;font-size:0.85rem;">
+                        {% for extra in estudios_extra %}
+                            <li>
+                                {{ extra.tipo_estudio.nombre }} — Q{{ extra.precio|floatformat:2 }}
+                                {% if extra.notas %}<span class="text-muted">({{ extra.notas }})</span>{% endif %}
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p class="ayuda" style="margin-bottom:0.75rem;">Todavía no se agregó ningún estudio extra.</p>
+                {% endif %}
+
+                {% if form_estudio_extra %}
+                    <form method="post" action="{% url 'agregar_estudio_extra' cita.id %}">
+                        {% csrf_token %}
+                        <label for="{{ form_estudio_extra.tipo_estudio.id_for_label }}">Notificar estudio extra realizado</label>
+                        {{ form_estudio_extra.tipo_estudio }}
+                        {{ form_estudio_extra.notas }}
+                        <button type="submit" class="btn btn-outline btn-sm mt-1">
+                            <svg width="14" height="14"><use href="#i-plus"/></svg>
+                            Agregar y notificar a recepción
+                        </button>
+                    </form>
+                {% endif %}
+            </div>
+        {% endif %}
+
         {% if orden.imagenes.all %}
             <div class="acciones-imagenes">
                 <a class="btn btn-outline" href="{% url 'ver_imagenes_jpg' orden_id=orden.id %}" target="_blank">

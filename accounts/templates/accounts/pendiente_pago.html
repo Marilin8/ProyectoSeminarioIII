@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+
+{% block title %}Pendiente de pago - Clínica de Imágenes{% endblock %}
+{% block page_title %}Pendiente de pago{% endblock %}
+{% block nav_planilla %}active{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .col-num { text-align: right; white-space: nowrap; }
+        table tfoot td { font-weight: 700; border-top: 2px solid var(--border-light); }
+        .meses-atrasados { list-style: none; padding: 0; margin: 0; }
+        .meses-atrasados li {
+            display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+            padding: 0.25rem 0; font-size: 0.82rem;
+        }
+        .meses-atrasados li + li { border-top: 1px dashed var(--border-light); }
+        .pago-link { font-size: 0.75rem; color: var(--primary); }
+    </style>
+{% endblock %}
+
+{% block content %}
+    <div class="tabs">
+        <a href="{% url 'planilla' %}">Planilla</a>
+        <a href="{% url 'pendiente_pago' %}" class="active">Pendiente de pago</a>
+        <a href="{% url 'pago_adelantado' %}">Pago por adelantado</a>
+        <a href="{% url 'historial_comisiones' %}">Historial de comisiones</a>
+        <a href="{% url 'historial_pagos' %}">Historial de pagos</a>
+    </div>
+
+    <p class="text-muted text-sm mb-2">
+        Empleados con algún pago atrasado: meses de salario ya cerrados que nunca se registraron,
+        o comisiones ganadas en cualquier fecha que todavía no se pagaron. El mes en curso no cuenta
+        como atrasado — para pagarlo, hacelo desde <a href="{% url 'planilla' %}">Planilla</a>.
+    </p>
+
+    <div class="card">
+        <div class="card-body" style="padding:0;overflow-x:auto;">
+            {% if filas %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Empleado</th>
+                            <th>Rol</th>
+                            <th>Salario atrasado</th>
+                            <th class="col-num">Comisiones atrasadas</th>
+                            <th class="col-num">Total pendiente</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for fila in filas %}
+                            <tr>
+                                <td>{{ fila.usuario.get_full_name|default:fila.usuario.username }}</td>
+                                <td><span class="badge badge-muted">{{ fila.usuario.get_rol_display }}</span></td>
+                                <td>
+                                    {% if fila.meses_pendientes %}
+                                        <ul class="meses-atrasados">
+                                            {% for m in fila.meses_pendientes %}
+                                                <li>
+                                                    <span>{{ m.etiqueta }} · Q{{ m.monto|floatformat:2 }}</span>
+                                                    <a class="pago-link" href="{% url 'registrar_pago_salario' fila.usuario.id %}?modo=mes&mes={{ m.anio }}-{{ m.mes|stringformat:'02d' }}">
+                                                        Pagar
+                                                    </a>
+                                                </li>
+                                            {% endfor %}
+                                        </ul>
+                                    {% else %}
+                                        <span class="text-muted text-xs">al día</span>
+                                    {% endif %}
+                                </td>
+                                <td class="col-num">
+                                    {% if fila.comisiones_pendientes > 0 %}
+                                        Q{{ fila.comisiones_pendientes|floatformat:2 }}
+                                        <span class="text-muted text-xs">({{ fila.cantidad_comisiones }})</span>
+                                        <br>
+                                        <span class="text-muted text-xs">desde {{ fila.comisiones_desde|date:'d/m/Y' }}</span>
+                                        <br>
+                                        <a class="pago-link" href="{% url 'planilla_empleado' fila.usuario.id %}">ver detalle</a>
+                                    {% else %}
+                                        <span class="text-muted text-xs">al día</span>
+                                    {% endif %}
+                                </td>
+                                <td class="col-num text-bold">Q{{ fila.total|floatformat:2 }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="4">Total pendiente ({{ filas|length }} empleado{{ filas|length|pluralize }})</td>
+                            <td class="col-num">Q{{ total_general|floatformat:2 }}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            {% else %}
+                <p class="text-muted text-center" style="padding:2rem 0;">
+                    No hay pagos atrasados — todos los empleados están al día.
+                </p>
+            {% endif %}
+        </div>
+    </div>
+{% endblock %}
