@@ -1,0 +1,170 @@
+{% extends 'base.html' %}
+
+{% block title %}Planilla - Clínica de Imágenes{% endblock %}
+{% block page_title %}Planilla{% endblock %}
+{% block nav_planilla %}active{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .periodo-form { padding: 0.9rem 1rem; }
+        .periodo-form .modos { display: flex; gap: 0.4rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+        .periodo-form .modos a {
+            font-size: 0.8rem; font-weight: 600; padding: 0.35rem 0.9rem;
+            border-radius: 999px; text-decoration: none;
+            background: #f1f5f9; color: var(--text-muted);
+        }
+        .periodo-form .modos a.on { background: var(--primary); color: #fff; }
+        .periodo-form .fila { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; }
+        .periodo-form label {
+            display: block; margin: 0 0 0.2rem;
+            font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted);
+        }
+        .col-num { text-align: right; white-space: nowrap; }
+        table tfoot td { font-weight: 700; border-top: 2px solid var(--border-light); }
+        .pago-link { display: inline-block; margin-left: 0.4rem; font-size: 0.75rem; color: var(--primary); }
+        .aviso-previa { font-size: 0.72rem; color: #92400e; display: block; }
+    </style>
+{% endblock %}
+
+{% block content %}
+    <div class="tabs">
+        <a href="{% url 'planilla' %}" class="active">Planilla</a>
+        <a href="{% url 'pendiente_pago' %}">Pendiente de pago</a>
+        <a href="{% url 'pago_adelantado' %}">Pago por adelantado</a>
+        <a href="{% url 'historial_comisiones' %}">Historial de comisiones</a>
+        <a href="{% url 'historial_pagos' %}">Historial de pagos</a>
+    </div>
+
+    <form method="get" class="card mb-2 periodo-form">
+        <div class="modos">
+            <a href="?modo=mes" class="{% if periodo.modo == 'mes' %}on{% endif %}">Mes</a>
+            <a href="?modo=quincena&quincena={{ periodo.quincena_mes }}&q={{ periodo.quincena_q }}" class="{% if periodo.modo == 'quincena' %}on{% endif %}">Quincena</a>
+            <a href="?modo=semana&semana={{ periodo.semana_valor }}" class="{% if periodo.modo == 'semana' %}on{% endif %}">Semana</a>
+            <a href="?modo=rango" class="{% if periodo.modo == 'rango' %}on{% endif %}">Rango libre</a>
+        </div>
+
+        {% if periodo.modo == 'mes' %}
+            <input type="hidden" name="modo" value="mes">
+            <div class="fila">
+                <div><label for="mes">Mes de las comisiones</label>
+                    <input type="month" name="mes" id="mes" value="{{ periodo.mes_valor }}"></div>
+                <button type="submit" class="btn btn-primary btn-sm">Ver</button>
+            </div>
+        {% elif periodo.modo == 'quincena' %}
+            <input type="hidden" name="modo" value="quincena">
+            <div class="fila">
+                <div><label for="quincena">Mes</label>
+                    <input type="month" name="quincena" id="quincena" value="{{ periodo.quincena_mes }}"></div>
+                <div><label for="q">Quincena</label>
+                    <select name="q" id="q">
+                        <option value="1" {% if periodo.quincena_q == '1' %}selected{% endif %}>1ª (1–15)</option>
+                        <option value="2" {% if periodo.quincena_q == '2' %}selected{% endif %}>2ª (16–fin)</option>
+                    </select></div>
+                <button type="submit" class="btn btn-primary btn-sm">Ver</button>
+            </div>
+        {% elif periodo.modo == 'semana' %}
+            <input type="hidden" name="modo" value="semana">
+            <div class="fila">
+                <div><label for="semana">Un día de la semana</label>
+                    <input type="date" name="semana" id="semana" value="{{ periodo.semana_valor }}"></div>
+                <button type="submit" class="btn btn-primary btn-sm">Ver</button>
+            </div>
+        {% else %}
+            <input type="hidden" name="modo" value="rango">
+            <div class="fila">
+                <div><label for="desde">Desde</label>
+                    <input type="date" name="desde" id="desde" value="{{ periodo.desde|date:'Y-m-d' }}"></div>
+                <div><label for="hasta">Hasta</label>
+                    <input type="date" name="hasta" id="hasta" value="{{ periodo.hasta|date:'Y-m-d' }}"></div>
+                <button type="submit" class="btn btn-primary btn-sm">Ver</button>
+            </div>
+        {% endif %}
+    </form>
+
+    <p class="text-muted text-sm mb-2">
+        Comisiones del período: <strong>{{ periodo.etiqueta }}</strong>
+        ({{ periodo.desde|date:'d/m/Y' }} – {{ periodo.hasta|date:'d/m/Y' }}).
+        El <strong>salario base</strong> se paga por el mes de <strong>{{ mes_salario_etiqueta }}</strong>.
+        Solo se muestran las comisiones que <strong>todavía no se pagaron</strong>.
+    </p>
+
+    <div class="card">
+        <div class="card-body" style="padding:0;overflow-x:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Empleado</th>
+                        <th>Rol</th>
+                        <th class="col-num">Salario base</th>
+                        <th>Pago salario ({{ mes_salario_etiqueta }})</th>
+                        <th class="col-num">Comisiones pendientes</th>
+                        <th>Pago comisiones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for fila in filas %}
+                        <tr>
+                            <td>{{ fila.usuario.get_full_name|default:fila.usuario.username }}</td>
+                            <td><span class="badge badge-muted">{{ fila.usuario.get_rol_display }}</span></td>
+                            <td class="col-num">Q{{ fila.salario_base|floatformat:2 }}</td>
+                            <td style="white-space:nowrap;">
+                                {% if fila.pago_salario %}
+                                    <span class="badge badge-success">Pagado</span>
+                                    {% if fila.pago_salario.verificado %}
+                                        <span class="badge badge-muted">✓ verificado</span>
+                                    {% else %}
+                                        <span class="badge badge-warning">sin verificar</span>
+                                    {% endif %}
+                                    <a class="pago-link" href="{{ fila.pago_salario.comprobante.url }}" target="_blank" rel="noopener">ver boleta</a>
+                                    <a class="pago-link" href="{% url 'registrar_pago_salario' fila.usuario.id %}?{{ query }}">reemplazar</a>
+                                {% elif fila.salario_base > 0 %}
+                                    <a class="btn btn-primary btn-sm" href="{% url 'registrar_pago_salario' fila.usuario.id %}?{{ query }}">
+                                        <svg width="14" height="14"><use href="#i-upload"/></svg> Pagar salario
+                                    </a>
+                                {% else %}
+                                    <span class="text-muted text-xs">sin salario</span>
+                                {% endif %}
+                            </td>
+                            <td class="col-num">
+                                Q{{ fila.comisiones|floatformat:2 }}
+                                {% if fila.cantidad_comisiones %}<span class="text-muted text-xs">({{ fila.cantidad_comisiones }})</span>{% endif %}
+                                {% if fila.comisiones_previas > 0 %}
+                                    <span class="aviso-previa">+ Q{{ fila.comisiones_previas|floatformat:2 }} sin pagar de antes</span>
+                                {% endif %}
+                            </td>
+                            <td style="white-space:nowrap;">
+                                {% if fila.comisiones > 0 %}
+                                    <a class="btn btn-primary btn-sm" href="{% url 'registrar_pago_comision' fila.usuario.id %}?{{ query }}">
+                                        <svg width="14" height="14"><use href="#i-upload"/></svg> Pagar comisiones
+                                    </a>
+                                    <a class="pago-link" href="{% url 'planilla_empleado' fila.usuario.id %}?{{ query }}">ver detalle</a>
+                                {% else %}
+                                    <span class="text-muted text-xs">nada pendiente</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% empty %}
+                        <tr><td colspan="6" class="text-muted text-center" style="padding:2rem 0;">No hay empleados activos.</td></tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="2">Totales</td>
+                        <td class="col-num">Q{{ totales.salario_base|floatformat:2 }}</td>
+                        <td></td>
+                        <td class="col-num">Q{{ totales.comisiones|floatformat:2 }}</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+{% endblock %}

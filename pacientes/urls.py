@@ -7,6 +7,21 @@ urlpatterns = [
     path('estudios/nuevo/', views.crear_estudio, name='crear_estudio'),
     path('estudios/', views.lista_estudios, name='lista_estudios'),
     path('estudios/<int:estudio_id>/editar/', views.editar_estudio, name='editar_estudio'),
+    path('combos/nuevo/', views.crear_combo, name='crear_combo'),
+    path('combos/', views.lista_combos, name='lista_combos'),
+    path('combos/<int:combo_id>/editar/', views.editar_combo, name='editar_combo'),
+    # Visor web público del estudio (link estilo PACS que se manda por correo:
+    # /visor/?studyId=<id>&tab=images&ac=<token base64>).
+    path('visor/', views.visor_estudio, name='visor_estudio'),
+    path(
+        'visor/<int:orden_id>/imagen/<int:imagen_id>/',
+        views.visor_imagen,
+        name='visor_imagen',
+    ),
+    path('visor/<int:orden_id>/informe.pdf', views.visor_informe_pdf, name='visor_informe_pdf'),
+    path('visor/<int:orden_id>/dicom.zip', views.visor_dicom, name='visor_dicom'),
+    path('visor/<int:orden_id>/imagenes.zip', views.visor_jpg, name='visor_jpg'),
+
     path('pacientes/buscar-por-dpi/', views.buscar_paciente_por_dpi, name='buscar_paciente_por_dpi'),
     path(
         'pacientes/completar-datos/<int:paciente_id>/',
@@ -31,6 +46,17 @@ urlpatterns = [
         views.ingresar_correo_envio,
         name='ingresar_correo_envio',
     ),
+    path(
+        'pacientes/historial/estudio/<int:cita_id>/cobrar/',
+        views.marcar_cobrado,
+        name='marcar_cobrado',
+    ),
+    path('pagos/', views.pagos_pendientes, name='pagos_pendientes'),
+    path('pagos/<int:cobro_id>/boleta/', views.boleta_pago_pdf, name='boleta_pago_pdf'),
+    path('pagos/<int:cobro_id>/constancia/', views.constancia_pago_pdf, name='constancia_pago_pdf'),
+    path('pagos/<int:cobro_id>/comprobante-bancario/', views.comprobante_bancario, name='comprobante_bancario'),
+    path('pagos/<int:cobro_id>/constancia-firmada/', views.constancia_firmada, name='constancia_firmada'),
+    path('pagos/<int:cobro_id>/constancia-firmada/subir/', views.subir_constancia_firmada, name='subir_constancia_firmada'),
     path(
         'citas/calendario/coex/',
         views.seleccionar_horario,
@@ -142,6 +168,11 @@ urlpatterns = [
     ),
     path('citas/procesadas/', views.citas_procesadas, name='citas_procesadas'),
     path('citas/procesadas/<int:cita_id>/informe/', views.adjuntar_informe, name='adjuntar_informe'),
+    path(
+        'citas/procesadas/<int:cita_id>/estudio-extra/',
+        views.agregar_estudio_extra,
+        name='agregar_estudio_extra',
+    ),
     path('ordenes/<int:orden_id>/imagenes/ver/', views.ver_imagenes_jpg, name='ver_imagenes_jpg'),
     path(
         'ordenes/<int:orden_id>/imagenes/seleccion/',
@@ -160,7 +191,11 @@ urlpatterns = [
         name='procesar_ticket_emergencia',
     ),
     path('turnos/', views.pantalla_turnos, name='pantalla_turnos'),
+    path('sala-espera/', views.pantalla_sala_espera, name='pantalla_sala_espera'),
+    path('sala-espera/estado/', views.estado_sala_espera, name='estado_sala_espera'),
     path('turnos/<int:ticket_id>/siguiente/', views.avanzar_turno, name='avanzar_turno'),
+    path('turnos/<int:ticket_id>/mover/', views.mover_turno, name='mover_turno'),
+    path('turnos/<int:ticket_id>/procesar/', views.procesar_turno, name='procesar_turno'),
     path('notificaciones/pendientes/', views.notificaciones_pendientes, name='notificaciones_pendientes'),
     path(
         'notificaciones/<int:notificacion_id>/marcar-leida/',

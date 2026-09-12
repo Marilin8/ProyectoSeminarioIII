@@ -1,15 +1,16 @@
-from django.contrib.auth.views import LoginView, LogoutView
+from django.contrib.auth.views import LogoutView
 from django.urls import path
 
 from . import views
-from .forms import LoginForm
 from .models import Usuario
 
 urlpatterns = [
-    path('', LoginView.as_view(authentication_form=LoginForm), name='login'),
+    path('', views.login, name='login'),
+    path('login/otp/', views.login_otp, name='login_otp'),
     path('logout/', LogoutView.as_view(), name='logout'),
     path('dashboard/', views.dashboard, name='dashboard'),
     path('perfil/', views.mi_perfil, name='mi_perfil'),
+    path('perfil/verificacion-2-pasos/', views.configurar_mfa, name='configurar_mfa'),
     path('usuarios/nuevo/', views.crear_usuario, name='crear_usuario'),
     path(
         'usuarios/radiologos/',
@@ -31,6 +32,14 @@ urlpatterns = [
     ),
     path('usuarios/<int:usuario_id>/editar/', views.editar_usuario, name='editar_usuario'),
     path('usuarios/<int:usuario_id>/estado/', views.cambiar_estado_usuario, name='cambiar_estado_usuario'),
+    path('comisiones/historial/', views.historial_comisiones, name='historial_comisiones'),
+    path('planilla/', views.planilla, name='planilla'),
+    path('planilla/pendiente/', views.pendiente_pago, name='pendiente_pago'),
+    path('planilla/adelantado/', views.pago_adelantado, name='pago_adelantado'),
+    path('planilla/<int:usuario_id>/', views.planilla_empleado, name='planilla_empleado'),
+    path('planilla/<int:usuario_id>/pagar-salario/', views.registrar_pago_salario, name='registrar_pago_salario'),
+    path('planilla/<int:usuario_id>/pagar-comisiones/', views.registrar_pago_comision, name='registrar_pago_comision'),
+    path('pagos/historial/', views.historial_pagos, name='historial_pagos'),
     path('bitacora/', views.bitacora, name='bitacora'),
     path('pantalla/<slug:clave>/', views.pantalla_placeholder, name='pantalla_placeholder'),
 ]

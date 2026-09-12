@@ -20,6 +20,7 @@ PANTALLAS_POR_ROL = {
             ],
         },
         {'nombre': 'Estudios', 'url_name': 'lista_estudios'},
+        {'nombre': 'Combos', 'url_name': 'lista_combos'},
         {'nombre': 'Bitácora del sistema', 'url_name': 'bitacora'},
         {
             'nombre': 'Reportes diarios',
@@ -91,8 +92,16 @@ PANTALLAS_POR_ROL = {
 
 def pantallas_de(usuario):
     if usuario.is_superuser and usuario.rol != Usuario.ROL_ADMINISTRADOR:
-        return PANTALLAS_POR_ROL[Usuario.ROL_ADMINISTRADOR]
-    return PANTALLAS_POR_ROL.get(usuario.rol, [])
+        pantallas = list(PANTALLAS_POR_ROL[Usuario.ROL_ADMINISTRADOR])
+    else:
+        pantallas = list(PANTALLAS_POR_ROL.get(usuario.rol, []))
+    # Permiso aparte del rol (ver Usuario.puede_operar_caja): cualquier
+    # usuario con este permiso ve la pantalla de Caja, sin duplicarla si su
+    # rol ya la tuviera.
+    ya_tiene_caja = any(item.get('url_name') == 'pagos_pendientes' for item in pantallas)
+    if usuario.puede_operar_caja and not ya_tiene_caja:
+        pantallas.append({'nombre': 'Caja - pagos de estudios', 'url_name': 'pagos_pendientes'})
+    return pantallas
 
 
 def buscar_pantalla(pantallas, clave):

@@ -166,5 +166,24 @@
             </div>
         </div>
 
+        <div class="card">
+            <div class="card-header">
+                <svg width="14" height="14"><use href="#i-shield"/></svg>
+                Verificación en dos pasos (MFA)
+            </div>
+            <div class="card-body flex-between" style="gap:1rem;">
+                <p class="text-sm text-muted" style="margin:0;">
+                    {% if mfa_activo %}
+                        Activada — cada inicio de sesión pide un código de tu app de autenticación.
+                    {% else %}
+                        Agregá una capa extra de seguridad con un código de 6 dígitos de tu celular.
+                    {% endif %}
+                </p>
+                <a href="{% url 'configurar_mfa' %}" class="btn btn-outline btn-sm" style="flex-shrink:0;">
+                    {% if mfa_activo %}Administrar{% else %}Activar{% endif %}
+                </a>
+            </div>
+        </div>
+
     </div>
 {% endblock %}

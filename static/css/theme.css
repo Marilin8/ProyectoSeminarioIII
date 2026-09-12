@@ -605,6 +605,50 @@ input[type="file"] {
 }
 .card { animation: fadeIn 0.2s ease; }
 
+/* ---- Modal grande con <iframe> (ver JPG sin navegar fuera de la página:
+   algunos navegadores/entornos embebidos abren target="_blank" en la misma
+   pestaña, y eso vaciaba el <input type="file"> del informe que ya se
+   había elegido) ---- */
+.modal-card.modal-grande {
+    max-width: 96vw;
+    width: 96vw;
+    height: 92vh;
+    max-height: 92vh;
+    display: flex;
+    flex-direction: column;
+    padding: 0.75rem;
+}
+.modal-grande .modal-grande-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 0.5rem 0.5rem;
+    flex: 0 0 auto;
+}
+.modal-grande iframe {
+    flex: 1 1 auto;
+    width: 100%;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+}
+
+/* ---- Selector de país + teléfono (ver includes/telefono_pais.html) ---- */
+.campo-telefono-pais {
+    display: flex;
+    gap: 0.4rem;
+    align-items: stretch;
+}
+.campo-telefono-pais select.selector-pais-telefono {
+    width: auto;
+    flex: 0 0 auto;
+    max-width: 45%;
+}
+.campo-telefono-pais input {
+    width: auto;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
 /* ---- Print ---- */
 @media print {
     body { background: white; }

@@ -39,6 +39,27 @@
                 {{ form.rol }}
                 {{ form.rol.errors }}
 
+                <label for="{{ form.fecha_ingreso.id_for_label }}">{{ form.fecha_ingreso.label }}</label>
+                {{ form.fecha_ingreso }}
+                <p class="form-help">{{ form.fecha_ingreso.help_text }}</p>
+                {{ form.fecha_ingreso.errors }}
+
+                <label for="{{ form.puede_operar_caja.id_for_label }}" style="display:flex;align-items:center;gap:0.5rem;margin-top:0.75rem;">
+                    {{ form.puede_operar_caja }}
+                    <span>{{ form.puede_operar_caja.label }}</span>
+                </label>
+                <p class="form-help">{{ form.puede_operar_caja.help_text }}</p>
+                {{ form.puede_operar_caja.errors }}
+
+                <label for="{{ form.sala.id_for_label }}">Sala / consultorio</label>
+                {{ form.sala }}
+                <p class="form-help">{{ form.sala.help_text }}</p>
+                {{ form.sala.errors }}
+
+                <label for="{{ form.salario_base.id_for_label }}">Salario base mensual (Q)</label>
+                {{ form.salario_base }}
+                {{ form.salario_base.errors }}
+
                 <p class="form-help mt-1">
                     Los porcentajes de comisión solo aplican a técnicos de imágenes,
                     médicos radiólogos y médicos remitentes. Para otros roles se guardan en 0.
@@ -155,4 +176,26 @@
             </form>
         </div>
     </div>
+
+    {% if historial_comisiones %}
+        <div class="card" style="max-width:640px;margin-top:1.25rem;">
+            <div class="card-header">Últimos cambios de comisión</div>
+            <div class="card-body" style="padding:0;">
+                <table>
+                    <thead><tr><th>Fecha</th><th>Convenio</th><th>Antes</th><th>Después</th><th>Por</th></tr></thead>
+                    <tbody>
+                        {% for r in historial_comisiones %}
+                            <tr>
+                                <td>{{ r.creado_en|date:'d/m/y H:i' }}</td>
+                                <td>{{ r.campo_etiqueta }}</td>
+                                <td>{{ r.valor_anterior }}%</td>
+                                <td class="text-bold">{{ r.valor_nuevo }}%</td>
+                                <td>{{ r.modificado_por.username }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endif %}
 {% endblock %}

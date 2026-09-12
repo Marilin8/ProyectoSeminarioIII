@@ -1,0 +1,62 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ver mi estudio — Clínica de Imágenes</title>
+    <link rel="stylesheet" href="{% static 'css/theme.css' %}">
+    <style>
+        body { display: block; background: var(--bg); }
+        .visor-wrap { max-width: 420px; margin: 8vh auto; padding: 0 1rem; }
+        .visor-marca { text-align: center; margin-bottom: 1.5rem; }
+        .visor-marca h1 { font-size: 1.15rem; color: var(--primary-dark); }
+        .visor-marca small { color: var(--text-muted); }
+        .visor-wrap input[type="text"] {
+            text-align: center; letter-spacing: 0.4em; font-size: 1.3rem; font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="visor-wrap">
+        <div class="visor-marca">
+            <h1>&#9764; Clínica de Imágenes</h1>
+            <small>Resultados de su estudio</small>
+        </div>
+
+        <div class="card">
+            <div class="card-body" style="padding: 1.5rem;">
+                {% if bloqueado %}
+                    <div class="alert alert-danger">
+                        Demasiados intentos fallidos. Cerrá esta página y volvé a abrir el enlace
+                        del correo más tarde, o comunicate con la clínica.
+                    </div>
+                {% else %}
+                    <p class="text-sm text-muted" style="margin-bottom: 1rem;">
+                        Para proteger su información, ingrese los <strong>últimos 4 dígitos
+                        de su DPI</strong>.
+                    </p>
+                    {% if error %}
+                        <div class="alert alert-danger">
+                            {{ error }}
+                            {% if intentos_restantes > 0 %}
+                                Le quedan {{ intentos_restantes }} intento{{ intentos_restantes|pluralize }}.
+                            {% endif %}
+                        </div>
+                    {% endif %}
+                    <form method="post" action="?{{ query_string }}">
+                        {% csrf_token %}
+                        <label for="dpi_ultimos">Últimos 4 dígitos del DPI</label>
+                        <input type="text" name="dpi_ultimos" id="dpi_ultimos"
+                               inputmode="numeric" pattern="[0-9]{4}" maxlength="4"
+                               autocomplete="off" required autofocus>
+                        <button type="submit" class="btn btn-primary btn-block mt-2">
+                            Ver mi estudio
+                        </button>
+                    </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</body>
+</html>

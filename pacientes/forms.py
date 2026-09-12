@@ -4,18 +4,62 @@ from django import forms
 from django.utils import timezone
 
 from accounts.models import Usuario
+from clinica.validators import validar_dominio_correo
 
-from .models import Cita, Paciente, TipoEstudio
+from .models import Cita, Cobro, Combo, Paciente, TipoEstudio
 
 CONVENIOS_QUE_REQUIEREN_CARNET_IGSS = (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS)
 
 NOMBRE_REGEX = re.compile(r'^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]+$')
 
+# Código de país -> cantidad de dígitos esperada. Debe reflejar la misma
+# lista que pacientes/templates/includes/telefono_pais.html (PAISES_TELEFONO
+# en JS) — ahí se arma el selector y se limitan los dígitos mientras se
+# escribe; esto es el respaldo del lado del servidor por si alguien manda
+# el formulario sin pasar por ese JS.
+DIGITOS_POR_CODIGO_PAIS = {
+    '502': 8, '501': 7, '503': 8, '504': 8, '505': 8, '506': 8, '507': 8,
+    '52': 10, '1': 10, '57': 10, '58': 10, '593': 9, '51': 9, '591': 8,
+    '56': 9, '54': 10, '34': 9,
+}
+
+TELEFONO_REGEX = re.compile(r'^\+(\d{1,3})\s(\d+)$')
+
+
+def validar_telefono_pais(valor):
+    """Valida un teléfono armado con el selector de país (ver
+    includes/telefono_pais.html): "+<código> <dígitos>", con la cantidad de
+    dígitos exacta que le corresponde a ese código (ej. "+502 12345678").
+    Vacío es válido — el campo siempre es opcional.
+
+    Si el valor NO trae ese formato (ej. un teléfono viejo guardado antes de
+    que existiera el selector de país, con solo dígitos sueltos), se deja
+    pasar tal cual: esto es un respaldo para cuando sí se manda con el
+    prefijo, no una migración retroactiva de los datos existentes."""
+    valor = (valor or '').strip()
+    if not valor:
+        return
+    coincide = TELEFONO_REGEX.match(valor)
+    if not coincide:
+        return
+    codigo, digitos = coincide.groups()
+    esperado = DIGITOS_POR_CODIGO_PAIS.get(codigo)
+    if esperado is None:
+        raise forms.ValidationError('País no reconocido para el teléfono.')
+    if len(digitos) != esperado:
+        raise forms.ValidationError(
+            f'El teléfono debe tener {esperado} dígitos para el código +{codigo}.'
+        )
+
 
 class TipoEstudioSelect(forms.Select):
-    """Select de tipo de estudio que agrega precio (hábil e inhábil) y
-    duración como atributos data-* de cada <option>, para que el formulario
-    los muestre en pantalla sin pedirlos de nuevo al servidor."""
+    """Select de tipo de estudio que agrega precio (hábil e inhábil),
+    duración y modalidad como atributos data-* de cada <option>, para que el
+    formulario los muestre / filtre en pantalla sin pedirlos de nuevo al
+    servidor.
+
+    `detalles` es {str(pk): (precio_habil, precio_inhabil, duracion[, modalidad])}.
+    """
 
     detalles = {}
 
@@ -26,12 +70,73 @@ class TipoEstudioSelect(forms.Select):
             option['attrs']['data-precio-habil'] = str(detalle[0])
             option['attrs']['data-precio-inhabil'] = str(detalle[1])
             option['attrs']['data-duracion'] = str(detalle[2])
+            if len(detalle) > 3 and detalle[3]:
+                option['attrs']['data-modalidad'] = str(detalle[3])
         return option
+
+
+def _detalles_tipo_estudio(queryset, convenio):
+    """Diccionario {pk: (precio_hábil, precio_inhábil, duración, modalidad)}
+    para alimentar TipoEstudioSelect."""
+    return {
+        str(te.pk): (
+            te.precio_para(convenio, True),
+            te.precio_para(convenio, False),
+            te.duracion_minutos,
+            te.modalidad,
+        )
+        for te in queryset
+    }
 
 
 def validar_fecha_nacimiento_no_futura(fecha):
     if fecha and fecha > timezone.localdate():
         raise forms.ValidationError('La fecha de nacimiento no puede ser una fecha futura.')
+
+
+def _radiologos_disponibles():
+    return Usuario.objects.filter(
+        rol=Usuario.ROL_MEDICO_RADIOLOGO, is_active=True,
+    ).order_by('username')
+
+
+def resolver_radiologo_para_estudio(form, cleaned):
+    """Reglas comunes al agendar (COEX y Privado) para asignar el radiólogo
+    según los que tenga habilitados el estudio elegido:
+
+    - estudio sin radiólogos  -> error (no se puede agendar)
+    - exactamente 1 radiólogo -> se asigna solo
+    - más de 1                -> hay que elegir cuál
+    - el elegido debe realizar ese estudio
+
+    Deja el radiólogo resuelto en ``cleaned['radiologo']``.
+    """
+    tipo_estudio = cleaned.get('tipo_estudio')
+    radiologo = cleaned.get('radiologo')
+    if not tipo_estudio:
+        return cleaned
+
+    radiologos = list(tipo_estudio.radiologos.filter(is_active=True))
+    if not radiologos:
+        form.add_error(
+            'tipo_estudio',
+            f'"{tipo_estudio}" no tiene radiólogos asignados. Asigná al menos uno '
+            'desde "Usuarios activos → Radiólogos" antes de agendar este estudio.',
+        )
+    elif radiologo is None:
+        if len(radiologos) == 1:
+            cleaned['radiologo'] = radiologos[0]
+        else:
+            form.add_error(
+                'radiologo',
+                'Este estudio lo realizan varios radiólogos: elegí a cuál asignar la cita.',
+            )
+    elif radiologo not in radiologos:
+        form.add_error(
+            'radiologo',
+            f'{radiologo.get_full_name() or radiologo.username} no realiza estudios de "{tipo_estudio}".',
+        )
+    return cleaned
 
 
 def limpiar_carnet_igss(carnet, *, dpi, requerido):
@@ -80,7 +185,7 @@ class AgendarCitaForm(forms.Form):
     sexo = forms.ChoiceField(
         choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
     )
-    telefono = forms.CharField(max_length=20, required=False)
+    telefono = forms.CharField(max_length=20, required=False, validators=[validar_telefono_pais])
     correo = forms.EmailField(
         label='Correo electrónico',
         max_length=254,
@@ -103,11 +208,16 @@ class AgendarCitaForm(forms.Form):
         queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
         widget=TipoEstudioSelect(),
     )
+    modalidad = forms.ChoiceField(
+        label='Grupo de estudio',
+        choices=[('', 'Todos los grupos')] + list(TipoEstudio.MODALIDAD_CHOICES),
+        required=False,
+        help_text='Elegí el grupo para ver solo los estudios de ese tipo.',
+    )
     radiologo = forms.ModelChoiceField(
         label='Radiólogo asignado',
-        queryset=Usuario.objects.filter(
-            rol=Usuario.ROL_MEDICO_RADIOLOGO, is_active=True
-        ).order_by('username'),
+        required=False,
+        queryset=_radiologos_disponibles(),
     )
     medico_referente = forms.CharField(
         label='Médico referente',
@@ -127,16 +237,11 @@ class AgendarCitaForm(forms.Form):
         super().__init__(*args, **kwargs)
         self.fields['fecha_nacimiento'].widget.attrs['max'] = timezone.localdate().isoformat()
         self.fields['tipo_estudio'].queryset = (
-            self.fields['tipo_estudio'].queryset.prefetch_related('precios')
+            self.fields['tipo_estudio'].queryset.prefetch_related('precios', 'radiologos')
         )
-        self.fields['tipo_estudio'].widget.detalles = {
-            str(te.pk): (
-                te.precio_para(convenio, True),
-                te.precio_para(convenio, False),
-                te.duracion_minutos,
-            )
-            for te in self.fields['tipo_estudio'].queryset
-        }
+        self.fields['tipo_estudio'].widget.detalles = _detalles_tipo_estudio(
+            self.fields['tipo_estudio'].queryset, convenio,
+        )
         self.convenio = convenio
         if convenio in CONVENIOS_QUE_REQUIEREN_CARNET_IGSS:
             self.fields['carnet_igss'].widget.attrs['required'] = True
@@ -162,7 +267,9 @@ class AgendarCitaForm(forms.Form):
         return apellido
 
     def clean_correo(self):
-        return self.cleaned_data['correo'].strip().lower()
+        correo = self.cleaned_data['correo'].strip().lower()
+        validar_dominio_correo(correo)
+        return correo
 
     def clean_fecha_nacimiento(self):
         fecha = self.cleaned_data['fecha_nacimiento']
@@ -178,14 +285,7 @@ class AgendarCitaForm(forms.Form):
 
     def clean(self):
         cleaned = super().clean()
-        tipo_estudio = cleaned.get('tipo_estudio')
-        radiologo = cleaned.get('radiologo')
-        if tipo_estudio and radiologo and not tipo_estudio.radiologos.filter(id=radiologo.id).exists():
-            self.add_error(
-                'radiologo',
-                f'{radiologo.get_full_name() or radiologo.username} no realiza estudios de "{tipo_estudio}".',
-            )
-        return cleaned
+        return resolver_radiologo_para_estudio(self, cleaned)
 
 
 class AgendarCitaPrivadoForm(forms.Form):
@@ -222,7 +322,7 @@ class AgendarCitaPrivadoForm(forms.Form):
     sexo = forms.ChoiceField(
         choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
     )
-    telefono = forms.CharField(max_length=20, required=False)
+    telefono = forms.CharField(max_length=20, required=False, validators=[validar_telefono_pais])
     correo = forms.EmailField(
         label='Correo electrónico (opcional)',
         max_length=254,
@@ -239,6 +339,17 @@ class AgendarCitaPrivadoForm(forms.Form):
         queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
         widget=TipoEstudioSelect(),
     )
+    modalidad = forms.ChoiceField(
+        label='Grupo de estudio',
+        choices=[('', 'Todos los grupos')] + list(TipoEstudio.MODALIDAD_CHOICES),
+        required=False,
+        help_text='Elegí el grupo para ver solo los estudios de ese tipo.',
+    )
+    radiologo = forms.ModelChoiceField(
+        label='Radiólogo asignado',
+        required=False,
+        queryset=_radiologos_disponibles(),
+    )
     fecha = forms.DateField(widget=forms.DateInput(attrs={'type': 'date'}))
     hora = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}))
     motivo = forms.CharField(
@@ -253,14 +364,9 @@ class AgendarCitaPrivadoForm(forms.Form):
         self.fields['fecha_nacimiento'].widget.attrs['max'] = timezone.localdate().isoformat()
         queryset = self.fields['tipo_estudio'].queryset.prefetch_related('precios')
         self.fields['tipo_estudio'].queryset = queryset
-        self.fields['tipo_estudio'].widget.detalles = {
-            str(te.pk): (
-                te.precio_para(Cita.CONVENIO_PRIVADO, True),
-                te.precio_para(Cita.CONVENIO_PRIVADO, False),
-                te.duracion_minutos,
-            )
-            for te in queryset
-        }
+        self.fields['tipo_estudio'].widget.detalles = _detalles_tipo_estudio(
+            queryset, Cita.CONVENIO_PRIVADO,
+        )
 
     def clean_dpi(self):
         dpi = self.cleaned_data['dpi'].strip()
@@ -283,12 +389,18 @@ class AgendarCitaPrivadoForm(forms.Form):
         return apellido
 
     def clean_correo(self):
-        return (self.cleaned_data['correo'] or '').strip().lower()
+        correo = (self.cleaned_data['correo'] or '').strip().lower()
+        validar_dominio_correo(correo)
+        return correo
 
     def clean_fecha_nacimiento(self):
         fecha = self.cleaned_data['fecha_nacimiento']
         validar_fecha_nacimiento_no_futura(fecha)
         return fecha
+
+    def clean(self):
+        cleaned = super().clean()
+        return resolver_radiologo_para_estudio(self, cleaned)
 
 
 class RegistrarTicketForm(forms.Form):
@@ -324,7 +436,7 @@ class RegistrarTicketForm(forms.Form):
     sexo = forms.ChoiceField(
         choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
     )
-    telefono = forms.CharField(max_length=20, required=False)
+    telefono = forms.CharField(max_length=20, required=False, validators=[validar_telefono_pais])
     correo = forms.EmailField(
         label='Correo electrónico',
         max_length=254,
@@ -373,7 +485,9 @@ class RegistrarTicketForm(forms.Form):
         return apellido
 
     def clean_correo(self):
-        return self.cleaned_data['correo'].strip().lower()
+        correo = self.cleaned_data['correo'].strip().lower()
+        validar_dominio_correo(correo)
+        return correo
 
     def clean_fecha_nacimiento(self):
         fecha = self.cleaned_data['fecha_nacimiento']
@@ -396,7 +510,7 @@ class CompletarDatosPacienteForm(forms.Form):
     sexo = forms.ChoiceField(
         choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
     )
-    telefono = forms.CharField(max_length=20, required=False)
+    telefono = forms.CharField(max_length=20, required=False, validators=[validar_telefono_pais])
     fecha_nacimiento = forms.DateField(
         required=False, widget=forms.DateInput(attrs={'type': 'date'}),
     )
@@ -422,7 +536,9 @@ class IngresarCorreoEnvioForm(forms.Form):
     )
 
     def clean_correo(self):
-        return self.cleaned_data['correo'].strip().lower()
+        correo = self.cleaned_data['correo'].strip().lower()
+        validar_dominio_correo(correo)
+        return correo
 
 
 class ProcesarTicketForm(forms.Form):
@@ -494,6 +610,74 @@ class CrearTipoEstudioForm(forms.ModelForm):
         else:
             self._guardar_precios = guardar_precios
         return tipo_estudio
+
+
+class ComboForm(forms.ModelForm):
+    """Alta/edición de un combo de estudios (ver pacientes.models.Combo).
+    Portado (2026-09-04) desde la rama visual-andres de TechBlood."""
+
+    class Meta:
+        model = Combo
+        fields = ('nombre', 'estudios', 'activo', 'aplica_descuento', 'porcentaje_descuento')
+        widgets = {'estudios': forms.CheckboxSelectMultiple}
+
+    def clean_porcentaje_descuento(self):
+        pct = self.cleaned_data['porcentaje_descuento']
+        if not self.cleaned_data.get('aplica_descuento'):
+            return pct
+        if pct is None or pct <= 0 or pct > 100:
+            raise forms.ValidationError('El porcentaje de descuento debe estar entre 0 y 100.')
+        return pct
+
+
+class RegistrarPagoEstudioForm(forms.Form):
+    """La boleta que Caja llena al marcar un estudio como cobrado (ver
+    pacientes.views.marcar_cobrado). Portado (2026-09-04) desde la rama
+    visual-andres de TechBlood."""
+
+    forma_pago = forms.ChoiceField(label='Forma de pago', choices=Cobro.FORMA_PAGO_CHOICES)
+    numero_boleta = forms.CharField(label='Número de boleta / referencia', max_length=60, required=False)
+    comprobante_bancario = forms.FileField(
+        label='Boleta o comprobante bancario',
+        required=False,
+        help_text='Suba la boleta del banco, transferencia o comprobante del pago.',
+    )
+    notas = forms.CharField(
+        label='Notas', max_length=255, required=False,
+        widget=forms.Textarea(attrs={'rows': 2}),
+    )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        forma_pago = cleaned_data.get('forma_pago')
+        comprobante = cleaned_data.get('comprobante_bancario')
+        if forma_pago == Cobro.FORMA_TRANSFERENCIA and not comprobante:
+            self.add_error(
+                'comprobante_bancario',
+                'Debe adjuntar la boleta o comprobante de la transferencia.',
+            )
+        return cleaned_data
+
+
+class SubirConstanciaFirmadaForm(forms.Form):
+    constancia_firmada = forms.FileField(
+        label='Constancia firmada',
+        help_text='Suba la constancia interna firmada por los responsables.',
+    )
+
+
+class AgregarEstudioExtraForm(forms.Form):
+    """El radiólogo avisa que le realizó al paciente un estudio extra al
+    agendado (solo aplica a Privado). Sube el total que ve Caja."""
+
+    tipo_estudio = forms.ModelChoiceField(
+        queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
+        label='Estudio extra realizado',
+    )
+    notas = forms.CharField(
+        label='Notas (opcional)', max_length=255, required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'Ej.: se agregó contraste adicional'}),
+    )
 
 
 class GenerarOrdenForm(forms.Form):

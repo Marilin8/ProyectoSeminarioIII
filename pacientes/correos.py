@@ -1,72 +1,90 @@
+import base64
 import logging
+import smtplib
+import socket
+from urllib.parse import urlencode
 
+from django.conf import settings
 from django.core.mail import EmailMessage
+from django.urls import reverse
 
 logger = logging.getLogger(__name__)
 
 
 def enviar_resultados(orden):
-    """Envía el informe y las imágenes del estudio al correo del paciente.
+    """Envía al correo del paciente el informe PDF adjunto + un link al visor
+    web del estudio (donde ve las imágenes que dejó seleccionadas la
+    radióloga). El visor pide los últimos 4 dígitos del DPI para abrirse.
 
-    Portado del commit 758cb02 "Agregar envío de resultados por correo" de
-    TechBlood/ProyectoSeminarioClinica. Si el paciente no tiene correo
-    registrado, no hace nada (no interrumpe el flujo de adjuntar informe).
-
-    Devuelve True si el correo se mandó, False si no había correo del
-    paciente o si el envío falló (ej. el sistema todavía no tiene
-    configuradas las credenciales SMTP en el .env: EMAIL_HOST_USER /
-    EMAIL_HOST_PASSWORD). Nunca deja que ese fallo tumbe la pantalla que
-    lo llamó — el llamador decide qué mostrarle al usuario según el
-    resultado."""
+    Devuelve '' si el correo se mandó, o un texto corto con el motivo del
+    fallo (paciente sin correo, credenciales rechazadas, no se pudo conectar
+    con el servidor de correo, etc.). Nunca deja que ese fallo tumbe la
+    pantalla que lo llamó — siempre atrapa la excepción."""
     paciente = orden.cita.paciente
 
     if not paciente.correo:
-        return False
+        return 'el paciente no tiene un correo registrado'
+
+    if not (settings.EMAIL_HOST_USER and settings.EMAIL_HOST_PASSWORD):
+        return (
+            'el sistema todavía no tiene configurado el correo emisor '
+            '(EMAIL_HOST_USER / EMAIL_HOST_PASSWORD en el archivo .env)'
+        )
+
+    token = orden.asegurar_token_publico()
+    ac = base64.urlsafe_b64encode(str(token).encode('ascii')).decode('ascii').rstrip('=')
+    link_visor = (
+        settings.VISOR_BASE_URL + reverse('visor_estudio')
+        + '?' + urlencode({'studyId': orden.id, 'tab': 'images', 'ac': ac})
+    )
 
     asunto = 'Resultados de su estudio - Clínica de Imágenes'
+    mensaje = f"""Estimado(a) {paciente.nombre} {paciente.apellido}:
 
-    mensaje = f"""
-Estimado(a) {paciente.nombre} {paciente.apellido}:
-
-Adjunto encontrará los resultados de su estudio realizado en
+Ya están disponibles los resultados de su estudio realizado en
 Clínica de Imágenes.
 
-Tipo de estudio:
-{orden.cita.tipo_estudio.nombre}
+Tipo de estudio: {orden.cita.tipo_estudio.nombre}
+Fecha: {orden.cita.fecha:%d/%m/%Y}
+
+Para ver las imágenes de su estudio, ingrese a este enlace:
+{link_visor}
+
+Se le pedirán los últimos 4 dígitos de su DPI para acceder.
+
+El informe médico va adjunto a este correo en formato PDF.
 
 Gracias por confiar en nosotros.
 
 Atentamente,
-
 Clínica de Imágenes
 """
 
-    correo = EmailMessage(
-        subject=asunto,
-        body=mensaje,
-        to=[paciente.correo],
-    )
+    correo = EmailMessage(subject=asunto, body=mensaje, to=[paciente.correo])
 
-    # Adjuntar informe PDF
+    # Solo se adjunta el informe PDF. Las imágenes ya no se adjuntan: se ven
+    # en el visor web a través del link.
     if orden.informe_archivo:
         correo.attach_file(orden.informe_archivo.path)
 
-    # Adjuntar imágenes: solo las que la radióloga dejó seleccionadas en la
-    # galería (ver_imagenes_jpg). Las que descartó ya no tienen "archivo"
-    # (se les borró el JPG al desmarcarlas), por eso el filtro por
-    # seleccionada=True alcanza para no intentar adjuntar algo vacío.
-    for imagen in orden.imagenes.filter(seleccionada=True).exclude(archivo=''):
-        correo.attach_file(imagen.archivo.path)
-
     try:
         correo.send()
+    except smtplib.SMTPAuthenticationError:
+        logger.exception('SMTP rechazó las credenciales (orden #%s)', orden.id)
+        return (
+            'el servidor de correo rechazó el usuario o la contraseña '
+            '(revisá EMAIL_HOST_USER / EMAIL_HOST_PASSWORD — Gmail necesita una '
+            '"contraseña de aplicación")'
+        )
+    except (socket.timeout, TimeoutError, ConnectionError, OSError, smtplib.SMTPException):
+        logger.exception('No se pudo conectar con el servidor de correo (orden #%s)', orden.id)
+        return (
+            'no se pudo conectar con el servidor de correo. Puede que la red '
+            'bloquee la salida SMTP (puerto 587); probá desde otra red o pedile '
+            'al administrador que configure el envío por un servicio de correo'
+        )
     except Exception:
-        # Típicamente: EMAIL_HOST_USER/EMAIL_HOST_PASSWORD sin configurar
-        # en .env, o el servidor SMTP rechazó la conexión. Se registra en
-        # el log del servidor para que el administrador lo pueda revisar,
-        # pero no se propaga: quien llamó a esta función avisa al usuario
-        # con un mensaje entendible en vez de una pantalla de error.
-        logger.exception('No se pudo enviar el correo de resultados de la orden #%s', orden.id)
-        return False
+        logger.exception('Error inesperado enviando el correo de la orden #%s', orden.id)
+        return 'ocurrió un error inesperado al enviar el correo (ver el registro del sistema)'
 
-    return True
+    return ''

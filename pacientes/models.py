@@ -1,4 +1,5 @@
 import datetime
+import uuid
 from decimal import Decimal
 
 from django.conf import settings
@@ -40,6 +41,11 @@ class Paciente(models.Model):
         (SEXO_FEMENINO, 'Femenino'),
     ]
 
+    expediente = models.CharField(
+        max_length=12, unique=True, null=True, blank=True, editable=False,
+        verbose_name='N° de expediente',
+        help_text='Número de expediente que el sistema asigna al registrar al paciente.',
+    )
     dpi = models.CharField(max_length=20, unique=True, verbose_name='DPI')
     carnet_igss = models.CharField(
         max_length=20, unique=True, null=True, blank=True,
@@ -70,6 +76,23 @@ class Paciente(models.Model):
 
     def __str__(self):
         return f'{self.nombre} {self.apellido} ({self.dpi})'
+
+    def save(self, *args, **kwargs):
+        """Al registrar un paciente nuevo, el sistema le asigna el siguiente
+        número de expediente correlativo (000001, 000002, ...)."""
+        if self.expediente:
+            return super().save(*args, **kwargs)
+        with transaction.atomic():
+            ultimo = (
+                Paciente.objects.select_for_update()
+                .exclude(expediente__isnull=True).exclude(expediente='')
+                .order_by('-expediente')
+                .values_list('expediente', flat=True)
+                .first()
+            )
+            siguiente = (int(ultimo) + 1) if (ultimo and ultimo.isdigit()) else 1
+            self.expediente = f'{siguiente:06d}'
+            return super().save(*args, **kwargs)
 
     def campos_pendientes(self):
         """Nombres legibles de los campos opcionales que todavía no se
@@ -174,6 +197,65 @@ class PrecioEstudio(models.Model):
         return f'{self.tipo_estudio.nombre} · {self.get_convenio_display()} {horario}: Q{self.precio}'
 
 
+class Combo(models.Model):
+    """Agrupación de estudios relacionados (ej. variantes de tórax) que se
+    ofrecen como una misma opción, con descuento opcional.
+
+    El precio se calcula al vuelo: suma de los precios de los estudios que lo
+    integran, menos el descuento si aplica. Coherente con el patrón del
+    proyecto (nada se guarda, todo se deriva). Es solo administrativo:
+    agrupa el catálogo, no maneja transacciones monetarias.
+
+    Portado (2026-09-04) desde la rama visual-andres de TechBlood."""
+
+    nombre = models.CharField(max_length=120, unique=True)
+    estudios = models.ManyToManyField(
+        TipoEstudio, related_name='combos', blank=True, verbose_name='estudios del combo',
+    )
+    activo = models.BooleanField(default=True)
+    aplica_descuento = models.BooleanField(
+        default=False, verbose_name='aplicar descuento',
+        help_text='Si se activa, el total se calcula restando el porcentaje de descuento.',
+    )
+    porcentaje_descuento = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        verbose_name='% de descuento',
+        help_text='Solo se usa si "aplicar descuento" está marcado.',
+    )
+
+    class Meta:
+        db_table = 'combos'
+        verbose_name = 'combo'
+        verbose_name_plural = 'combos'
+        ordering = ['nombre']
+
+    def __str__(self):
+        return self.nombre
+
+    def total_bruto_para(self, convenio, horario_habil=True):
+        """Suma de los precios de los estudios del combo para un convenio y
+        tipo de horario, sin aplicar descuento."""
+        return sum(
+            (estudio.precio_para(convenio, horario_habil) for estudio in self.estudios.all()),
+            start=Decimal('0.00'),
+        )
+
+    def total_para(self, convenio, horario_habil=True):
+        """Precio final del combo para un convenio y horario: la suma de sus
+        estudios menos el descuento (si aplica y es válido)."""
+        bruto = self.total_bruto_para(convenio, horario_habil)
+        pct = Decimal('0') if not self.aplica_descuento else (self.porcentaje_descuento or Decimal('0'))
+        if pct <= 0 or pct > 100:
+            return bruto
+        descuento = (bruto * pct / Decimal('100')).quantize(Decimal('0.01'))
+        return (bruto - descuento).quantize(Decimal('0.01'))
+
+    @property
+    def precio_referencia(self):
+        """Precio orientativo para listados: privado en horario hábil."""
+        return self.total_para('privado', True)
+
+
 class Cita(models.Model):
     # Los valores viven a nivel de módulo (los usa también PrecioEstudio, que
     # se define antes que Cita); acá se reexponen para no romper el código
@@ -259,12 +341,14 @@ class Cita(models.Model):
     @classmethod
     def marcar_ausentes_vencidas(cls):
         """Pasa a AUSENTE toda cita AGENDADA cuyo día ya pasó, o que es de hoy
-        pero ya son las 18:00 y nadie la marcó ausente/llegada."""
+        pero ya son las 18:00 y nadie la marcó ausente/llegada. No toca las
+        citas donde el paciente sí llegó (`hora_llegada`): esas siguen su
+        curso aunque se procesen después de las 18:00."""
         ahora = timezone.localtime()
         hoy = ahora.date()
         fecha_limite = hoy if ahora.time() >= datetime.time(18, 0) else hoy - datetime.timedelta(days=1)
         return cls.objects.filter(
-            estado=cls.ESTADO_AGENDADA, fecha__lte=fecha_limite
+            estado=cls.ESTADO_AGENDADA, fecha__lte=fecha_limite, hora_llegada__isnull=True,
         ).update(estado=cls.ESTADO_AUSENTE)
 
     @property
@@ -289,9 +373,126 @@ class Cita(models.Model):
         return es_horario_habil(self.convenio, self.hora)
 
     @property
-    def precio(self):
-        """Precio de la cita según su estudio, convenio y horario."""
+    def precio_base(self):
+        """Precio del estudio agendado originalmente, sin contar los
+        estudios extra que el radiólogo haya agregado durante la atención."""
         return self.tipo_estudio.precio_para(self.convenio, self.horario_habil)
+
+    @property
+    def precio(self):
+        """Precio total que debe pagar el paciente: el estudio agendado más
+        cualquier estudio extra que el radiólogo haya agregado (ver
+        EstudioExtra). Es lo que usan Caja y el reporte diario."""
+        extra = sum((e.precio for e in self.estudios_extra.all()), Decimal('0.00'))
+        return self.precio_base + extra
+
+
+class EstudioExtra(models.Model):
+    """Estudio adicional que el radiólogo detecta y realiza durante la
+    atención, aparte del que se agendó originalmente. Por ahora solo aplica
+    al convenio Privado (es al único que Caja le cobra directamente al
+    paciente): sube el total de la cita y le avisa a recepción."""
+
+    cita = models.ForeignKey(Cita, on_delete=models.PROTECT, related_name='estudios_extra')
+    tipo_estudio = models.ForeignKey(TipoEstudio, on_delete=models.PROTECT, related_name='+')
+    agregado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='estudios_extra_agregados',
+    )
+    notas = models.CharField(max_length=255, blank=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'estudios_extra'
+        verbose_name = 'estudio extra'
+        verbose_name_plural = 'estudios extra'
+        ordering = ['creado_en']
+
+    def __str__(self):
+        return f'{self.tipo_estudio} (extra) — {self.cita}'
+
+    @property
+    def precio(self):
+        return self.tipo_estudio.precio_para(self.cita.convenio, self.cita.horario_habil)
+
+
+class Cobro(models.Model):
+    """Registro administrativo de "cobro/pago" de un estudio (relacionado a
+    su cita). El sistema NO maneja transacciones monetarias reales: solo
+    registra si la recepcionista/caja marcó que ya hubo cobro o si sigue
+    pendiente. Un cobro sin registrar como pagado bloquea únicamente el
+    envío de resultados al paciente; no afecta la orden de trabajo ni el
+    trabajo del técnico.
+
+    Portado (2026-09-04) desde la rama visual-andres de TechBlood."""
+
+    ESTADO_PENDIENTE = 'pendiente'
+    ESTADO_PAGADO = 'pagado'
+    FORMA_EFECTIVO = 'efectivo'
+    FORMA_TARJETA = 'tarjeta'
+    FORMA_TRANSFERENCIA = 'transferencia'
+
+    ESTADO_CHOICES = [
+        (ESTADO_PENDIENTE, 'Pendiente de cobro'),
+        (ESTADO_PAGADO, 'Cobrado'),
+    ]
+    FORMA_PAGO_CHOICES = [
+        (FORMA_EFECTIVO, 'Efectivo'),
+        (FORMA_TARJETA, 'Tarjeta'),
+        (FORMA_TRANSFERENCIA, 'Transferencia'),
+    ]
+
+    cita = models.OneToOneField(Cita, on_delete=models.PROTECT, related_name='cobro')
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=ESTADO_PENDIENTE)
+    pagado_en = models.DateTimeField(null=True, blank=True, verbose_name='pagado el')
+    cobrado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='cobros_registrados',
+    )
+    notas = models.CharField(max_length=255, blank=True)
+    forma_pago = models.CharField(max_length=20, choices=FORMA_PAGO_CHOICES, blank=True)
+    numero_boleta = models.CharField(max_length=60, blank=True, verbose_name='número de boleta / referencia')
+    comprobante_bancario = models.FileField(
+        upload_to='comprobantes_bancarios/%Y/%m/',
+        blank=True,
+        null=True,
+        verbose_name='boleta o comprobante bancario',
+    )
+    constancia_firmada = models.FileField(
+        upload_to='constancias_pago_firmadas/%Y/%m/',
+        blank=True,
+        null=True,
+        verbose_name='constancia firmada',
+    )
+    constancia_subida_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='constancias_pago_subidas',
+    )
+    constancia_subida_en = models.DateTimeField(null=True, blank=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'cobros'
+        verbose_name = 'cobro'
+        verbose_name_plural = 'cobros'
+
+    def __str__(self):
+        return f'Cobro de {self.cita} — {self.get_estado_display()}'
+
+    @property
+    def pagado(self):
+        return self.estado == self.ESTADO_PAGADO
+
+    def marcar_pagado(self, usuario, notas=''):
+        """Marca el cobro como pagado y guarda quién y cuándo."""
+        self.estado = self.ESTADO_PAGADO
+        self.pagado_en = timezone.now()
+        self.cobrado_por = usuario
+        if notas:
+            self.notas = notas
+        self.save(update_fields=['estado', 'pagado_en', 'cobrado_por', 'notas'])
 
 
 class ReporteDiario(models.Model):
@@ -367,6 +568,18 @@ class OrdenTrabajo(models.Model):
     # manualmente desde "Estudios realizados" (botón "Enviar estudio").
     # Este campo queda null hasta que efectivamente se envía.
     resultados_enviados_en = models.DateTimeField(null=True, blank=True)
+
+    # Token opaco para el visor web público del estudio (se manda en el
+    # correo al paciente). Se genera la primera vez que se envían los
+    # resultados; queda null hasta entonces. No caduca. El acceso al visor
+    # pide además los últimos 4 dígitos del DPI del paciente.
+    token_publico = models.UUIDField(null=True, blank=True, unique=True, editable=False)
+
+    def asegurar_token_publico(self):
+        if not self.token_publico:
+            self.token_publico = uuid.uuid4()
+            self.save(update_fields=['token_publico'])
+        return self.token_publico
 
     @property
     def tiene_informe(self):
@@ -500,6 +713,20 @@ class Ticket(models.Model):
     def __str__(self):
         return f'{self.turno} - {self.paciente}'
 
+    @classmethod
+    def del_dia(cls, fecha):
+        """Tickets creados durante el día local `fecha`.
+
+        Se filtra por rango de `creado_en` en vez de `creado_en__date=fecha`
+        porque el MySQL local no tiene cargadas las tablas de zonas horarias
+        con nombre: con USE_TZ activo, `__date` genera un CONVERT_TZ(...,
+        TIME_ZONE) que devuelve NULL y la consulta no trae nada.
+        """
+        inicio = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.min))
+        return cls.objects.filter(
+            creado_en__gte=inicio, creado_en__lt=inicio + datetime.timedelta(days=1),
+        )
+
     def save(self, *args, **kwargs):
         if self.turno:
             super().save(*args, **kwargs)
@@ -520,28 +747,31 @@ class Ticket(models.Model):
             self.orden = self.numero
             super().save(*args, **kwargs)
 
-    def adelantar(self, posiciones):
-        """Adelanta este ticket `posiciones` lugares dentro de la fila de
-        espera del día, sin tocar su número de turno oficial (`turno`) — solo
-        reordena la posición en que aparece en la Pantalla de turnos. Nunca
-        lo deja delante de un ticket de mayor prioridad (ej. no puede pasar
-        delante de un ticket de Emergencia IGSS)."""
-        if posiciones <= 0 or not self.pk:
+    def mover(self, posiciones):
+        """Mueve este ticket `posiciones` lugares dentro de la fila de espera
+        del día (negativo = adelantar, positivo = atrasar), sin tocar su
+        número de turno oficial (`turno`) — solo reordena la posición en que
+        aparece en la Pantalla de turnos. Nunca cruza tickets de otra
+        prioridad (no adelanta a uno de mayor prioridad ni atrasa detrás de
+        uno de menor)."""
+        if not posiciones or not self.pk:
             return
 
         hoy = timezone.localdate()
         with transaction.atomic():
             cola = list(
-                Ticket.objects.select_for_update()
-                .filter(estado=self.ESTADO_EN_ESPERA, creado_en__date=hoy)
+                Ticket.del_dia(hoy)
+                .select_for_update()
+                .filter(estado=self.ESTADO_EN_ESPERA)
                 .order_by('-prioridad', 'orden')
             )
             if self not in cola:
                 return
 
             idx = cola.index(self)
-            limite = sum(1 for t in cola if t.prioridad > self.prioridad)
-            nuevo_idx = max(limite, idx - posiciones)
+            limite_arriba = sum(1 for t in cola if t.prioridad > self.prioridad)
+            limite_abajo = len(cola) - 1 - sum(1 for t in cola if t.prioridad < self.prioridad)
+            nuevo_idx = min(max(idx + posiciones, limite_arriba), limite_abajo)
             if nuevo_idx == idx:
                 return
 
@@ -551,6 +781,11 @@ class Ticket(models.Model):
                 if ticket.orden != posicion:
                     Ticket.objects.filter(pk=ticket.pk).update(orden=posicion)
                     ticket.orden = posicion
+
+    def adelantar(self, posiciones):
+        """Atajo histórico: adelanta `posiciones` lugares (positivo)."""
+        if posiciones > 0:
+            self.mover(-posiciones)
 
 
 class Notificacion(models.Model):
@@ -566,6 +801,7 @@ class Notificacion(models.Model):
     TIPO_ESTUDIO_COMPLETADO = 'estudio_completado'
     TIPO_DATOS_PACIENTE_PENDIENTES = 'datos_paciente_pendientes'
     TIPO_REPORTE_ENVIADO = 'reporte_enviado'
+    TIPO_ESTUDIO_EXTRA_AGREGADO = 'estudio_extra_agregado'
 
     TIPO_CHOICES = [
         (TIPO_CITA_ASIGNADA, 'Nueva cita asignada'),
@@ -576,6 +812,7 @@ class Notificacion(models.Model):
         (TIPO_ESTUDIO_COMPLETADO, 'Estudio completado'),
         (TIPO_DATOS_PACIENTE_PENDIENTES, 'Datos de paciente pendientes de llenar'),
         (TIPO_REPORTE_ENVIADO, 'Reporte diario enviado'),
+        (TIPO_ESTUDIO_EXTRA_AGREGADO, 'Estudio extra agregado'),
     ]
 
     destinatario = models.ForeignKey(

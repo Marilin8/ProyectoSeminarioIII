@@ -1,0 +1,99 @@
+{% extends 'base.html' %}
+
+{% block title %}Pago por adelantado - Clínica de Imágenes{% endblock %}
+{% block page_title %}Pago por adelantado{% endblock %}
+{% block nav_planilla %}active{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .col-num { text-align: right; white-space: nowrap; }
+        .form-adelanto { display: flex; gap: 0.4rem; align-items: center; flex-wrap: nowrap; }
+        .form-adelanto input[type="month"] { padding: 0.3rem 0.4rem; font-size: 0.8rem; }
+        .adelantos-pagados { list-style: none; padding: 0; margin: 0; }
+        .adelantos-pagados li {
+            display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+            padding: 0.15rem 0; font-size: 0.78rem;
+        }
+        .adelantos-pagados li + li { border-top: 1px dashed var(--border-light); }
+    </style>
+{% endblock %}
+
+{% block content %}
+    <div class="tabs">
+        <a href="{% url 'planilla' %}">Planilla</a>
+        <a href="{% url 'pendiente_pago' %}">Pendiente de pago</a>
+        <a href="{% url 'pago_adelantado' %}" class="active">Pago por adelantado</a>
+        <a href="{% url 'historial_comisiones' %}">Historial de comisiones</a>
+        <a href="{% url 'historial_pagos' %}">Historial de pagos</a>
+    </div>
+
+    <p class="text-muted text-sm mb-2">
+        Para cuando un empleado pide que se le pague un mes que todavía no ha llegado. Elegí el mes
+        y subí el comprobante igual que un pago normal. Solo aplica al <strong>salario base</strong>:
+        las comisiones dependen de estudios que todavía no se han realizado, así que no se pueden
+        adelantar.
+    </p>
+
+    <div class="card">
+        <div class="card-body" style="padding:0;overflow-x:auto;">
+            {% if filas %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Empleado</th>
+                            <th>Rol</th>
+                            <th class="col-num">Salario base</th>
+                            <th>Ya pagado por adelantado</th>
+                            <th>Pagar por adelantado</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for fila in filas %}
+                            <tr>
+                                <td>{{ fila.usuario.get_full_name|default:fila.usuario.username }}</td>
+                                <td><span class="badge badge-muted">{{ fila.usuario.get_rol_display }}</span></td>
+                                <td class="col-num">Q{{ fila.usuario.salario_base|floatformat:2 }}</td>
+                                <td>
+                                    {% if fila.adelantos %}
+                                        <ul class="adelantos-pagados">
+                                            {% for pago in fila.adelantos %}
+                                                <li>
+                                                    <span>{{ pago.periodo_etiqueta }}</span>
+                                                    <a class="pago-link" href="{{ pago.comprobante.url }}" target="_blank" rel="noopener">ver boleta</a>
+                                                </li>
+                                            {% endfor %}
+                                        </ul>
+                                    {% else %}
+                                        <span class="text-muted text-xs">ninguno</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <form method="get" action="{% url 'registrar_pago_salario' fila.usuario.id %}" class="form-adelanto">
+                                        <input type="hidden" name="modo" value="mes">
+                                        <input type="month" name="mes" value="{{ mes_sugerido }}" min="{{ mes_minimo }}" required>
+                                        <button type="submit" class="btn btn-primary btn-sm">
+                                            <svg width="14" height="14"><use href="#i-upload"/></svg>
+                                            Pagar
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <p class="text-muted text-center" style="padding:2rem 0;">
+                    No hay empleados activos con salario base configurado.
+                </p>
+            {% endif %}
+        </div>
+    </div>
+{% endblock %}
