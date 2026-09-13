@@ -31,6 +31,7 @@ PANTALLAS_POR_ROL = {
                 {'nombre': 'Emergencia IGSS', 'url_name': 'lista_reportes_diarios_emergencia_igss'},
             ],
         },
+        {'nombre': 'Informe anual', 'url_name': 'informe_anual'},
     ],
     Usuario.ROL_RECEPCIONISTA: [
         {
@@ -86,6 +87,7 @@ PANTALLAS_POR_ROL = {
                 {'nombre': 'Emergencia IGSS', 'url_name': 'lista_reportes_diarios_emergencia_igss'},
             ],
         },
+        {'nombre': 'Informe anual', 'url_name': 'informe_anual'},
     ],
 }
 

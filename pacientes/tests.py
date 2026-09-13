@@ -9,6 +9,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+from accounts.models import Bitacora
 from pacientes import horarios
 from pacientes.forms import AgendarCitaForm, RegistrarTicketForm, validar_telefono_pais
 from pacientes.models import (
@@ -16,6 +17,7 @@ from pacientes.models import (
     Cobro,
     Combo,
     EstudioExtra,
+    HistorialPrecioEstudio,
     ImagenEstudio,
     Notificacion,
     OrdenTrabajo,
@@ -576,6 +578,288 @@ class ListaEstudiosTests(TestCase):
     def test_segunda_pagina_del_filtro(self):
         r = self.client.get(reverse('lista_estudios'), {'q': 'ZZTEST', 'page': '2'})
         self.assertEqual(len(r.context['pagina'].object_list), 5)
+
+
+class PrecioHistoricoTests(TestCase):
+    """TipoEstudio.precio_para(fecha=...) / Cita.precio_base: una cita
+    vieja debe seguir mostrando el precio que estaba vigente el día en que
+    se agendó, aunque después se haya actualizado la tarifa."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_hist_precio', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.estudio = TipoEstudio.objects.create(nombre='Radiografía histórico')
+        self.precio = PrecioEstudio.objects.create(
+            tipo_estudio=self.estudio, convenio=Cita.CONVENIO_COEX,
+            horario_habil=True, precio=Decimal('300.00'),
+        )
+
+    def _cambiar_precio(self, nuevo, cuando):
+        """Simula un cambio de precio registrado en un momento puntual
+        (auto_now_add no deja pasar `creado_en` al crear, se corrige después)."""
+        anterior = self.precio.precio
+        cambio = HistorialPrecioEstudio.objects.create(
+            tipo_estudio=self.estudio, convenio=Cita.CONVENIO_COEX, horario_habil=True,
+            valor_anterior=anterior, valor_nuevo=nuevo, modificado_por=self.admin,
+        )
+        HistorialPrecioEstudio.objects.filter(pk=cambio.pk).update(
+            creado_en=timezone.make_aware(datetime.datetime.combine(cuando, datetime.time(12, 0))),
+        )
+        self.precio.precio = nuevo
+        self.precio.save(update_fields=['precio'])
+
+    def test_precio_para_sin_historial_usa_el_actual(self):
+        self.assertEqual(self.estudio.precio_para(Cita.CONVENIO_COEX, True), Decimal('300.00'))
+        self.assertEqual(
+            self.estudio.precio_para(Cita.CONVENIO_COEX, True, fecha=datetime.date(2026, 1, 1)),
+            Decimal('300.00'),
+        )
+
+    def test_precio_para_fecha_anterior_al_cambio_usa_el_valor_viejo(self):
+        self._cambiar_precio(Decimal('350.00'), cuando=datetime.date(2026, 10, 1))
+
+        # El precio actual ya es 350...
+        self.assertEqual(self.estudio.precio_para(Cita.CONVENIO_COEX, True), Decimal('350.00'))
+        # ...pero septiembre (antes del cambio de octubre) sigue en 300.
+        self.assertEqual(
+            self.estudio.precio_para(Cita.CONVENIO_COEX, True, fecha=datetime.date(2026, 9, 15)),
+            Decimal('300.00'),
+        )
+
+    def test_precio_para_fecha_posterior_al_cambio_usa_el_valor_nuevo(self):
+        self._cambiar_precio(Decimal('350.00'), cuando=datetime.date(2026, 10, 1))
+
+        self.assertEqual(
+            self.estudio.precio_para(Cita.CONVENIO_COEX, True, fecha=datetime.date(2026, 11, 1)),
+            Decimal('350.00'),
+        )
+
+    def test_encadena_hacia_atras_con_varios_cambios(self):
+        self._cambiar_precio(Decimal('350.00'), cuando=datetime.date(2026, 10, 1))
+        self._cambiar_precio(Decimal('400.00'), cuando=datetime.date(2026, 12, 1))
+
+        # Una cita de agosto (antes de ambos cambios) ve el precio original.
+        self.assertEqual(
+            self.estudio.precio_para(Cita.CONVENIO_COEX, True, fecha=datetime.date(2026, 8, 1)),
+            Decimal('300.00'),
+        )
+        # Entre octubre y diciembre, el precio intermedio.
+        self.assertEqual(
+            self.estudio.precio_para(Cita.CONVENIO_COEX, True, fecha=datetime.date(2026, 11, 1)),
+            Decimal('350.00'),
+        )
+        # Después de diciembre, el actual.
+        self.assertEqual(
+            self.estudio.precio_para(Cita.CONVENIO_COEX, True, fecha=datetime.date(2026, 12, 15)),
+            Decimal('400.00'),
+        )
+
+    def test_cita_precio_base_usa_el_precio_vigente_el_dia_de_la_cita(self):
+        recepcionista = crear_usuario('recep_hist_precio', rol=Usuario.ROL_RECEPCIONISTA)
+        paciente = crear_paciente(dpi='7777777777701')
+        cita_septiembre = crear_cita(
+            recepcionista, paciente=paciente, tipo_estudio=self.estudio,
+            convenio=Cita.CONVENIO_COEX, fecha=datetime.date(2026, 9, 15), hora=datetime.time(9, 0),
+        )
+
+        self._cambiar_precio(Decimal('350.00'), cuando=datetime.date(2026, 10, 1))
+
+        self.assertEqual(cita_septiembre.precio_base, Decimal('300.00'))
+
+        cita_noviembre = crear_cita(
+            recepcionista, paciente=paciente, tipo_estudio=self.estudio,
+            convenio=Cita.CONVENIO_COEX, fecha=datetime.date(2026, 11, 1), hora=datetime.time(9, 0),
+        )
+        self.assertEqual(cita_noviembre.precio_base, Decimal('350.00'))
+
+
+class InformeAnualTests(TestCase):
+    """Resumen anual de facturación por mes y convenio (ver
+    pacientes.views.informe_anual): usa el precio vigente en la fecha de
+    cada cita, no el precio actual del estudio."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_informe_anual', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.recepcionista = crear_usuario('recep_informe_anual', rol=Usuario.ROL_RECEPCIONISTA)
+        self.tecnico = crear_usuario('tec_informe_anual', rol=Usuario.ROL_TECNICO_IMAGENES)
+        self.estudio = TipoEstudio.objects.create(nombre='Radiografía informe anual')
+        self.precio = PrecioEstudio.objects.create(
+            tipo_estudio=self.estudio, convenio=Cita.CONVENIO_COEX,
+            horario_habil=True, precio=Decimal('300.00'),
+        )
+        self.client.force_login(self.admin)
+
+    def _cita(self, fecha, estado=Cita.ESTADO_PROCESADA, convenio=Cita.CONVENIO_COEX, dpi=None):
+        paciente = crear_paciente(dpi=dpi or f'{fecha.toordinal():013d}'[-13:])
+        return crear_cita(
+            self.recepcionista, paciente=paciente, tipo_estudio=self.estudio,
+            convenio=convenio, estado=estado, fecha=fecha, hora=datetime.time(9, 0),
+        )
+
+    def _cambiar_precio(self, nuevo, cuando):
+        cambio = HistorialPrecioEstudio.objects.create(
+            tipo_estudio=self.estudio, convenio=Cita.CONVENIO_COEX, horario_habil=True,
+            valor_anterior=self.precio.precio, valor_nuevo=nuevo, modificado_por=self.admin,
+        )
+        HistorialPrecioEstudio.objects.filter(pk=cambio.pk).update(
+            creado_en=timezone.make_aware(datetime.datetime.combine(cuando, datetime.time(12, 0))),
+        )
+        self.precio.precio = nuevo
+        self.precio.save(update_fields=['precio'])
+
+    def test_solo_cuenta_citas_no_pendientes_ni_rechazadas(self):
+        self._cita(datetime.date(2026, 3, 5), estado=Cita.ESTADO_PROCESADA)
+        self._cita(datetime.date(2026, 3, 6), estado=Cita.ESTADO_PENDIENTE)
+        self._cita(datetime.date(2026, 3, 7), estado=Cita.ESTADO_RECHAZADA)
+
+        respuesta = self.client.get(reverse('informe_anual'), {'anio': 2026})
+
+        self.assertEqual(respuesta.context['cantidad_anual'], 1)
+        self.assertEqual(respuesta.context['total_anual'], Decimal('300.00'))
+
+    def test_ausente_no_suma_al_total_ni_a_la_cantidad(self):
+        self._cita(datetime.date(2026, 3, 5), estado=Cita.ESTADO_PROCESADA)
+        self._cita(datetime.date(2026, 3, 6), estado=Cita.ESTADO_AUSENTE)
+
+        respuesta = self.client.get(reverse('informe_anual'), {'anio': 2026})
+
+        self.assertEqual(respuesta.context['cantidad_anual'], 1)
+        self.assertEqual(respuesta.context['total_anual'], Decimal('300.00'))
+
+    def test_agrupa_por_mes_y_convenio(self):
+        self._cita(datetime.date(2026, 1, 10), convenio=Cita.CONVENIO_COEX)
+        PrecioEstudio.objects.create(
+            tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
+            horario_habil=True, precio=Decimal('500.00'),
+        )
+        self._cita(datetime.date(2026, 1, 20), convenio=Cita.CONVENIO_PRIVADO)
+        self._cita(datetime.date(2026, 2, 1), convenio=Cita.CONVENIO_COEX)
+
+        respuesta = self.client.get(reverse('informe_anual'), {'anio': 2026})
+
+        filas = {f['mes']: f for f in respuesta.context['filas']}
+        indice_coex = [c for c, _ in Cita.CONVENIO_CHOICES].index(Cita.CONVENIO_COEX)
+        indice_privado = [c for c, _ in Cita.CONVENIO_CHOICES].index(Cita.CONVENIO_PRIVADO)
+        self.assertEqual(filas[1]['valores_lista'][indice_coex], Decimal('300.00'))
+        self.assertEqual(filas[1]['valores_lista'][indice_privado], Decimal('500.00'))
+        self.assertEqual(filas[1]['total'], Decimal('800.00'))
+        self.assertEqual(filas[2]['valores_lista'][indice_coex], Decimal('300.00'))
+        self.assertEqual(filas[2]['cantidad'], 1)
+
+    def test_usa_precio_vigente_en_la_fecha_de_cada_cita(self):
+        """El caso concreto pedido: un estudio a Q300 en septiembre, subido
+        a Q350 en octubre -- el informe del año debe reflejar cada mes con
+        el precio que tenía en ese momento, no el precio actual."""
+        self._cita(datetime.date(2026, 9, 15))
+        self._cambiar_precio(Decimal('350.00'), cuando=datetime.date(2026, 10, 1))
+        self._cita(datetime.date(2026, 11, 1))
+
+        respuesta = self.client.get(reverse('informe_anual'), {'anio': 2026})
+
+        filas = {f['mes']: f for f in respuesta.context['filas']}
+        indice_coex = [c for c, _ in Cita.CONVENIO_CHOICES].index(Cita.CONVENIO_COEX)
+        self.assertEqual(filas[9]['valores_lista'][indice_coex], Decimal('300.00'))
+        self.assertEqual(filas[11]['valores_lista'][indice_coex], Decimal('350.00'))
+        self.assertEqual(respuesta.context['total_anual'], Decimal('650.00'))
+
+    def test_filtra_por_query_param_anio(self):
+        self._cita(datetime.date(2025, 6, 1))
+        self._cita(datetime.date(2026, 6, 1))
+
+        respuesta_2025 = self.client.get(reverse('informe_anual'), {'anio': 2025})
+        respuesta_2026 = self.client.get(reverse('informe_anual'), {'anio': 2026})
+
+        self.assertEqual(respuesta_2025.context['cantidad_anual'], 1)
+        self.assertEqual(respuesta_2026.context['cantidad_anual'], 1)
+
+    def test_recepcionista_puede_ver_el_informe(self):
+        self.client.force_login(self.recepcionista)
+        respuesta = self.client.get(reverse('informe_anual'))
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_tecnico_no_puede_ver_el_informe(self):
+        self.client.force_login(self.tecnico)
+        respuesta = self.client.get(reverse('informe_anual'))
+        self.assertEqual(respuesta.status_code, 302)
+
+
+class HistorialPrecioEstudioViewTests(TestCase):
+    """Auditoría: editar_estudio registra HistorialPrecioEstudio + bitácora
+    solo cuando un precio realmente cambia, y la pantalla de historial
+    completo lo lista."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_audit_precio', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.estudio = TipoEstudio.objects.create(
+            nombre='Tomografía histórico', modalidad=TipoEstudio.MODALIDAD_TAC,
+        )
+        PrecioEstudio.objects.create(
+            tipo_estudio=self.estudio, convenio=Cita.CONVENIO_COEX,
+            horario_habil=True, precio=Decimal('300.00'),
+        )
+        self.client.force_login(self.admin)
+
+    def _datos_base(self, **overrides):
+        datos = {
+            'nombre': self.estudio.nombre, 'modalidad': TipoEstudio.MODALIDAD_TAC, 'duracion_minutos': '30',
+            'precio_coex_habil': '300.00', 'precio_privado_habil': '0', 'precio_privado_inhabil': '0',
+            'precio_emergencia_igss_habil': '0', 'precio_emergencia_igss_inhabil': '0',
+        }
+        datos.update(overrides)
+        return datos
+
+    def test_cambiar_precio_registra_historial_y_bitacora(self):
+        self.client.post(
+            reverse('editar_estudio', args=[self.estudio.id]),
+            self._datos_base(precio_coex_habil='350.00'),
+        )
+
+        cambio = HistorialPrecioEstudio.objects.get(tipo_estudio=self.estudio)
+        self.assertEqual(cambio.valor_anterior, Decimal('300.00'))
+        self.assertEqual(cambio.valor_nuevo, Decimal('350.00'))
+        self.assertEqual(cambio.modificado_por, self.admin)
+        self.assertTrue(
+            Bitacora.objects.filter(accion=Bitacora.ACCION_EDITAR_PRECIO_ESTUDIO).exists()
+        )
+
+    def test_guardar_sin_cambiar_precio_no_registra_nada(self):
+        self.client.post(reverse('editar_estudio', args=[self.estudio.id]), self._datos_base())
+
+        self.assertFalse(HistorialPrecioEstudio.objects.filter(tipo_estudio=self.estudio).exists())
+        self.assertFalse(
+            Bitacora.objects.filter(accion=Bitacora.ACCION_EDITAR_PRECIO_ESTUDIO).exists()
+        )
+
+    def test_pantalla_de_historial_lista_el_cambio(self):
+        # follow=True consume el toast de éxito en la misma respuesta -- si
+        # no, ese mensaje queda pendiente en la sesión y aparece también en
+        # la siguiente pantalla que se visite, mezclándose con lo que esa
+        # pantalla realmente muestra.
+        self.client.post(
+            reverse('editar_estudio', args=[self.estudio.id]),
+            self._datos_base(precio_coex_habil='350.00'),
+            follow=True,
+        )
+
+        respuesta = self.client.get(reverse('historial_precios_estudio'))
+
+        self.assertContains(respuesta, 'Tomografía histórico')
+        # El Decimal se muestra localizado (coma decimal), igual que en
+        # lista_estudios.html -- no es un bug de esta pantalla nueva.
+        self.assertContains(respuesta, 'Q300,00')
+        self.assertContains(respuesta, 'Q350,00')
+
+    def test_buscador_filtra_por_nombre_de_estudio(self):
+        self.client.post(
+            reverse('editar_estudio', args=[self.estudio.id]),
+            self._datos_base(precio_coex_habil='350.00'),
+            follow=True,
+        )
+
+        respuesta = self.client.get(
+            reverse('historial_precios_estudio'), {'q': 'no existe ningún estudio así'},
+        )
+
+        self.assertNotContains(respuesta, 'Tomografía histórico')
 
 
 class HorariosTests(TestCase):

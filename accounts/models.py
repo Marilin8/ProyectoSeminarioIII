@@ -153,6 +153,7 @@ class Bitacora(models.Model):
     ACCION_EDITAR_COMISION = 'editar_comision'
     ACCION_CREAR_ESTUDIO = 'crear_estudio'
     ACCION_EDITAR_ESTUDIO = 'editar_estudio'
+    ACCION_EDITAR_PRECIO_ESTUDIO = 'editar_precio_estudio'
     ACCION_SOLICITAR_CITA = 'solicitar_cita'
     ACCION_CONFIRMAR_CITA = 'confirmar_cita'
     ACCION_RECHAZAR_CITA = 'rechazar_cita'
@@ -185,6 +186,7 @@ class Bitacora(models.Model):
         (ACCION_EDITAR_COMISION, 'Cambio de comisión de un usuario'),
         (ACCION_CREAR_ESTUDIO, 'Creación de estudio'),
         (ACCION_EDITAR_ESTUDIO, 'Edición de estudio'),
+        (ACCION_EDITAR_PRECIO_ESTUDIO, 'Cambio de precio de un estudio'),
         (ACCION_SOLICITAR_CITA, 'Solicitud de cita'),
         (ACCION_CONFIRMAR_CITA, 'Confirmación de cita'),
         (ACCION_RECHAZAR_CITA, 'Rechazo de solicitud de cita'),

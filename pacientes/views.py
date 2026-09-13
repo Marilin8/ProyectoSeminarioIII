@@ -4,6 +4,7 @@ import datetime
 import os
 import time
 import zipfile
+from decimal import Decimal
 from io import BytesIO
 
 from django import forms
@@ -20,7 +21,7 @@ from django.utils.dateparse import parse_date
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 
-from accounts.models import Bitacora, Usuario
+from accounts.models import MESES_ES, Bitacora, Usuario
 from accounts.views import es_administrador
 from clinica.validators import avisar_si_correo_no_existe
 
@@ -60,6 +61,7 @@ from .models import (
     Cobro,
     Combo,
     EstudioExtra,
+    HistorialPrecioEstudio,
     ImagenEstudio,
     Notificacion,
     OrdenTrabajo,
@@ -1092,9 +1094,16 @@ def lista_estudios(request):
 def editar_estudio(request, estudio_id):
     tipo_estudio = get_object_or_404(TipoEstudio, id=estudio_id)
     if request.method == 'POST':
+        # Se lee ANTES de guardar: form.save() ya deja la matriz de precios
+        # actualizada (ver CrearTipoEstudioForm.save), así que después no
+        # hay forma de saber qué valor tenía cada celda.
+        precios_antes = {
+            (p.convenio, p.horario_habil): p.precio for p in tipo_estudio.precios.all()
+        }
         form = CrearTipoEstudioForm(request.POST, instance=tipo_estudio)
         if form.is_valid():
             tipo_estudio = form.save()
+            _auditar_cambios_precio(request, tipo_estudio, precios_antes)
             Bitacora.registrar(
                 request=request,
                 usuario=request.user,
@@ -1108,7 +1117,59 @@ def editar_estudio(request, estudio_id):
             return redirect('lista_estudios')
     else:
         form = CrearTipoEstudioForm(instance=tipo_estudio)
-    return render(request, 'pacientes/crear_estudio.html', {'form': form, 'editando': tipo_estudio})
+    return render(request, 'pacientes/crear_estudio.html', {
+        'form': form,
+        'editando': tipo_estudio,
+        'historial_precios': tipo_estudio.historial_precios.select_related('modificado_por')[:10],
+    })
+
+
+def _auditar_cambios_precio(request, tipo_estudio, precios_antes):
+    """Registra en HistorialPrecioEstudio + bitácora cada celda de la
+    matriz de precios que cambió (mismo patrón que
+    accounts.views._auditar_cambios_comision, para precios de estudio)."""
+    cambiados = []
+    precios_ahora = {(p.convenio, p.horario_habil): p.precio for p in tipo_estudio.precios.all()}
+    for (convenio, habil), ahora in precios_ahora.items():
+        antes = precios_antes.get((convenio, habil), Decimal('0.00'))
+        if antes != ahora:
+            HistorialPrecioEstudio.objects.create(
+                tipo_estudio=tipo_estudio, convenio=convenio, horario_habil=habil,
+                valor_anterior=antes, valor_nuevo=ahora,
+                modificado_por=request.user,
+            )
+            cambiados.append((convenio, habil, antes, ahora))
+    if cambiados:
+        nombres_convenio = dict(Cita.CONVENIO_CHOICES)
+        detalle = ', '.join(
+            f'{nombres_convenio.get(c, c)} {"hábil" if h else "inhábil"}: Q{a} → Q{n}'
+            for c, h, a, n in cambiados
+        )
+        Bitacora.registrar(
+            request=request, usuario=request.user,
+            accion=Bitacora.ACCION_EDITAR_PRECIO_ESTUDIO,
+            descripcion=f'Cambió precios de "{tipo_estudio.nombre}": {detalle}',
+        )
+
+
+@login_required
+@user_passes_test(es_administrador)
+def historial_precios_estudio(request):
+    """Auditoría de los cambios de precio de estudios: fecha, de cuánto a
+    cuánto, y qué administrador lo hizo. Filtro por nombre del estudio."""
+    busqueda = (request.GET.get('q') or '').strip()
+    registros = (
+        HistorialPrecioEstudio.objects.select_related('tipo_estudio', 'modificado_por')
+        .order_by('-creado_en')
+    )
+    if busqueda:
+        registros = registros.filter(tipo_estudio__nombre__icontains=busqueda)
+    pagina = Paginator(registros, 25).get_page(request.GET.get('page'))
+    return render(request, 'pacientes/historial_precios_estudio.html', {
+        'pagina': pagina,
+        'registros': pagina,
+        'busqueda': busqueda,
+    })
 
 
 @login_required
@@ -2946,6 +3007,83 @@ def _reporte_xlsx_bytes(reporte, filas):
     buffer = BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
+
+
+@login_required
+@user_passes_test(puede_ver_reportes_diarios)
+def informe_anual(request):
+    """Resumen anual de facturación por mes y convenio. Usa Cita.precio
+    (que ya respeta el precio vigente en la fecha de cada cita, ver
+    HistorialPrecioEstudio) -- si un estudio cambió de precio durante el
+    año, esto lo refleja correctamente en vez de recalcular todo con la
+    tarifa actual."""
+    hoy = timezone.localdate()
+    try:
+        anio = int(request.GET.get('anio', hoy.year))
+    except (TypeError, ValueError):
+        anio = hoy.year
+
+    citas = (
+        Cita.objects.filter(fecha__year=anio)
+        .exclude(estado__in=(Cita.ESTADO_PENDIENTE, Cita.ESTADO_RECHAZADA))
+        .select_related('tipo_estudio')
+        .prefetch_related(
+            'tipo_estudio__precios', 'tipo_estudio__historial_precios',
+            'estudios_extra__tipo_estudio__precios', 'estudios_extra__tipo_estudio__historial_precios',
+        )
+    )
+
+    convenios = [c for c, _ in Cita.CONVENIO_CHOICES]
+    por_mes = {mes: {c: Decimal('0.00') for c in convenios} for mes in range(1, 13)}
+    cantidad_por_mes = {mes: 0 for mes in range(1, 13)}
+
+    for cita in citas:
+        if not cita.cuenta_en_total_reporte:
+            continue
+        por_mes[cita.fecha.month][cita.convenio] += cita.precio
+        cantidad_por_mes[cita.fecha.month] += 1
+
+    filas = [
+        {
+            'mes': mes,
+            'nombre_mes': MESES_ES[mes],
+            # Lista en el mismo orden que `convenios`, para poder recorrerla
+            # en el template en paralelo con las columnas del encabezado
+            # (Django no permite indexar un dict con una variable de loop).
+            'valores_lista': [por_mes[mes][c] for c in convenios],
+            'total': sum(por_mes[mes].values(), Decimal('0.00')),
+            'cantidad': cantidad_por_mes[mes],
+        }
+        for mes in range(1, 13)
+    ]
+    totales_convenio = {
+        c: sum((por_mes[mes][c] for mes in range(1, 13)), Decimal('0.00')) for c in convenios
+    }
+    totales_convenio_lista = [totales_convenio[c] for c in convenios]
+    total_anual = sum(totales_convenio.values(), Decimal('0.00'))
+    cantidad_anual = sum(cantidad_por_mes.values())
+    promedio_por_cita = (total_anual / cantidad_anual) if cantidad_anual else Decimal('0.00')
+
+    primer_anio_con_citas = (
+        Cita.objects.exclude(estado__in=(Cita.ESTADO_PENDIENTE, Cita.ESTADO_RECHAZADA))
+        .order_by('fecha').values_list('fecha', flat=True).first()
+    )
+    anio_mas_viejo = primer_anio_con_citas.year if primer_anio_con_citas else hoy.year
+    anios_disponibles = list(range(hoy.year, anio_mas_viejo - 1, -1))
+    if anio not in anios_disponibles:
+        anios_disponibles.append(anio)
+        anios_disponibles.sort(reverse=True)
+
+    return render(request, 'pacientes/informe_anual.html', {
+        'anio': anio,
+        'anios_disponibles': anios_disponibles,
+        'convenios': Cita.CONVENIO_CHOICES,
+        'filas': filas,
+        'totales_convenio_lista': totales_convenio_lista,
+        'total_anual': total_anual,
+        'cantidad_anual': cantidad_anual,
+        'promedio_por_cita': promedio_por_cita,
+    })
 
 
 @login_required
