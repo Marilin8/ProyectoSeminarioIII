@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm, UserCreationForm
 from django.utils import timezone
 
-from clinica.validators import validar_dominio_correo
+from clinica.validators import validar_correo_existente, validar_dominio_correo
 from pacientes.models import TipoEstudio
 
 from .models import Usuario
@@ -74,7 +74,7 @@ def _campo_email():
     return forms.EmailField(
         label='Correo',
         required=True,
-        validators=[validar_dominio_correo],
+        validators=[validar_dominio_correo, validar_correo_existente],
         error_messages={
             'required': 'El correo es obligatorio.',
             'invalid': 'Ingresá un correo electrónico válido (ejemplo: nombre@dominio.com).',

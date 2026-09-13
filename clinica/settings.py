@@ -232,6 +232,13 @@ DEFAULT_FROM_EMAIL = (
 # Por ahora local; en producción se pone el dominio real en el .env.
 VISOR_BASE_URL = config('VISOR_BASE_URL', default='http://localhost:8001').rstrip('/')
 
+# Verificación de correos vía la Email Verification API de AbstractAPI
+# (https://www.abstractapi.com/api/email-verification-validation-api) — ver
+# clinica/abstractapi.py. Si se deja vacío, validar_correo_existente() no
+# hace ninguna llamada de red y no bloquea nada (así el formulario y las
+# pruebas siguen funcionando sin depender de una API key ni de internet).
+ABSTRACT_API_KEY = config('ABSTRACT_API_KEY', default='')
+
 # El técnico sube la carpeta completa de un estudio DICOM (adjuntar_imagenes),
 # que puede traer varios cientos de archivos (una serie de TAC/resonancia).
 # El límite por defecto de Django (100) es insuficiente para eso.

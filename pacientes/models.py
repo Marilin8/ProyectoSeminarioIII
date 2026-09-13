@@ -54,7 +54,7 @@ class Paciente(models.Model):
     )
     nombre = models.CharField(max_length=100)
     apellido = models.CharField(max_length=100)
-    sexo = models.CharField(max_length=1, choices=SEXO_CHOICES, blank=True)
+    sexo = models.CharField(max_length=1, choices=SEXO_CHOICES)
     telefono = models.CharField(max_length=20, blank=True)
     correo = models.EmailField(max_length=254, blank=True, null=True)
     fecha_nacimiento = models.DateField(null=True, blank=True)
@@ -62,9 +62,11 @@ class Paciente(models.Model):
     # Campos que se pueden dejar sin llenar al registrar al paciente (ej. en
     # una emergencia) y que luego se le avisan pendientes a recepción. Ver
     # accounts.management.commands.notificar_pacientes_pendientes.
-    CAMPOS_OPCIONALES = ('sexo', 'fecha_nacimiento', 'telefono')
+    # 'sexo' salió de esta lista: ahora es obligatorio siempre (a diferencia
+    # de teléfono/fecha de nacimiento, es un dato que se puede determinar
+    # incluso en una emergencia).
+    CAMPOS_OPCIONALES = ('fecha_nacimiento', 'telefono')
     ETIQUETAS_CAMPOS_OPCIONALES = {
-        'sexo': 'Sexo',
         'fecha_nacimiento': 'Fecha de nacimiento',
         'telefono': 'Teléfono',
     }

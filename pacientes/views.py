@@ -302,8 +302,8 @@ def obtener_o_actualizar_paciente(cd):
 
 
 def _notificar_datos_pendientes_si_corresponde(paciente):
-    """Si el paciente quedó con datos opcionales sin llenar (sexo, teléfono
-    o fecha de nacimiento), avisa a las recepcionistas activas. No duplica
+    """Si el paciente quedó con datos opcionales sin llenar (teléfono o
+    fecha de nacimiento), avisa a las recepcionistas activas. No duplica
     el aviso si ya hay uno sin leer para este mismo paciente — por eso se
     puede llamar cada vez que se agenda una cita o se registra un ticket
     sin que se acumulen notificaciones repetidas."""
@@ -332,8 +332,8 @@ def _notificar_datos_pendientes_si_corresponde(paciente):
 @user_passes_test(es_recepcionista)
 def completar_datos_paciente(request, paciente_id):
     """Pantalla a la que llega la recepcionista al hacer clic en la
-    notificación de "datos pendientes": deja llenar sexo, teléfono y/o
-    fecha de nacimiento sin tener que pasar de nuevo por agendar una cita."""
+    notificación de "datos pendientes": deja llenar teléfono y/o fecha de
+    nacimiento sin tener que pasar de nuevo por agendar una cita."""
     paciente = get_object_or_404(Paciente, id=paciente_id)
 
     if request.method == 'POST':
@@ -341,7 +341,7 @@ def completar_datos_paciente(request, paciente_id):
         if form.is_valid():
             cd = form.cleaned_data
             cambiados = [
-                campo for campo in ('sexo', 'telefono', 'fecha_nacimiento')
+                campo for campo in ('telefono', 'fecha_nacimiento')
                 if cd[campo] and getattr(paciente, campo) != cd[campo]
             ]
             for campo in cambiados:
@@ -369,7 +369,6 @@ def completar_datos_paciente(request, paciente_id):
             return redirect('dashboard')
     else:
         form = CompletarDatosPacienteForm(initial={
-            'sexo': paciente.sexo,
             'telefono': paciente.telefono,
             'fecha_nacimiento': paciente.fecha_nacimiento,
         })

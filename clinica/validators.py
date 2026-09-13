@@ -2,6 +2,8 @@ import re
 
 from django.core.exceptions import ValidationError
 
+from .abstractapi import AbstractApiError, RESULTADO_NO_EXISTE, verificar_correo
+
 # Dominios de correo desechables / temporales conocidos. Si el dominio del
 # correo figura acá, se rechaza. Validación determinista (sin DNS) que
 # complementa la sintaxis base de EmailValidator.
@@ -50,3 +52,32 @@ def validar_dominio_correo(correo):
 
     if dominio in DOMINIOS_DESECHABLES:
         raise ValidationError('No se permiten correos temporales o desechables.')
+
+
+def validar_correo_existente(correo):
+    """Confirma con AbstractAPI que el correo existe de verdad, además del
+    chequeo gratis de validar_dominio_correo (que conviene correr primero
+    en el mismo clean_correo, para no gastar una consulta a la API con algo
+    que ya se sabe inválido).
+
+    Solo rechaza cuando AbstractAPI devuelve deliverability='UNDELIVERABLE'
+    (certeza de que el buzón no existe o el dominio no recibe correo).
+    Cualquier otro caso se deja pasar sin bloquear el formulario:
+    - 'DELIVERABLE' / 'RISKY' / 'UNKNOWN': AbstractAPI no dice que no exista.
+    - Sin ABSTRACT_API_KEY configurada, timeout, o cualquier error de red:
+      no tiene sentido tumbar el registro de un paciente/usuario porque la
+      API externa esté caída o lenta.
+
+    No hace nada si el correo viene vacío (igual que validar_dominio_correo).
+    """
+    if not correo:
+        return
+    try:
+        resultado = verificar_correo(correo)
+    except AbstractApiError:
+        return
+
+    if resultado.get('deliverability') == RESULTADO_NO_EXISTE:
+        raise ValidationError(
+            'Ese correo no existe o no puede recibir mensajes. Revisá que esté bien escrito.'
+        )
