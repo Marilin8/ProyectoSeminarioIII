@@ -185,6 +185,18 @@
                 ultimo = '';
                 dpi.focus();
             });
+
+            // Sexo es un <select> obligatorio: "bloquear" un <select> se hace
+            // con disabled (no existe <select readonly>), pero un campo
+            // disabled NO se manda en el POST del navegador. Sin esto, para
+            // un paciente ya registrado Sexo llega vacío y Django lo
+            // rechaza aunque se vea seleccionado en pantalla. Reactivar acá
+            // no cambia el valor, solo hace que el navegador lo incluya.
+            document.getElementById('form-agendar-privado').addEventListener('submit', function () {
+                document.querySelectorAll('#form-agendar-privado select[disabled]').forEach(
+                    function (select) { select.disabled = false; },
+                );
+            });
         })();
 
         // Duración y precio del estudio elegido (privado: tarifa inhábil ≥ 18:00).
