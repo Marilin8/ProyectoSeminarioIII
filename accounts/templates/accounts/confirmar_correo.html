@@ -1,0 +1,54 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Confirmar correo — Clínica de Imágenes</title>
+    <link rel="stylesheet" href="{% static 'css/theme.css' %}">
+</head>
+<body class="standalone">
+    {% include 'includes/icons.html' %}
+
+    <div class="main" style="margin-left:0;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+        <div class="card" style="width:400px;padding:2.5rem;text-align:center;">
+            {% if estado == 'confirmado' %}
+                <div style="font-size:2rem;color:var(--success);">
+                    <svg width="34" height="34"><use href="#i-check-circle"/></svg>
+                </div>
+                <h1 style="font-size:1.05rem;color:var(--text);font-weight:700;margin:0.6rem 0 0.3rem;">
+                    ¡Correo confirmado!
+                </h1>
+                <p style="color:var(--text-muted);font-size:0.85rem;">
+                    Tu cuenta "{{ usuario.username }}" ya está activa. Ya podés iniciar sesión.
+                </p>
+                <a href="{% url 'login' %}" class="btn btn-primary btn-block" style="margin-top:1rem;">
+                    Ir a iniciar sesión
+                </a>
+            {% elif estado == 'vencido' %}
+                <div style="font-size:2rem;color:var(--warning);">
+                    <svg width="34" height="34"><use href="#i-alert-triangle"/></svg>
+                </div>
+                <h1 style="font-size:1.05rem;color:var(--text);font-weight:700;margin:0.6rem 0 0.3rem;">
+                    Este enlace ya venció
+                </h1>
+                <p style="color:var(--text-muted);font-size:0.85rem;">
+                    El enlace de confirmación de "{{ usuario.username }}" venció. Pedile a un
+                    administrador que te active la cuenta desde "Usuarios activos".
+                </p>
+            {% else %}
+                <div style="font-size:2rem;color:var(--danger);">
+                    <svg width="34" height="34"><use href="#i-x-circle"/></svg>
+                </div>
+                <h1 style="font-size:1.05rem;color:var(--text);font-weight:700;margin:0.6rem 0 0.3rem;">
+                    Enlace inválido
+                </h1>
+                <p style="color:var(--text-muted);font-size:0.85rem;">
+                    Este enlace de confirmación no es válido, ya se usó, o la cuenta ya está
+                    activa. Si necesitás ayuda, pedísela a un administrador.
+                </p>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

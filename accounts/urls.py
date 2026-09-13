@@ -13,6 +13,11 @@ urlpatterns = [
     path('perfil/verificacion-2-pasos/', views.configurar_mfa, name='configurar_mfa'),
     path('usuarios/nuevo/', views.crear_usuario, name='crear_usuario'),
     path(
+        'usuarios/confirmar-correo/<uuid:token>/',
+        views.confirmar_correo_usuario,
+        name='confirmar_correo_usuario',
+    ),
+    path(
         'usuarios/radiologos/',
         views.lista_usuarios,
         {'rol': Usuario.ROL_MEDICO_RADIOLOGO},

@@ -1,90 +1,91 @@
-import json
-from io import BytesIO
 from unittest.mock import patch
-from urllib.error import URLError
 
+import dns.exception
+import dns.resolver
 from django import forms
 from django.contrib.messages import get_messages
 from django.contrib.messages.storage.cookie import CookieStorage
 from django.core.exceptions import ValidationError
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
-from .abstractapi import AbstractApiError, verificar_correo as verificar_correo_abstractapi
-from .validators import CODIGO_CORREO_NO_EXISTENTE, avisar_si_correo_no_existe, validar_correo_existente
+from .validators import (
+    CODIGO_CORREO_NO_EXISTENTE,
+    avisar_si_correo_no_existe,
+    dominio_puede_recibir_correo,
+    validar_correo_existente,
+)
 
 
-def _respuesta_json(datos):
-    """Simula lo que devuelve urllib.request.urlopen(...) como context
-    manager: un objeto con .read() que da los bytes del body."""
-    cuerpo = BytesIO(json.dumps(datos).encode('utf-8'))
-    cuerpo.__enter__ = lambda self=cuerpo: self
-    cuerpo.__exit__ = lambda self, *a: None
-    return cuerpo
+class DominioPuedeRecibirCorreoTests(SimpleTestCase):
+    """clinica/validators.py: el chequeo de DNS en sí (sin tocar la red de
+    verdad, todo con dns.resolver.resolve mockeado)."""
 
+    @patch('clinica.validators.dns.resolver.resolve')
+    def test_con_mx_puede_recibir(self, mock_resolve):
+        mock_resolve.return_value = ['algún.mx.']
+        self.assertTrue(dominio_puede_recibir_correo('gmail.com'))
+        mock_resolve.assert_called_once_with('gmail.com', 'MX', lifetime=5)
 
-class VerificarCorreoAbstractApiTests(SimpleTestCase):
-    """clinica/abstractapi.py: la llamada cruda a la API (sin tocar la red
-    de verdad, todo con urlopen mockeado)."""
+    @patch('clinica.validators.dns.resolver.resolve')
+    def test_dominio_inexistente_no_puede_recibir(self, mock_resolve):
+        mock_resolve.side_effect = dns.resolver.NXDOMAIN()
+        self.assertFalse(dominio_puede_recibir_correo('esto-no-existe-de-verdad.com'))
 
-    @override_settings(ABSTRACT_API_KEY='')
-    def test_sin_api_key_no_consulta_nada(self):
-        with self.assertRaises(AbstractApiError):
-            verificar_correo_abstractapi('alguien@example.com')
+    @patch('clinica.validators.dns.resolver.resolve')
+    def test_sin_mx_pero_con_a_puede_recibir(self, mock_resolve):
+        # Primera llamada (MX) sin respuesta, segunda (A) sí responde.
+        mock_resolve.side_effect = [dns.resolver.NoAnswer(), ['1.2.3.4']]
+        self.assertTrue(dominio_puede_recibir_correo('sin-mx-pero-con-a.com'))
 
-    @override_settings(ABSTRACT_API_KEY='clave-de-prueba')
-    @patch('clinica.abstractapi.urllib.request.urlopen')
-    def test_devuelve_el_dict_de_la_api_si_responde_bien(self, mock_urlopen):
-        mock_urlopen.return_value = _respuesta_json({
-            'email': 'alguien@example.com', 'deliverability': 'DELIVERABLE',
-        })
-        resultado = verificar_correo_abstractapi('alguien@example.com')
-        self.assertEqual(resultado['deliverability'], 'DELIVERABLE')
+    @patch('clinica.validators.dns.resolver.resolve')
+    def test_sin_ningun_registro_no_puede_recibir(self, mock_resolve):
+        mock_resolve.side_effect = dns.resolver.NoAnswer()
+        self.assertFalse(dominio_puede_recibir_correo('sin-nada.com'))
 
-    @override_settings(ABSTRACT_API_KEY='clave-de-prueba')
-    @patch('clinica.abstractapi.urllib.request.urlopen')
-    def test_error_de_red_se_convierte_en_abstractapierror(self, mock_urlopen):
-        mock_urlopen.side_effect = URLError('sin conexión')
-        with self.assertRaises(AbstractApiError):
-            verificar_correo_abstractapi('alguien@example.com')
+    @patch('clinica.validators.dns.resolver.resolve')
+    def test_timeout_se_propaga_sin_convertirse_en_false(self, mock_resolve):
+        # dominio_puede_recibir_correo no decide qué hacer con una falla de
+        # red -- eso lo resuelve validar_correo_existente (fail-open).
+        mock_resolve.side_effect = dns.exception.Timeout()
+        with self.assertRaises(dns.exception.Timeout):
+            dominio_puede_recibir_correo('dominio-cualquiera.com')
 
 
 class ValidarCorreoExistenteTests(SimpleTestCase):
     """clinica/validators.py: la parte que decide si eso bloquea el
     formulario o no."""
 
-    @override_settings(ABSTRACT_API_KEY='')
-    def test_sin_api_key_no_bloquea_nada(self):
-        # No debe intentar red ni tronar solo porque falta la key.
-        validar_correo_existente('alguien@example.com')
-
     def test_correo_vacio_no_hace_nada(self):
         validar_correo_existente('')
 
-    @override_settings(ABSTRACT_API_KEY='clave-de-prueba')
-    @patch('clinica.validators.verificar_correo')
-    def test_undeliverable_rechaza_el_correo(self, mock_verificar):
-        mock_verificar.return_value = {'deliverability': 'UNDELIVERABLE'}
-        with self.assertRaises(ValidationError):
-            validar_correo_existente('no-existe@example.com')
-
-    @override_settings(ABSTRACT_API_KEY='clave-de-prueba')
-    @patch('clinica.validators.verificar_correo')
-    def test_deliverable_no_rechaza_el_correo(self, mock_verificar):
-        mock_verificar.return_value = {'deliverability': 'DELIVERABLE'}
+    @patch('clinica.validators.dominio_puede_recibir_correo')
+    def test_con_verificar_correo_existente_apagado_no_consulta_dns(self, mock_check):
+        # Es lo que dejan las pruebas en clinica/settings_test.py -- ver
+        # también que el resto de la suite (que llena el campo correo con
+        # valores comunes tipo "juan@correo.com") no tarda segundos por
+        # cada uno haciendo una consulta DNS real.
         validar_correo_existente('alguien@example.com')
+        mock_check.assert_not_called()
 
-    @override_settings(ABSTRACT_API_KEY='clave-de-prueba')
-    @patch('clinica.validators.verificar_correo')
-    def test_risky_y_unknown_no_rechazan_el_correo(self, mock_verificar):
-        for valor in ('RISKY', 'UNKNOWN'):
-            mock_verificar.return_value = {'deliverability': valor}
-            validar_correo_existente('alguien@example.com')
+    @override_settings(VERIFICAR_CORREO_EXISTENTE=True)
+    @patch('clinica.validators.dominio_puede_recibir_correo')
+    def test_dominio_que_no_puede_recibir_rechaza_el_correo(self, mock_check):
+        mock_check.return_value = False
+        with self.assertRaises(ValidationError):
+            validar_correo_existente('alguien@no-existe.com')
+        mock_check.assert_called_once_with('no-existe.com')
 
-    @override_settings(ABSTRACT_API_KEY='clave-de-prueba')
-    @patch('clinica.validators.verificar_correo')
-    def test_si_la_api_falla_no_bloquea_el_formulario(self, mock_verificar):
-        mock_verificar.side_effect = AbstractApiError('timeout')
-        # No debe propagar el error de la API como si fuera un correo malo.
+    @override_settings(VERIFICAR_CORREO_EXISTENTE=True)
+    @patch('clinica.validators.dominio_puede_recibir_correo')
+    def test_dominio_que_puede_recibir_no_rechaza_el_correo(self, mock_check):
+        mock_check.return_value = True
+        validar_correo_existente('alguien@gmail.com')
+
+    @override_settings(VERIFICAR_CORREO_EXISTENTE=True)
+    @patch('clinica.validators.dominio_puede_recibir_correo')
+    def test_si_falla_el_dns_no_bloquea_el_formulario(self, mock_check):
+        mock_check.side_effect = dns.exception.Timeout()
+        # No debe propagar la falla de DNS como si el correo fuera malo.
         validar_correo_existente('alguien@example.com')
 
 

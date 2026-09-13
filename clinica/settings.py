@@ -232,12 +232,13 @@ DEFAULT_FROM_EMAIL = (
 # Por ahora local; en producción se pone el dominio real en el .env.
 VISOR_BASE_URL = config('VISOR_BASE_URL', default='http://localhost:8001').rstrip('/')
 
-# Verificación de correos vía la Email Verification API de AbstractAPI
-# (https://www.abstractapi.com/api/email-verification-validation-api) — ver
-# clinica/abstractapi.py. Si se deja vacío, validar_correo_existente() no
-# hace ninguna llamada de red y no bloquea nada (así el formulario y las
-# pruebas siguen funcionando sin depender de una API key ni de internet).
-ABSTRACT_API_KEY = config('ABSTRACT_API_KEY', default='')
+# validar_correo_existente (clinica/validators.py) hace una consulta DNS real
+# por cada correo que se valida. En True siempre (dev/producción); se apaga
+# en settings_test.py para que las pruebas no dependan de salida a internet
+# ni tarden segundos por cada correo -- las pruebas que sí necesitan
+# ejercitar esta validación la vuelven a prender con
+# @override_settings(VERIFICAR_CORREO_EXISTENTE=True) y mockean dns.resolver.
+VERIFICAR_CORREO_EXISTENTE = config('VERIFICAR_CORREO_EXISTENTE', default=True, cast=bool)
 
 # El técnico sube la carpeta completa de un estudio DICOM (adjuntar_imagenes),
 # que puede traer varios cientos de archivos (una serie de TAC/resonancia).

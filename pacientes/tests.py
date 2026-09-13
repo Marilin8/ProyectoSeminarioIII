@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -228,11 +228,12 @@ class FlujoPrivadoTests(TestCase):
         self.assertEqual(ticket_privado.numero, 2)
 
 
+@override_settings(VERIFICAR_CORREO_EXISTENTE=True)
 class VerificacionCorreoAgendarPrivadoTests(TestCase):
     """En el módulo Privado el correo es opcional (a diferencia de COEX y
     Emergencia IGSS, donde es obligatorio) -- confirma que dejarlo en blanco
-    no dispara ninguna llamada a Didit, y que escribir uno si lo verifica y
-    avisa cuando Didit confirma que no existe."""
+    no dispara ninguna consulta DNS, y que escribir uno si lo verifica y
+    avisa cuando el dominio no puede recibir correo."""
 
     def setUp(self):
         self.recepcionista = crear_usuario('recep_correo', rol=Usuario.ROL_RECEPCIONISTA)
@@ -250,31 +251,31 @@ class VerificacionCorreoAgendarPrivadoTests(TestCase):
             'fecha': self.fecha.isoformat(), 'hora': '10:00', 'motivo': 'Control',
         }, follow=True)
 
-    @patch('clinica.validators.verificar_correo')
-    def test_correo_en_blanco_no_llama_a_didit(self, mock_verificar):
+    @patch('clinica.validators.dominio_puede_recibir_correo')
+    def test_correo_en_blanco_no_consulta_dns(self, mock_check):
         respuesta = self._agendar(correo='')
 
-        mock_verificar.assert_not_called()
+        mock_check.assert_not_called()
         self.assertTrue(Cita.objects.filter(paciente__dpi='8080808080801').exists())
         self.assertNotContains(respuesta, 'no fue encontrado')
 
-    @patch('clinica.validators.verificar_correo')
-    def test_correo_escrito_que_no_existe_bloquea_y_avisa(self, mock_verificar):
-        mock_verificar.return_value = {'deliverability': 'UNDELIVERABLE'}
+    @patch('clinica.validators.dominio_puede_recibir_correo')
+    def test_correo_escrito_que_no_existe_bloquea_y_avisa(self, mock_check):
+        mock_check.return_value = False
 
-        respuesta = self._agendar(correo='no-existe@example.com')
+        respuesta = self._agendar(correo='no-existe@dominio-inventado.com')
 
-        mock_verificar.assert_called_once_with('no-existe@example.com')
+        mock_check.assert_called_once_with('dominio-inventado.com')
         self.assertFalse(Cita.objects.filter(paciente__dpi='8080808080801').exists())
         self.assertContains(respuesta, 'no fue encontrado')
 
-    @patch('clinica.validators.verificar_correo')
-    def test_correo_escrito_que_si_existe_agenda_normal(self, mock_verificar):
-        mock_verificar.return_value = {'deliverability': 'DELIVERABLE'}
+    @patch('clinica.validators.dominio_puede_recibir_correo')
+    def test_correo_escrito_que_si_existe_agenda_normal(self, mock_check):
+        mock_check.return_value = True
 
         respuesta = self._agendar(correo='si-existe@example.com')
 
-        mock_verificar.assert_called_once_with('si-existe@example.com')
+        mock_check.assert_called_once_with('example.com')
         self.assertTrue(Cita.objects.filter(paciente__dpi='8080808080801').exists())
         self.assertNotContains(respuesta, 'no fue encontrado')
 

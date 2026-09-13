@@ -1,13 +1,15 @@
 import re
 
+import dns.exception
+import dns.resolver
+from django.conf import settings
 from django.core.exceptions import ValidationError
 
-from .abstractapi import AbstractApiError, RESULTADO_NO_EXISTE, verificar_correo
-
 # Código propio en la ValidationError de validar_correo_existente, para que
-# las vistas puedan distinguir "Didit dijo que no existe" de cualquier otro
-# motivo de rechazo del campo correo (formato, desechable, etc.) sin tener
-# que andar comparando el texto del mensaje. Ver avisar_si_correo_no_existe.
+# las vistas puedan distinguir "el dominio no puede recibir correo" de
+# cualquier otro motivo de rechazo del campo correo (formato, desechable,
+# etc.) sin tener que andar comparando el texto del mensaje. Ver
+# avisar_si_correo_no_existe.
 CODIGO_CORREO_NO_EXISTENTE = 'correo_no_existente'
 
 # Dominios de correo desechables / temporales conocidos. Si el dominio del
@@ -60,39 +62,81 @@ def validar_dominio_correo(correo):
         raise ValidationError('No se permiten correos temporales o desechables.')
 
 
-def validar_correo_existente(correo):
-    """Confirma con AbstractAPI que el correo existe de verdad, además del
-    chequeo gratis de validar_dominio_correo (que conviene correr primero
-    en el mismo clean_correo, para no gastar una consulta a la API con algo
-    que ya se sabe inválido).
+_TIMEOUT_DNS = 5  # segundos
 
-    Solo rechaza cuando AbstractAPI devuelve deliverability='UNDELIVERABLE'
-    (certeza de que el buzón no existe o el dominio no recibe correo).
-    Cualquier otro caso se deja pasar sin bloquear el formulario:
-    - 'DELIVERABLE' / 'RISKY' / 'UNKNOWN': AbstractAPI no dice que no exista.
-    - Sin ABSTRACT_API_KEY configurada, timeout, o cualquier error de red:
-      no tiene sentido tumbar el registro de un paciente/usuario porque la
-      API externa esté caída o lenta.
 
-    No hace nada si el correo viene vacío (igual que validar_dominio_correo).
-    """
-    if not correo:
-        return
+def dominio_puede_recibir_correo(dominio):
+    """True si el dominio tiene un registro MX -- o, a falta de MX, al
+    menos A/AAAA, que es la regla que manda RFC 5321 para cuando un
+    dominio puede recibir correo sin un MX explícito (poco común, pero
+    válido). False si el dominio no existe en DNS (NXDOMAIN) o ninguno de
+    esos registros respondió.
+
+    Puede propagar dns.exception.DNSException (timeout, servidor DNS
+    caído, etc.) -- quien llama decide qué hacer con eso; acá no se
+    confunde "no se pudo consultar" con "no existe"."""
     try:
-        resultado = verificar_correo(correo)
-    except AbstractApiError:
+        dns.resolver.resolve(dominio, 'MX', lifetime=_TIMEOUT_DNS)
+        return True
+    except dns.resolver.NXDOMAIN:
+        return False
+    except dns.resolver.NoAnswer:
+        pass  # el dominio existe pero no tiene MX -- seguir con A/AAAA
+
+    for tipo in ('A', 'AAAA'):
+        try:
+            dns.resolver.resolve(dominio, tipo, lifetime=_TIMEOUT_DNS)
+            return True
+        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+            continue
+    return False
+
+
+def validar_correo_existente(correo):
+    """Confirma por DNS que el dominio del correo puede recibir correo de
+    verdad (tiene MX o, a falta de eso, A/AAAA), sin depender de ningún
+    servicio externo pago -- además del chequeo gratis de
+    validar_dominio_correo (que conviene correr primero en el mismo
+    clean_correo).
+
+    Esto NO confirma que el buzón puntual (lo que va antes de la @) exista
+    -- eso requeriría contactar al servidor de correo del destinatario
+    (SMTP) o un servicio pago, y ni así es confiable con Gmail/Outlook
+    (rechazan la mayoría de esos chequeos por antispam). Lo que sí atrapa,
+    gratis y sin límite, es el error más común: un dominio inventado o mal
+    escrito (ej. "gmial.com") o que ya no existe.
+
+    Solo rechaza cuando el dominio no existe en DNS o no tiene ningún
+    registro que le permita recibir correo. Cualquier error de DNS
+    (timeout, servidor caído, red sin salida) se deja pasar sin bloquear
+    el formulario -- no tiene sentido tumbar un registro porque la
+    consulta DNS falló, no porque el dominio esté mal.
+
+    No hace nada si el correo viene vacío (igual que validar_dominio_correo)
+    o si VERIFICAR_CORREO_EXISTENTE está apagado en settings (así lo dejan
+    las pruebas, para no depender de salir a internet).
+    """
+    if not correo or not settings.VERIFICAR_CORREO_EXISTENTE:
+        return
+    dominio = correo.rsplit('@', 1)[-1].strip().lower()
+    if not dominio:
         return
 
-    if resultado.get('deliverability') == RESULTADO_NO_EXISTE:
+    try:
+        puede_recibir = dominio_puede_recibir_correo(dominio)
+    except dns.exception.DNSException:
+        return
+
+    if not puede_recibir:
         raise ValidationError(
-            'Ese correo no existe o no puede recibir mensajes. Revisá que esté bien escrito.',
+            'Ese correo no existe o su dominio no puede recibir mensajes. Revisá que esté bien escrito.',
             code=CODIGO_CORREO_NO_EXISTENTE,
         )
 
 
 def avisar_si_correo_no_existe(request, form, campo='correo'):
     """Si `form` quedó inválido porque validar_correo_existente rechazó
-    `campo` (Didit confirmó que no existe), además del error que ya
+    `campo` (el dominio no puede recibir correo), además del error que ya
     aparece bajo el campo, manda un mensaje más visible (banner arriba de
     la pantalla) para que no pase desapercibido.
 

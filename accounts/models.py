@@ -1,9 +1,11 @@
 import calendar
 import datetime
+import uuid
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, Group, Permission
 from django.db import models
+from django.utils import timezone
 
 
 class Usuario(AbstractUser):
@@ -53,6 +55,35 @@ class Usuario(AbstractUser):
     # cada request y cierra cualquier sesión vieja en cuanto se detecta un
     # login más nuevo desde otro equipo.
     sesion_activa = models.CharField(max_length=40, blank=True, default='')
+
+    # Confirmación del correo al crear la cuenta (ver
+    # accounts.views.crear_usuario / confirmar_correo_usuario): el usuario
+    # queda con is_active=False hasta que entra al link que se le manda a
+    # su correo, para asegurarnos de que esa casilla es real y suya. Si el
+    # correo nunca le llega, un administrador puede activarlo a mano desde
+    # "Usuarios activos" (cambiar_estado_usuario) sin depender de esto.
+    token_confirmacion_correo = models.UUIDField(null=True, blank=True, unique=True, editable=False)
+    token_confirmacion_generado_en = models.DateTimeField(null=True, blank=True, editable=False)
+
+    VIGENCIA_TOKEN_CONFIRMACION = datetime.timedelta(days=2)
+
+    def generar_token_confirmacion_correo(self):
+        self.token_confirmacion_correo = uuid.uuid4()
+        self.token_confirmacion_generado_en = timezone.now()
+        self.save(update_fields=['token_confirmacion_correo', 'token_confirmacion_generado_en'])
+        return self.token_confirmacion_correo
+
+    def token_confirmacion_vencido(self):
+        if not self.token_confirmacion_generado_en:
+            return True
+        return timezone.now() - self.token_confirmacion_generado_en > self.VIGENCIA_TOKEN_CONFIRMACION
+
+    def confirmar_correo(self):
+        """Activa la cuenta y consume el token (de un solo uso)."""
+        self.is_active = True
+        self.token_confirmacion_correo = None
+        self.token_confirmacion_generado_en = None
+        self.save(update_fields=['is_active', 'token_confirmacion_correo', 'token_confirmacion_generado_en'])
 
     # Salario fijo mensual del empleado, antes de comisiones. Se usa en la
     # pantalla de Planilla (salario base + comisiones del período = total).
@@ -116,6 +147,7 @@ class Bitacora(models.Model):
     ACCION_LOGIN_EXITOSO = 'login_exitoso'
     ACCION_LOGIN_FALLIDO = 'login_fallido'
     ACCION_CREAR_USUARIO = 'crear_usuario'
+    ACCION_CONFIRMAR_CORREO_USUARIO = 'confirmar_correo_usuario'
     ACCION_EDITAR_USUARIO = 'editar_usuario'
     ACCION_CAMBIAR_ESTADO_USUARIO = 'cambiar_estado_usuario'
     ACCION_EDITAR_COMISION = 'editar_comision'
@@ -147,6 +179,7 @@ class Bitacora(models.Model):
         (ACCION_LOGIN_EXITOSO, 'Inicio de sesión'),
         (ACCION_LOGIN_FALLIDO, 'Intento de inicio de sesión fallido'),
         (ACCION_CREAR_USUARIO, 'Creación de usuario'),
+        (ACCION_CONFIRMAR_CORREO_USUARIO, 'Confirmación de correo de un usuario nuevo'),
         (ACCION_EDITAR_USUARIO, 'Edición de usuario'),
         (ACCION_CAMBIAR_ESTADO_USUARIO, 'Cambio de estado de usuario (suspensión/reactivación)'),
         (ACCION_EDITAR_COMISION, 'Cambio de comisión de un usuario'),

@@ -37,6 +37,10 @@
                 <label for="{{ form.email.id_for_label }}">Correo</label>
                 {{ form.email }}
                 {{ form.email.errors }}
+                <p class="ayuda">
+                    La cuenta queda inactiva hasta que la persona confirme este correo con el
+                    link que le vamos a mandar.
+                </p>
 
                 <label for="{{ form.rol.id_for_label }}">Rol</label>
                 {{ form.rol }}
