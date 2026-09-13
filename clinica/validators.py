@@ -2,7 +2,7 @@ import re
 
 from django.core.exceptions import ValidationError
 
-from .abstractapi import AbstractApiError, RESULTADO_NO_EXISTE, verificar_correo
+from .didit import DiditError, verificar_correo
 
 # Dominios de correo desechables / temporales conocidos. Si el dominio del
 # correo figura acá, se rechaza. Validación determinista (sin DNS) que
@@ -55,17 +55,19 @@ def validar_dominio_correo(correo):
 
 
 def validar_correo_existente(correo):
-    """Confirma con AbstractAPI que el correo existe de verdad, además del
-    chequeo gratis de validar_dominio_correo (que conviene correr primero
-    en el mismo clean_correo, para no gastar una consulta a la API con algo
-    que ya se sabe inválido).
+    """Confirma con la Email Risk API de Didit que el correo existe de
+    verdad, además del chequeo gratis de validar_dominio_correo (que
+    conviene correr primero en el mismo clean_correo, para no gastar una
+    consulta a la API con algo que ya se sabe inválido).
 
-    Solo rechaza cuando AbstractAPI devuelve deliverability='UNDELIVERABLE'
-    (certeza de que el buzón no existe o el dominio no recibe correo).
-    Cualquier otro caso se deja pasar sin bloquear el formulario:
-    - 'DELIVERABLE' / 'RISKY' / 'UNKNOWN': AbstractAPI no dice que no exista.
-    - Sin ABSTRACT_API_KEY configurada, timeout, o cualquier error de red:
-      no tiene sentido tumbar el registro de un paciente/usuario porque la
+    Solo rechaza cuando Didit marca is_undeliverable=True (certeza de que
+    el buzón no existe o el dominio no recibe correo). Cualquier otro caso
+    se deja pasar sin bloquear el formulario:
+    - is_undeliverable=False: Didit no dice que no exista (puede ser
+      entregable, o el dato simplemente no estar disponible para ese
+      dominio -- Didit documenta email_intelligence como "best effort").
+    - Sin DIDIT_API_KEY configurada, timeout, o cualquier error de red: no
+      tiene sentido tumbar el registro de un paciente/usuario porque la
       API externa esté caída o lenta.
 
     No hace nada si el correo viene vacío (igual que validar_dominio_correo).
@@ -73,11 +75,11 @@ def validar_correo_existente(correo):
     if not correo:
         return
     try:
-        resultado = verificar_correo(correo)
-    except AbstractApiError:
+        info = verificar_correo(correo)
+    except DiditError:
         return
 
-    if resultado.get('deliverability') == RESULTADO_NO_EXISTE:
+    if info.get('is_undeliverable'):
         raise ValidationError(
             'Ese correo no existe o no puede recibir mensajes. Revisá que esté bien escrito.'
         )
