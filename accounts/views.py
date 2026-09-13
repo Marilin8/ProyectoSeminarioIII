@@ -20,6 +20,8 @@ from django_otp.plugins.otp_totp.models import TOTPDevice
 
 import qrcode
 
+from clinica.validators import avisar_si_correo_no_existe
+
 from .forms import (
     CambiarContrasenaForm,
     CrearUsuarioForm,
@@ -215,6 +217,9 @@ def mi_perfil(request):
             messages.success(request, 'Contraseña actualizada correctamente.')
             return redirect('mi_perfil')
 
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, perfil_form)
+
     return render(request, 'accounts/mi_perfil.html', {
         'perfil_form': perfil_form,
         'password_form': password_form,
@@ -252,6 +257,8 @@ def crear_usuario(request):
             return redirect('dashboard')
     else:
         form = CrearUsuarioForm()
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, form)
     return render(request, 'accounts/crear_usuario.html', {'form': form})
 
 
@@ -659,6 +666,9 @@ def editar_usuario(request, usuario_id):
             return redirect(_url_lista_para(editado))
     else:
         form = EditarUsuarioForm(instance=usuario)
+
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, form)
 
     contexto = {
         'form': form,

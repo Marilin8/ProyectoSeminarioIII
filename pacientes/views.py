@@ -22,6 +22,7 @@ from django.views.decorators.http import require_POST
 
 from accounts.models import Bitacora, Usuario
 from accounts.views import es_administrador
+from clinica.validators import avisar_si_correo_no_existe
 
 from .correos import enviar_resultados
 from .dicom_utils import dicom_a_jpg_memoria
@@ -615,6 +616,9 @@ def ingresar_correo_envio(request, cita_id):
             return redirect('historial_paciente', paciente_id=cita.paciente_id)
     else:
         form = IngresarCorreoEnvioForm()
+
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, form)
 
     return render(request, 'pacientes/ingresar_correo_envio.html', {
         'form': form,
@@ -1443,6 +1447,9 @@ def agendar_cita(request, convenio):
                 )
             return redirect('dashboard')
 
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, form)
+
     return render(request, 'pacientes/agendar_cita.html', {
         'form': form,
         'convenio': convenio,
@@ -1567,6 +1574,9 @@ def agendar_cita_privado(request):
                 hora_dt = None
             if hora_dt and _hay_conflicto_horario(parse_date(fecha_inicial), hora_dt, PASO_MINUTOS):
                 messages.warning(request, 'Ese turno ya está ocupado por otra cita.')
+
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, form)
 
     return render(request, 'pacientes/agendar_privado.html', {
         'form': form,
@@ -2405,6 +2415,9 @@ def registrar_ticket_emergencia(request):
             return redirect('pantalla_turnos')
     else:
         form = RegistrarTicketForm()
+
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, form)
 
     return render(request, 'pacientes/registrar_ticket_emergencia.html', {
         'form': form,

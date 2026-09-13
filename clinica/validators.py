@@ -4,6 +4,12 @@ from django.core.exceptions import ValidationError
 
 from .didit import DiditError, verificar_correo
 
+# Código propio en la ValidationError de validar_correo_existente, para que
+# las vistas puedan distinguir "Didit dijo que no existe" de cualquier otro
+# motivo de rechazo del campo correo (formato, desechable, etc.) sin tener
+# que andar comparando el texto del mensaje. Ver avisar_si_correo_no_existe.
+CODIGO_CORREO_NO_EXISTENTE = 'correo_no_existente'
+
 # Dominios de correo desechables / temporales conocidos. Si el dominio del
 # correo figura acá, se rechaza. Validación determinista (sin DNS) que
 # complementa la sintaxis base de EmailValidator.
@@ -81,5 +87,21 @@ def validar_correo_existente(correo):
 
     if info.get('is_undeliverable'):
         raise ValidationError(
-            'Ese correo no existe o no puede recibir mensajes. Revisá que esté bien escrito.'
+            'Ese correo no existe o no puede recibir mensajes. Revisá que esté bien escrito.',
+            code=CODIGO_CORREO_NO_EXISTENTE,
         )
+
+
+def avisar_si_correo_no_existe(request, form, campo='correo'):
+    """Si `form` quedó inválido porque validar_correo_existente rechazó
+    `campo` (Didit confirmó que no existe), además del error que ya
+    aparece bajo el campo, manda un mensaje más visible (banner arriba de
+    la pantalla) para que no pase desapercibido.
+
+    Se llama desde la vista, en el `else` de `if form.is_valid():` -- ahí
+    es donde hay un `request` a mano para usar el framework de mensajes."""
+    from django.contrib import messages
+
+    errores = form.errors.as_data().get(campo, [])
+    if any(error.code == CODIGO_CORREO_NO_EXISTENTE for error in errores):
+        messages.warning(request, 'El correo ingresado no fue encontrado.')

@@ -1,6 +1,7 @@
 import base64
 import datetime
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -225,6 +226,57 @@ class FlujoPrivadoTests(TestCase):
         self.assertEqual(cola, [ticket_privado, ticket_coex])
         # El número de turno oficial no cambia aunque se haya adelantado.
         self.assertEqual(ticket_privado.numero, 2)
+
+
+class VerificacionCorreoAgendarPrivadoTests(TestCase):
+    """En el módulo Privado el correo es opcional (a diferencia de COEX y
+    Emergencia IGSS, donde es obligatorio) -- confirma que dejarlo en blanco
+    no dispara ninguna llamada a Didit, y que escribir uno si lo verifica y
+    avisa cuando Didit confirma que no existe."""
+
+    def setUp(self):
+        self.recepcionista = crear_usuario('recep_correo', rol=Usuario.ROL_RECEPCIONISTA)
+        self.radiologo = crear_usuario('rad_correo', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.estudio = TipoEstudio.objects.create(nombre='Radiografía de tórax verificación')
+        self.estudio.radiologos.add(self.radiologo)
+        self.fecha = timezone.localdate() + datetime.timedelta(days=2)
+        self.client.force_login(self.recepcionista)
+
+    def _agendar(self, correo, dpi='8080808080801'):
+        return self.client.post(reverse('agendar_cita_privado'), {
+            'dpi': dpi, 'nombre': 'Marco', 'apellido': 'Privado',
+            'sexo': Paciente.SEXO_MASCULINO, 'telefono': '55551234', 'correo': correo,
+            'fecha_nacimiento': '1990-01-01', 'tipo_estudio': self.estudio.id,
+            'fecha': self.fecha.isoformat(), 'hora': '10:00', 'motivo': 'Control',
+        }, follow=True)
+
+    @patch('clinica.validators.verificar_correo')
+    def test_correo_en_blanco_no_llama_a_didit(self, mock_verificar):
+        respuesta = self._agendar(correo='')
+
+        mock_verificar.assert_not_called()
+        self.assertTrue(Cita.objects.filter(paciente__dpi='8080808080801').exists())
+        self.assertNotContains(respuesta, 'no fue encontrado')
+
+    @patch('clinica.validators.verificar_correo')
+    def test_correo_escrito_que_no_existe_bloquea_y_avisa(self, mock_verificar):
+        mock_verificar.return_value = {'is_undeliverable': True}
+
+        respuesta = self._agendar(correo='no-existe@example.com')
+
+        mock_verificar.assert_called_once_with('no-existe@example.com')
+        self.assertFalse(Cita.objects.filter(paciente__dpi='8080808080801').exists())
+        self.assertContains(respuesta, 'no fue encontrado')
+
+    @patch('clinica.validators.verificar_correo')
+    def test_correo_escrito_que_si_existe_agenda_normal(self, mock_verificar):
+        mock_verificar.return_value = {'is_undeliverable': False}
+
+        respuesta = self._agendar(correo='si-existe@example.com')
+
+        mock_verificar.assert_called_once_with('si-existe@example.com')
+        self.assertTrue(Cita.objects.filter(paciente__dpi='8080808080801').exists())
+        self.assertNotContains(respuesta, 'no fue encontrado')
 
 
 class VisorEstudioTests(TestCase):
