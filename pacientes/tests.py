@@ -260,7 +260,7 @@ class VerificacionCorreoAgendarPrivadoTests(TestCase):
 
     @patch('clinica.validators.verificar_correo')
     def test_correo_escrito_que_no_existe_bloquea_y_avisa(self, mock_verificar):
-        mock_verificar.return_value = {'is_undeliverable': True}
+        mock_verificar.return_value = {'deliverability': 'UNDELIVERABLE'}
 
         respuesta = self._agendar(correo='no-existe@example.com')
 
@@ -270,7 +270,7 @@ class VerificacionCorreoAgendarPrivadoTests(TestCase):
 
     @patch('clinica.validators.verificar_correo')
     def test_correo_escrito_que_si_existe_agenda_normal(self, mock_verificar):
-        mock_verificar.return_value = {'is_undeliverable': False}
+        mock_verificar.return_value = {'deliverability': 'DELIVERABLE'}
 
         respuesta = self._agendar(correo='si-existe@example.com')
 
