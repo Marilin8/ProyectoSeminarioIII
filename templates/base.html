@@ -1,4 +1,4 @@
-{% load static %}
+{% load static roles %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -25,7 +25,7 @@
                     <svg width="16" height="16"><use href="#i-user"/></svg> Mi perfil
                 </a>
             {% endif %}
-            {% if user.is_superuser or user.rol == 'administrador' %}
+            {% if user.is_superuser or user|tiene_rol:'administrador' %}
                 <a href="{% url 'pantalla_placeholder' clave='usuarios_activos' %}" class="{% block nav_usuarios %}{% endblock %}">
                     <svg width="16" height="16"><use href="#i-users"/></svg> Usuarios activos
                 </a>

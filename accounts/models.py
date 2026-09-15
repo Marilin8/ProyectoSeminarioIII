@@ -125,6 +125,42 @@ class Usuario(AbstractUser):
         verbose_name = 'usuario'
         verbose_name_plural = 'usuarios'
 
+    def tiene_rol(self, rol):
+        """True si `rol` es el rol principal de este usuario o uno de sus
+        roles adicionales (ver RolAdicional) -- ej. un técnico al que
+        además se le habilitó el rol de radiólogo. Los `es_<rol>` de
+        accounts/pacientes.views usan esto en vez de comparar `self.rol`
+        directo, para que un usuario con roles adicionales vea también las
+        pantallas y tenga los permisos de esos roles (pantallas_de hace lo
+        mismo del lado de los tiles del panel).
+
+        No cambia nada de lo que depende del rol PRINCIPAL nada más (ej.
+        qué usuarios aparecen para asignar a TipoEstudio.radiologos): un
+        rol adicional no agrega a esas listas, hay que agregarlo a mano
+        ahí si corresponde."""
+        return self.rol == rol or self.roles_adicionales.filter(rol=rol).exists()
+
+
+class RolAdicional(models.Model):
+    """Rol extra que un usuario tiene ADEMÁS de su rol principal
+    (Usuario.rol) -- ej. un técnico al que también se le habilita el rol
+    de radiólogo. Ver Usuario.tiene_rol / accounts.pantallas.pantallas_de."""
+
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='roles_adicionales',
+    )
+    rol = models.CharField(max_length=25, choices=Usuario.ROL_CHOICES)
+
+    class Meta:
+        db_table = 'usuarios_roles_adicionales'
+        verbose_name = 'rol adicional'
+        verbose_name_plural = 'roles adicionales'
+        unique_together = ('usuario', 'rol')
+        ordering = ['usuario', 'rol']
+
+    def __str__(self):
+        return f'{self.usuario} · {self.get_rol_display()}'
+
 
 def _ip_real_del_visitante(request):
     """IP del visitante para la bitácora.

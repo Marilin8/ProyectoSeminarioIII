@@ -9,7 +9,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from accounts.models import Bitacora
+from accounts.models import Bitacora, RolAdicional
 from pacientes import horarios
 from pacientes.forms import AgendarCitaForm, RegistrarTicketForm, validar_telefono_pais
 from pacientes.models import (
@@ -1076,6 +1076,34 @@ class HistorialPacientesBusquedaTests(TestCase):
     def test_la_lista_muestra_el_expediente(self):
         respuesta = self.client.get(reverse('historial_pacientes'))
         self.assertContains(respuesta, f'Expediente: {self.paciente.expediente}')
+
+
+class RolAdicionalAccesoAPantallasTests(TestCase):
+    """Un usuario con un rol adicional (ver accounts.models.RolAdicional)
+    puede entrar de verdad a las pantallas de ese rol, no solo verlas
+    listadas en el panel."""
+
+    def setUp(self):
+        self.tecnico = crear_usuario('tec_rol_extra', rol=Usuario.ROL_TECNICO_IMAGENES)
+        self.client.force_login(self.tecnico)
+
+    def test_sin_rol_adicional_no_puede_ver_solicitudes_de_radiologo(self):
+        respuesta = self.client.get(reverse('solicitudes_pendientes'))
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_con_rol_adicional_de_radiologo_puede_ver_solicitudes(self):
+        RolAdicional.objects.create(usuario=self.tecnico, rol=Usuario.ROL_MEDICO_RADIOLOGO)
+
+        respuesta = self.client.get(reverse('solicitudes_pendientes'))
+
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_sigue_pudiendo_ver_sus_propias_ordenes_pendientes_de_tecnico(self):
+        RolAdicional.objects.create(usuario=self.tecnico, rol=Usuario.ROL_MEDICO_RADIOLOGO)
+
+        respuesta = self.client.get(reverse('ordenes_pendientes'))
+
+        self.assertEqual(respuesta.status_code, 200)
 
 
 class BuscarPacientePorDpiViewTests(TestCase):

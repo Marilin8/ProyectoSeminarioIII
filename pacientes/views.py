@@ -91,7 +91,7 @@ CLINICA_TELEFONO = 'XXXX-XXXX'
 
 
 def es_recepcionista(user):
-    return user.is_authenticated and user.rol == Usuario.ROL_RECEPCIONISTA
+    return user.is_authenticated and user.tiene_rol(Usuario.ROL_RECEPCIONISTA)
 
 
 def es_caja(user):
@@ -110,24 +110,28 @@ def puede_ver_comprobante_pago(user):
     return user.is_authenticated and (
         es_administrador(user)
         or es_caja(user)
-        or user.rol in (
-            Usuario.ROL_RECEPCIONISTA,
-            Usuario.ROL_TECNICO_IMAGENES,
-            Usuario.ROL_MEDICO_RADIOLOGO,
+        or any(
+            user.tiene_rol(rol) for rol in (
+                Usuario.ROL_RECEPCIONISTA,
+                Usuario.ROL_TECNICO_IMAGENES,
+                Usuario.ROL_MEDICO_RADIOLOGO,
+            )
         )
     )
 
 
 def es_tecnico(user):
-    return user.is_authenticated and user.rol == Usuario.ROL_TECNICO_IMAGENES
+    return user.is_authenticated and user.tiene_rol(Usuario.ROL_TECNICO_IMAGENES)
 
 
 def es_radiologo(user):
-    return user.is_authenticated and user.rol == Usuario.ROL_MEDICO_RADIOLOGO
+    return user.is_authenticated and user.tiene_rol(Usuario.ROL_MEDICO_RADIOLOGO)
 
 
 def es_administrador_financiero(user):
-    return user.is_authenticated and (user.is_superuser or user.rol == Usuario.ROL_ADMINISTRADOR_FINANCIERO)
+    return user.is_authenticated and (
+        user.is_superuser or user.tiene_rol(Usuario.ROL_ADMINISTRADOR_FINANCIERO)
+    )
 
 
 def puede_ver_reportes_diarios(user):

@@ -8,7 +8,7 @@ from django.utils import timezone
 from clinica.validators import validar_correo_existente, validar_dominio_correo
 from pacientes.models import TipoEstudio
 
-from .models import Usuario
+from .models import RolAdicional, Usuario
 
 
 def _campo_fecha_ingreso(inicial=None):
@@ -113,12 +113,45 @@ def _validar_porcentajes(form, cleaned):
     return cleaned
 
 
+def _campo_roles_adicionales():
+    """Además de su rol principal (que define comportamiento por defecto,
+    ej. en qué lista aparece primero), un usuario puede tener roles
+    adicionales -- ej. un técnico al que también se le habilita el rol de
+    radiólogo. Ver Usuario.tiene_rol / accounts.models.RolAdicional."""
+    return forms.MultipleChoiceField(
+        choices=Usuario.ROL_CHOICES,
+        required=False,
+        widget=forms.CheckboxSelectMultiple,
+        label='Roles adicionales',
+        help_text=(
+            'Además de su rol principal, este usuario también ve las pantallas y '
+            'tiene los permisos de los roles que marques acá.'
+        ),
+    )
+
+
+def _guardar_roles_adicionales(usuario, roles_seleccionados):
+    """Sincroniza RolAdicional con lo que se marcó en el form -- solo
+    agrega/quita lo que cambió, sin borrar y recrear todo."""
+    seleccionados = set(roles_seleccionados or ()) - {usuario.rol}
+    actuales = set(usuario.roles_adicionales.values_list('rol', flat=True))
+    a_quitar = actuales - seleccionados
+    a_agregar = seleccionados - actuales
+    if a_quitar:
+        RolAdicional.objects.filter(usuario=usuario, rol__in=a_quitar).delete()
+    if a_agregar:
+        RolAdicional.objects.bulk_create([
+            RolAdicional(usuario=usuario, rol=rol) for rol in a_agregar
+        ])
+
+
 class CrearUsuarioForm(UserCreationForm):
     email = _campo_email()
     puede_operar_caja = forms.BooleanField(
         label='Puede operar Caja', required=False,
         help_text='Permite gestionar pagos de estudios sin cambiar el rol principal.',
     )
+    roles_adicionales = _campo_roles_adicionales()
     fecha_ingreso = _campo_fecha_ingreso(inicial=timezone.localdate)
 
     class Meta(UserCreationForm.Meta):
@@ -143,8 +176,15 @@ class CrearUsuarioForm(UserCreationForm):
             usuario.date_joined = timezone.make_aware(
                 datetime.datetime.combine(fecha, datetime.time.min)
             )
+
+        def guardar_roles_adicionales():
+            _guardar_roles_adicionales(usuario, self.cleaned_data.get('roles_adicionales'))
+
         if commit:
             usuario.save()
+            guardar_roles_adicionales()
+        else:
+            self._guardar_roles_adicionales = guardar_roles_adicionales
         return usuario
 
 
@@ -226,6 +266,7 @@ class EditarUsuarioForm(forms.ModelForm):
         label='Estudios que este radiólogo puede realizar',
         help_text='Al agendar una cita, solo se podrá asignar el estudio a los radiólogos marcados aquí.',
     )
+    roles_adicionales = _campo_roles_adicionales()
     fecha_ingreso = _campo_fecha_ingreso()
 
     class Meta:
@@ -242,6 +283,9 @@ class EditarUsuarioForm(forms.ModelForm):
         if self.instance and self.instance.pk:
             self.fields['tipos_estudio'].initial = self.instance.tipos_estudio_asignados.all()
             self.fields['fecha_ingreso'].initial = self.instance.date_joined.date()
+            self.fields['roles_adicionales'].initial = list(
+                self.instance.roles_adicionales.values_list('rol', flat=True)
+            )
 
     def clean(self):
         cleaned = super().clean()
@@ -267,6 +311,7 @@ class EditarUsuarioForm(forms.ModelForm):
         if commit:
             usuario.save()
             guardar_estudios()
+            _guardar_roles_adicionales(usuario, self.cleaned_data.get('roles_adicionales'))
         else:
             self._guardar_estudios = guardar_estudios
         return usuario

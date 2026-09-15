@@ -36,7 +36,7 @@ from .pantallas import buscar_pantalla, pantallas_de
 
 
 def es_administrador(user):
-    return user.is_authenticated and (user.is_superuser or user.rol == Usuario.ROL_ADMINISTRADOR)
+    return user.is_authenticated and (user.is_superuser or user.tiene_rol(Usuario.ROL_ADMINISTRADOR))
 
 
 # Roles que se administran desde la pantalla "Usuarios activos". El nombre es
@@ -252,6 +252,7 @@ def crear_usuario(request):
             nuevo_usuario = form.save(commit=False)
             nuevo_usuario.is_active = False
             nuevo_usuario.save()
+            form._guardar_roles_adicionales()
             token = nuevo_usuario.generar_token_confirmacion_correo()
 
             error_envio = enviar_confirmacion_cuenta(request, nuevo_usuario, token)

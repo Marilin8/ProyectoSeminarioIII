@@ -9,7 +9,7 @@ from django.utils import timezone
 from django_otp.oath import totp
 from django_otp.plugins.otp_totp.models import TOTPDevice
 
-from accounts.models import Bitacora, HistorialComision, Usuario
+from accounts.models import Bitacora, HistorialComision, RolAdicional, Usuario
 from clinica.validators import validar_dominio_correo
 
 UsuarioModel = get_user_model()
@@ -287,7 +287,110 @@ class UsuarioModelTests(TestCase):
         usuario = crear_usuario('tecnico3', rol=Usuario.ROL_TECNICO_IMAGENES)
         self.assertEqual(usuario.rol, Usuario.ROL_TECNICO_IMAGENES)
 
-   
+
+class RolAdicionalTests(TestCase):
+    """Un usuario puede tener roles adicionales además de su rol principal
+    (ver Usuario.tiene_rol / RolAdicional) -- ej. un técnico al que también
+    se le habilita el rol de radiólogo."""
+
+    def setUp(self):
+        self.usuario = crear_usuario('tec_multirol', rol=Usuario.ROL_TECNICO_IMAGENES)
+
+    def test_tiene_rol_es_verdadero_para_el_rol_principal(self):
+        self.assertTrue(self.usuario.tiene_rol(Usuario.ROL_TECNICO_IMAGENES))
+
+    def test_tiene_rol_es_falso_sin_rol_adicional_asignado(self):
+        self.assertFalse(self.usuario.tiene_rol(Usuario.ROL_MEDICO_RADIOLOGO))
+
+    def test_tiene_rol_es_verdadero_con_rol_adicional_asignado(self):
+        RolAdicional.objects.create(usuario=self.usuario, rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.assertTrue(self.usuario.tiene_rol(Usuario.ROL_MEDICO_RADIOLOGO))
+        # El rol principal sigue funcionando igual.
+        self.assertTrue(self.usuario.tiene_rol(Usuario.ROL_TECNICO_IMAGENES))
+        # Un tercer rol, ni principal ni adicional, sigue dando falso.
+        self.assertFalse(self.usuario.tiene_rol(Usuario.ROL_RECEPCIONISTA))
+
+    def test_predicados_es_tecnico_y_es_radiologo_respetan_el_rol_adicional(self):
+        from pacientes.views import es_radiologo, es_tecnico
+
+        self.assertTrue(es_tecnico(self.usuario))
+        self.assertFalse(es_radiologo(self.usuario))
+
+        RolAdicional.objects.create(usuario=self.usuario, rol=Usuario.ROL_MEDICO_RADIOLOGO)
+
+        self.assertTrue(es_tecnico(self.usuario))
+        self.assertTrue(es_radiologo(self.usuario))
+
+    def test_pantallas_de_incluye_las_del_rol_adicional_sin_duplicar(self):
+        from accounts.pantallas import pantallas_de
+
+        pantallas_solo_tecnico = pantallas_de(self.usuario)
+        nombres_antes = {p['nombre'] for p in pantallas_solo_tecnico}
+        self.assertIn('Órdenes pendientes', nombres_antes)
+        self.assertNotIn('Solicitudes de citas', nombres_antes)
+
+        RolAdicional.objects.create(usuario=self.usuario, rol=Usuario.ROL_MEDICO_RADIOLOGO)
+
+        pantallas = pantallas_de(self.usuario)
+        nombres = [p['nombre'] for p in pantallas]
+        self.assertIn('Órdenes pendientes', nombres)
+        self.assertIn('Solicitudes de citas', nombres)
+        self.assertIn('Citas procesadas', nombres)
+        # No se duplica nada (cada nombre aparece una sola vez).
+        self.assertEqual(len(nombres), len(set(nombres)))
+
+    def test_template_filter_tiene_rol(self):
+        from accounts.templatetags.roles import tiene_rol
+
+        self.assertTrue(tiene_rol(self.usuario, Usuario.ROL_TECNICO_IMAGENES))
+        self.assertFalse(tiene_rol(self.usuario, Usuario.ROL_MEDICO_RADIOLOGO))
+        RolAdicional.objects.create(usuario=self.usuario, rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.assertTrue(tiene_rol(self.usuario, Usuario.ROL_MEDICO_RADIOLOGO))
+
+
+class EditarUsuarioRolAdicionalViewTests(TestCase):
+    """El admin asigna/quita roles adicionales desde editar_usuario."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_multirol', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.empleado = crear_usuario('emp_multirol', rol=Usuario.ROL_TECNICO_IMAGENES)
+        self.client.force_login(self.admin)
+
+    def _editar(self, **overrides):
+        datos = {
+            'first_name': 'Emp', 'last_name': 'Leado', 'email': 'emp@gmail.com',
+            'rol': Usuario.ROL_TECNICO_IMAGENES, 'is_active': 'on', 'salario_base': '0',
+            'fecha_ingreso': '2026-01-01',
+            'porcentaje_coex': '0', 'porcentaje_privado': '0', 'porcentaje_emergencia_igss': '0',
+        }
+        datos.update(overrides)
+        return self.client.post(reverse('editar_usuario', args=[self.empleado.id]), datos)
+
+    def test_agregar_un_rol_adicional(self):
+        self._editar(roles_adicionales=[Usuario.ROL_MEDICO_RADIOLOGO])
+
+        roles = set(self.empleado.roles_adicionales.values_list('rol', flat=True))
+        self.assertEqual(roles, {Usuario.ROL_MEDICO_RADIOLOGO})
+
+    def test_quitar_un_rol_adicional(self):
+        RolAdicional.objects.create(usuario=self.empleado, rol=Usuario.ROL_MEDICO_RADIOLOGO)
+
+        self._editar()  # sin roles_adicionales en el POST = ninguno marcado
+
+        self.assertFalse(self.empleado.roles_adicionales.exists())
+
+    def test_cambiar_de_un_rol_adicional_a_otro(self):
+        RolAdicional.objects.create(usuario=self.empleado, rol=Usuario.ROL_MEDICO_RADIOLOGO)
+
+        self._editar(roles_adicionales=[Usuario.ROL_RECEPCIONISTA])
+
+        roles = set(self.empleado.roles_adicionales.values_list('rol', flat=True))
+        self.assertEqual(roles, {Usuario.ROL_RECEPCIONISTA})
+
+    def test_marcar_el_mismo_rol_principal_como_adicional_no_crea_nada_redundante(self):
+        self._editar(roles_adicionales=[Usuario.ROL_TECNICO_IMAGENES])
+
+        self.assertFalse(self.empleado.roles_adicionales.exists())
 
 
 class BitacoraModelTests(TestCase):
