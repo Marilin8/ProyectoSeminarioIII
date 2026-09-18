@@ -698,6 +698,14 @@ def ingresar_correo_envio(request, cita_id):
 
 @login_required
 @user_passes_test(es_caja)
+def pagos_pendientes_igss(request):
+    """Acceso directo a Caja ya filtrado por Emergencia IGSS, para el botón
+    "Pagos IGSS" del panel (ver accounts.pantallas)."""
+    return redirect(f"{reverse('pagos_pendientes')}?convenio={Cita.CONVENIO_EMERGENCIA_IGSS}")
+
+
+@login_required
+@user_passes_test(es_caja)
 def pagos_pendientes(request):
     """Listado paginado de cobros, con filtros para Caja."""
     qs = Cobro.objects.select_related(

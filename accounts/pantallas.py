@@ -116,11 +116,15 @@ def pantallas_de(usuario):
                     pantallas.append(pantalla)
                     ya_vistas.add(identificador)
     # Permiso aparte del rol (ver Usuario.puede_operar_caja): cualquier
-    # usuario con este permiso ve la pantalla de Caja, sin duplicarla si su
-    # rol ya la tuviera.
+    # usuario con este permiso ve la pantalla de Caja (y el acceso directo
+    # a Pagos IGSS), sin duplicarlas si su rol ya las tuviera.
     ya_tiene_caja = any(item.get('url_name') == 'pagos_pendientes' for item in pantallas)
-    if usuario.puede_operar_caja and not ya_tiene_caja:
-        pantallas.append({'nombre': 'Caja - pagos de estudios', 'url_name': 'pagos_pendientes'})
+    ya_tiene_pagos_igss = any(item.get('url_name') == 'pagos_pendientes_igss' for item in pantallas)
+    if usuario.puede_operar_caja:
+        if not ya_tiene_caja:
+            pantallas.append({'nombre': 'Caja - pagos de estudios', 'url_name': 'pagos_pendientes'})
+        if not ya_tiene_pagos_igss:
+            pantallas.append({'nombre': 'Pagos IGSS', 'url_name': 'pagos_pendientes_igss'})
     return pantallas
 
 
