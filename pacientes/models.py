@@ -571,7 +571,70 @@ class Cobro(models.Model):
         self.cobrado_por = usuario
         if notas:
             self.notas = notas
-        self.save(update_fields=['estado', 'pagado_en', 'cobrado_por', 'notas'])
+        self.save(update_fields=[
+            'estado', 'pagado_en', 'cobrado_por', 'notas', 'forma_pago', 'numero_boleta',
+            'comprobante_bancario',
+        ])
+
+
+class OrdenPago(models.Model):
+    """Orden agrupada para convenios que liquidan varios estudios con una
+    boleta global (COEX y Emergencia IGSS)."""
+
+    ESTADO_PENDIENTE = 'pendiente'
+    ESTADO_PAGADA = 'pagada'
+    ESTADO_ANULADA = 'anulada'
+    ESTADO_CHOICES = [
+        (ESTADO_PENDIENTE, 'Pendiente de boleta'),
+        (ESTADO_PAGADA, 'Pagada'),
+        (ESTADO_ANULADA, 'Anulada'),
+    ]
+
+    convenio = models.CharField(max_length=20, choices=CONVENIO_CHOICES)
+    paciente = models.ForeignKey(Paciente, on_delete=models.PROTECT, related_name='ordenes_pago')
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=ESTADO_PENDIENTE)
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    descuento = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    notas = models.CharField(max_length=255, blank=True)
+    combo = models.ForeignKey(
+        Combo, on_delete=models.PROTECT, null=True, blank=True, related_name='ordenes_pago',
+    )
+    numero_boleta = models.CharField(max_length=60, blank=True)
+    comprobante_bancario = models.FileField(
+        upload_to='comprobantes_ordenes_pago/%Y/%m/', blank=True, null=True,
+    )
+    creado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='ordenes_pago_creadas',
+    )
+    pagado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='ordenes_pago_confirmadas',
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+    pagado_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'ordenes_pago'
+        ordering = ['-creado_en']
+
+    def __str__(self):
+        return f'Orden de pago #{self.id} — {self.get_estado_display()}'
+
+
+class DetalleOrdenPago(models.Model):
+    orden_pago = models.ForeignKey(OrdenPago, on_delete=models.CASCADE, related_name='detalles')
+    cita = models.ForeignKey(Cita, on_delete=models.PROTECT, related_name='detalles_orden_pago')
+    tipo_estudio = models.ForeignKey(TipoEstudio, on_delete=models.PROTECT)
+    estudio_extra = models.ForeignKey(
+        'EstudioExtra', on_delete=models.PROTECT, null=True, blank=True, related_name='detalles_pago',
+    )
+    precio = models.DecimalField(max_digits=10, decimal_places=2)
+    descuento = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=10, decimal_places=2)
+
+    class Meta:
+        db_table = 'detalles_orden_pago'
 
 
 class ReporteDiario(models.Model):

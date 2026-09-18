@@ -179,23 +179,6 @@ def _ip_real_del_visitante(request):
     return request.META.get('HTTP_CF_CONNECTING_IP') or request.META.get('REMOTE_ADDR')
 
 
-def _ip_real_del_visitante(request):
-    """IP del visitante para la bitácora.
-
-    Cuando el sitio se accede vía el Cloudflare Tunnel, la conexión le
-    llega a Django desde 'cloudflared' en esta misma máquina, así que
-    REMOTE_ADDR siempre da 127.0.0.1 — la bitácora no capturaba la IP
-    real de nadie que entrara por la web pública.
-
-    Cloudflare agrega el header CF-Connecting-IP con la IP real del
-    cliente en cada request que pasa por su borde (no se puede
-    falsificar: Cloudflare lo sobreescribe, ignora el que mande el
-    visitante). Si no viene (acceso directo por LAN sin pasar por el
-    túnel), se sigue usando REMOTE_ADDR como antes.
-    """
-    return request.META.get('HTTP_CF_CONNECTING_IP') or request.META.get('REMOTE_ADDR')
-
-
 class Bitacora(models.Model):
     ACCION_LOGIN_EXITOSO = 'login_exitoso'
     ACCION_LOGIN_FALLIDO = 'login_fallido'

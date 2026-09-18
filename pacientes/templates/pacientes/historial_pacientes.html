@@ -37,6 +37,22 @@
                     </select>
                 </div>
                 <div style="flex:1;min-width:140px;">
+                    <label for="filtro-estado-pago" style="margin-top:0;">Estado de pago</label>
+                    <select id="filtro-estado-pago">
+                        <option value="">Todos</option>
+                        <option value="pagado" {% if filtro_estado_pago == 'pagado' %}selected{% endif %}>Pagado</option>
+                        <option value="pendiente" {% if filtro_estado_pago == 'pendiente' %}selected{% endif %}>Pendiente</option>
+                    </select>
+                </div>
+                <div style="flex:1;min-width:140px;">
+                    <label for="filtro-agrupacion" style="margin-top:0;">Modalidad de cobro</label>
+                    <select id="filtro-agrupacion">
+                        <option value="">Todos</option>
+                        <option value="agrupado" {% if filtro_agrupacion == 'agrupado' %}selected{% endif %}>Orden agrupada / combo</option>
+                        <option value="individual" {% if filtro_agrupacion == 'individual' %}selected{% endif %}>Cobro individual</option>
+                    </select>
+                </div>
+                <div style="flex:1;min-width:140px;">
                     <label for="filtro-fecha" style="margin-top:0;">Fecha</label>
                     <input type="date" id="filtro-fecha" value="{{ filtro_fecha }}">
                 </div>
@@ -69,6 +85,8 @@
             var filtroConvenio = document.getElementById('filtro-convenio');
             var filtroFecha = document.getElementById('filtro-fecha');
             var filtroTipoEstudio = document.getElementById('filtro-tipo-estudio');
+            var filtroEstadoPago = document.getElementById('filtro-estado-pago');
+            var filtroAgrupacion = document.getElementById('filtro-agrupacion');
             var resultados = document.getElementById('resultados');
             var baseUrl = "{% url 'historial_pacientes' %}";
             var temporizador = null;
@@ -81,6 +99,8 @@
                 if (filtroConvenio.value) params.set('convenio', filtroConvenio.value);
                 if (filtroFecha.value) params.set('fecha', filtroFecha.value);
                 if (filtroTipoEstudio.value) params.set('tipo_estudio', filtroTipoEstudio.value);
+                if (filtroEstadoPago.value) params.set('estado_pago', filtroEstadoPago.value);
+                if (filtroAgrupacion.value) params.set('agrupacion', filtroAgrupacion.value);
                 var query = params.toString();
                 return query ? baseUrl + '?' + query : baseUrl;
             }
@@ -121,7 +141,7 @@
                 buscar();
             });
 
-            [filtroConvenio, filtroFecha, filtroTipoEstudio].forEach(function (elemento) {
+            [filtroConvenio, filtroFecha, filtroTipoEstudio, filtroEstadoPago, filtroAgrupacion].forEach(function (elemento) {
                 elemento.addEventListener('change', buscar);
             });
 
@@ -129,6 +149,8 @@
                 filtroConvenio.value = '';
                 filtroFecha.value = '';
                 filtroTipoEstudio.value = '';
+                filtroEstadoPago.value = '';
+                filtroAgrupacion.value = '';
                 buscar();
             });
         })();

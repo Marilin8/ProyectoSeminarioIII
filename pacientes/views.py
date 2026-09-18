@@ -12,6 +12,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.files.base import ContentFile
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Q
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -36,6 +37,7 @@ from .forms import (
     ComboForm,
     CompletarDatosPacienteForm,
     CrearTipoEstudioForm,
+    CrearOrdenPagoForm,
     EXTENSIONES_IMAGEN_DIRECTA,
     GenerarOrdenForm,
     IngresarCorreoEnvioForm,
@@ -64,6 +66,8 @@ from .models import (
     HistorialPrecioEstudio,
     ImagenEstudio,
     Notificacion,
+    OrdenPago,
+    DetalleOrdenPago,
     OrdenTrabajo,
     Paciente,
     ReporteDiario,
@@ -441,6 +445,8 @@ def historial_pacientes(request):
     filtro_convenio = (request.GET.get('convenio') or '').strip()
     filtro_fecha = (request.GET.get('fecha') or '').strip()
     filtro_tipo_estudio = (request.GET.get('tipo_estudio') or '').strip()
+    filtro_estado_pago = (request.GET.get('estado_pago') or '').strip()
+    filtro_agrupacion = (request.GET.get('agrupacion') or '').strip()
 
     citas_procesadas = Cita.objects.filter(estado=Cita.ESTADO_PROCESADA)
     if filtro_convenio:
@@ -449,6 +455,21 @@ def historial_pacientes(request):
         citas_procesadas = citas_procesadas.filter(fecha=filtro_fecha)
     if filtro_tipo_estudio:
         citas_procesadas = citas_procesadas.filter(tipo_estudio_id=filtro_tipo_estudio)
+    if filtro_estado_pago == 'pagado':
+        citas_procesadas = citas_procesadas.filter(cobro__estado=Cobro.ESTADO_PAGADO)
+    elif filtro_estado_pago == 'pendiente':
+        citas_procesadas = citas_procesadas.filter(
+            Q(cobro__estado=Cobro.ESTADO_PENDIENTE)
+            | Q(detalles_orden_pago__orden_pago__estado=OrdenPago.ESTADO_PENDIENTE)
+        ).distinct()
+    if filtro_agrupacion == 'agrupado':
+        citas_procesadas = citas_procesadas.filter(
+            detalles_orden_pago__orden_pago__isnull=False,
+        ).distinct()
+    elif filtro_agrupacion == 'individual':
+        citas_procesadas = citas_procesadas.filter(
+            detalles_orden_pago__isnull=True,
+        )
 
     pacientes_qs = Paciente.objects.filter(
         id__in=citas_procesadas.values('paciente_id')
@@ -493,6 +514,8 @@ def historial_pacientes(request):
         'filtro_convenio': filtro_convenio,
         'filtro_fecha': filtro_fecha,
         'filtro_tipo_estudio': filtro_tipo_estudio,
+        'filtro_estado_pago': filtro_estado_pago,
+        'filtro_agrupacion': filtro_agrupacion,
         'tipos_estudio': TipoEstudio.objects.filter(
             id__in=Cita.objects.filter(estado=Cita.ESTADO_PROCESADA).values('tipo_estudio_id')
         ).order_by('nombre'),
@@ -512,11 +535,30 @@ def historial_paciente(request, paciente_id):
     """Estudios ya realizados (con informe) de un paciente, del más
     reciente al más antiguo."""
     paciente = get_object_or_404(Paciente, id=paciente_id)
+    filtro_estado_pago = (request.GET.get('estado_pago') or '').strip()
+    filtro_agrupacion = (request.GET.get('agrupacion') or '').strip()
     citas = (
         Cita.objects.filter(paciente=paciente, estado=Cita.ESTADO_PROCESADA)
         .select_related('tipo_estudio', 'orden_trabajo', 'cobro')
+        .prefetch_related('detalles_orden_pago__orden_pago__combo')
         .order_by('-fecha', '-hora')
     )
+    if filtro_estado_pago == 'pagado':
+        citas = citas.filter(cobro__estado=Cobro.ESTADO_PAGADO)
+    elif filtro_estado_pago == 'pendiente':
+        citas = citas.filter(
+            Q(cobro__estado=Cobro.ESTADO_PENDIENTE)
+            | Q(detalles_orden_pago__orden_pago__estado=OrdenPago.ESTADO_PENDIENTE)
+        ).distinct()
+    if filtro_agrupacion == 'agrupado':
+        citas = citas.filter(detalles_orden_pago__orden_pago__isnull=False).distinct()
+    elif filtro_agrupacion == 'individual':
+        citas = citas.filter(detalles_orden_pago__isnull=True)
+    citas = list(citas)
+    for cita in citas:
+        cita.ordenes_agrupadas = [
+            detalle.orden_pago for detalle in cita.detalles_orden_pago.all()
+        ]
     # Para llenar el combo de "Estudio" del filtro solo con los tipos que
     # este paciente realmente tiene (no el catálogo completo).
     tipos_estudio = sorted({cita.tipo_estudio.nombre for cita in citas})
@@ -524,6 +566,8 @@ def historial_paciente(request, paciente_id):
         'paciente': paciente,
         'citas': citas,
         'tipos_estudio': tipos_estudio,
+        'filtro_estado_pago': filtro_estado_pago,
+        'filtro_agrupacion': filtro_agrupacion,
         'edad': paciente.edad_en(timezone.localdate()),
         'hoy': timezone.localdate(),
     })
@@ -536,6 +580,11 @@ def _cobro_bloquea_envio(cita):
     orden es de antes de este permiso), no bloquea — el cobro no es
     obligatorio. Portado (2026-09-04) desde la rama visual-andres de
     TechBlood."""
+    if OrdenPago.objects.filter(
+        detalles__cita=cita,
+        estado__in=(OrdenPago.ESTADO_PENDIENTE,),
+    ).exists():
+        return True
     return bool(
         hasattr(cita, 'cobro') and cita.cobro and cita.cobro.estado != Cobro.ESTADO_PAGADO
     )
@@ -587,7 +636,14 @@ def enviar_estudio(request, cita_id):
     que quiere confirmar el envío (botón "Enviar estudio"). Si el paciente
     todavía no tiene correo registrado, primero la manda a completarlo."""
     cita = get_object_or_404(Cita, id=cita_id, estado=Cita.ESTADO_PROCESADA)
-    orden = get_object_or_404(OrdenTrabajo, cita=cita)
+    orden = OrdenTrabajo.objects.filter(cita=cita).first()
+    if not orden:
+        messages.error(
+            request,
+            'Este estudio no tiene una orden de trabajo. No se puede enviar hasta que '
+            'Técnico y Radiología completen el flujo.',
+        )
+        return redirect('historial_paciente', paciente_id=cita.paciente_id)
 
     if not cita.paciente.correo:
         return redirect('ingresar_correo_envio', cita_id=cita.id)
@@ -651,6 +707,7 @@ def pagos_pendientes(request):
     estado = request.GET.get('estado', Cobro.ESTADO_PENDIENTE)
     convenio = request.GET.get('convenio', '')
     tipo_estudio = request.GET.get('tipo_estudio', '')
+    combo_id = request.GET.get('combo', '')
     desde = parse_date(request.GET.get('desde', ''))
     hasta = parse_date(request.GET.get('hasta', ''))
     if busqueda:
@@ -669,23 +726,193 @@ def pagos_pendientes(request):
         qs = qs.filter(cita__fecha__gte=desde)
     if hasta:
         qs = qs.filter(cita__fecha__lte=hasta)
+    if combo_id.isdigit():
+        qs = qs.filter(
+            cita__detalles_orden_pago__orden_pago__combo_id=int(combo_id),
+        ).distinct()
 
+    cobros_para_orden = qs.filter(
+        estado=Cobro.ESTADO_PENDIENTE,
+        cita__convenio__in=(Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS),
+    ).select_related('cita__paciente', 'cita__tipo_estudio')
     pagina = Paginator(qs, 20).get_page(request.GET.get('page'))
 
     filtros = request.GET.copy()
     filtros.pop('page', None)
+    ordenes_pago = OrdenPago.objects.select_related(
+        'paciente', 'creado_por', 'combo',
+    ).prefetch_related('detalles__tipo_estudio').filter(
+        estado=OrdenPago.ESTADO_PENDIENTE,
+    )
+    if convenio in (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS):
+        ordenes_pago = ordenes_pago.filter(convenio=convenio)
+    if combo_id.isdigit():
+        ordenes_pago = ordenes_pago.filter(combo_id=int(combo_id))
+    combos = Combo.objects.filter(activo=True).prefetch_related('estudios').order_by('nombre')
     return render(request, 'pacientes/pagos_pendientes.html', {
         'pagina': pagina,
+        'cobros_para_orden': cobros_para_orden,
         'busqueda': busqueda,
         'estado': estado,
         'convenio': convenio,
         'tipo_estudio': tipo_estudio,
+        'combo_id': combo_id,
         'desde': desde,
         'hasta': hasta,
         'convenios': Cita.CONVENIO_CHOICES,
         'tipos_estudio': TipoEstudio.objects.filter(activo=True).order_by('nombre'),
         'filtros_qs': filtros.urlencode(),
+        'ordenes_pago': ordenes_pago[:20],
+        'combos': combos,
+        'combos_preview': [
+            {
+                'id': combo.id,
+                'nombre': combo.nombre,
+                'porcentaje': float(combo.porcentaje_descuento or 0),
+                'estudios': list(combo.estudios.values_list('id', flat=True)),
+            }
+            for combo in combos
+        ],
     })
+
+
+@login_required
+@user_passes_test(es_caja)
+@require_POST
+def crear_orden_pago(request):
+    """Agrupa estudios pendientes de un mismo paciente y convenio COEX/IGSS."""
+    cita_ids = request.POST.getlist('cita_ids')
+    if not cita_ids:
+        messages.error(request, 'Seleccione al menos un estudio para crear la orden de pago.')
+        return redirect('pagos_pendientes')
+
+    form = CrearOrdenPagoForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, 'Revise el combo seleccionado y las notas de la orden.')
+        return redirect('pagos_pendientes')
+
+    with transaction.atomic():
+        citas = list(
+            Cita.objects.select_for_update().select_related('paciente', 'tipo_estudio')
+            .prefetch_related('estudios_extra')
+            .filter(
+                id__in=cita_ids,
+                convenio__in=(Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS),
+                orden_trabajo__isnull=False,
+            )
+        )
+        if len(citas) != len(set(cita_ids)):
+            messages.error(request, 'Uno o más estudios seleccionados no son válidos para una orden agrupada.')
+            return redirect('pagos_pendientes')
+        claves = {(c.paciente_id, c.convenio) for c in citas}
+        if len(claves) != 1:
+            messages.error(request, 'La orden debe contener estudios del mismo paciente y convenio.')
+            return redirect('pagos_pendientes')
+        if any(
+            not hasattr(c, 'cobro') or c.cobro.estado != Cobro.ESTADO_PENDIENTE
+            or OrdenPago.objects.filter(detalles__cita=c, estado=OrdenPago.ESTADO_PENDIENTE).exists()
+            for c in citas
+        ):
+            messages.error(request, 'Solo se pueden agrupar estudios con cobro pendiente y sin otra orden abierta.')
+            return redirect('pagos_pendientes')
+
+        combo = form.cleaned_data['combo']
+        detalles = []
+        subtotal = Decimal('0.00')
+        tipos = set()
+        for cita in citas:
+            precio = cita.precio_base
+            detalles.append((cita, cita.tipo_estudio, None, precio))
+            subtotal += precio
+            tipos.add(cita.tipo_estudio_id)
+            for extra in cita.estudios_extra.all():
+                precio_extra = extra.precio
+                detalles.append((cita, extra.tipo_estudio, extra, precio_extra))
+                subtotal += precio_extra
+                tipos.add(extra.tipo_estudio_id)
+
+        descuento = Decimal('0.00')
+        if combo:
+            combo_ids = set(combo.estudios.values_list('id', flat=True))
+            if not combo_ids.issubset(tipos):
+                messages.error(request, 'El combo elegido no coincide con todos los estudios seleccionados.')
+                return redirect('pagos_pendientes')
+            descuento = (subtotal * (combo.porcentaje_descuento or 0) / 100).quantize(Decimal('0.01'))
+        elif tipos:
+            combo = Combo.objects.filter(
+                activo=True, estudios__id__in=tipos,
+            ).prefetch_related('estudios').distinct().order_by('id').first()
+            if combo:
+                combo_ids = set(combo.estudios.values_list('id', flat=True))
+                if combo_ids.issubset(tipos):
+                    descuento = (
+                        subtotal * (combo.porcentaje_descuento or 0) / 100
+                    ).quantize(Decimal('0.01'))
+                else:
+                    combo = None
+
+        orden = OrdenPago.objects.create(
+            convenio=citas[0].convenio,
+            paciente=citas[0].paciente,
+            subtotal=subtotal,
+            descuento=descuento,
+            total=subtotal - descuento,
+            combo=combo,
+            notas=form.cleaned_data['notas'],
+            creado_por=request.user,
+        )
+        descuento_unitario = (descuento / len(detalles)).quantize(Decimal('0.01')) if detalles else 0
+        for cita, tipo, extra, precio in detalles:
+            DetalleOrdenPago.objects.create(
+                orden_pago=orden,
+                cita=cita,
+                tipo_estudio=tipo,
+                estudio_extra=extra,
+                precio=precio,
+                descuento=descuento_unitario,
+                total=precio - descuento_unitario,
+            )
+
+    messages.success(request, f'Orden de pago #{orden.id} creada y pendiente de boleta.')
+    return redirect('pagos_pendientes')
+
+
+@login_required
+@user_passes_test(es_caja)
+@require_POST
+def pagar_orden_pago(request, orden_id):
+    """Adjunta la boleta global y liquida todos los estudios de la orden."""
+    orden = get_object_or_404(
+        OrdenPago.objects.prefetch_related('detalles__cita'),
+        id=orden_id,
+        estado=OrdenPago.ESTADO_PENDIENTE,
+    )
+    form = RegistrarPagoEstudioForm(request.POST, request.FILES)
+    if not form.is_valid():
+        messages.error(request, 'Adjunte una boleta válida y complete los datos del pago.')
+        return redirect('pagos_pendientes')
+    if not form.cleaned_data['comprobante_bancario']:
+        messages.error(request, 'La orden agrupada requiere adjuntar la boleta global.')
+        return redirect('pagos_pendientes')
+
+    with transaction.atomic():
+        orden.numero_boleta = form.cleaned_data['numero_boleta']
+        orden.comprobante_bancario = form.cleaned_data['comprobante_bancario']
+        orden.estado = OrdenPago.ESTADO_PAGADA
+        orden.pagado_por = request.user
+        orden.pagado_en = timezone.now()
+        orden.save(update_fields=[
+            'numero_boleta', 'comprobante_bancario', 'estado', 'pagado_por', 'pagado_en',
+        ])
+        for detalle in orden.detalles.select_related('cita'):
+            cobro, _ = Cobro.objects.get_or_create(cita=detalle.cita)
+            cobro.forma_pago = form.cleaned_data['forma_pago']
+            cobro.numero_boleta = orden.numero_boleta
+            cobro.comprobante_bancario = orden.comprobante_bancario.name
+            cobro.marcar_pagado(request.user, notas=form.cleaned_data['notas'])
+
+    messages.success(request, f'Orden de pago #{orden.id} confirmada y estudios liberados.')
+    return redirect('pagos_pendientes')
 
 
 def datos_paciente_boleta(cita):
@@ -876,6 +1103,8 @@ def comprobante_bancario(request, cobro_id):
     )
     if not cobro.comprobante_bancario:
         raise Http404('Este pago no tiene una boleta bancaria cargada.')
+    if not cobro.comprobante_bancario.storage.exists(cobro.comprobante_bancario.name):
+        raise Http404('El archivo de la boleta bancaria ya no está disponible en el servidor.')
     return FileResponse(
         cobro.comprobante_bancario.open('rb'),
         as_attachment=False,
@@ -1995,13 +2224,38 @@ def adjuntar_imagenes_finalizar(request, orden_id):
 @login_required
 @user_passes_test(es_radiologo)
 def citas_procesadas(request):
+    busqueda = (request.GET.get('q') or '').strip()
+    convenio = (request.GET.get('convenio') or '').strip()
+    agrupacion = (request.GET.get('agrupacion') or '').strip()
     ordenes = (
         OrdenTrabajo.objects.filter(cita__estado=Cita.ESTADO_EN_PROCESO, imagenes__isnull=False)
         .select_related('cita', 'cita__paciente', 'cita__tipo_estudio')
+        .prefetch_related('cita__detalles_orden_pago__orden_pago__combo')
         .distinct()
         .order_by('creada_en')
     )
-    return render(request, 'pacientes/citas_procesadas.html', {'ordenes': ordenes})
+    if busqueda:
+        ordenes = ordenes.filter(
+            Q(cita__paciente__nombre__icontains=busqueda)
+            | Q(cita__paciente__apellido__icontains=busqueda)
+            | Q(cita__paciente__dpi__icontains=busqueda)
+            | Q(cita__paciente__telefono__icontains=busqueda)
+        )
+    if convenio in dict(Cita.CONVENIO_CHOICES):
+        ordenes = ordenes.filter(cita__convenio=convenio)
+    if agrupacion == 'agrupado':
+        ordenes = ordenes.filter(cita__detalles_orden_pago__isnull=False)
+    elif agrupacion == 'individual':
+        ordenes = ordenes.filter(cita__detalles_orden_pago__isnull=True)
+    for orden in ordenes:
+        orden.es_agrupada = bool(orden.cita.detalles_orden_pago.all())
+    return render(request, 'pacientes/citas_procesadas.html', {
+        'ordenes': ordenes,
+        'busqueda': busqueda,
+        'convenio': convenio,
+        'agrupacion': agrupacion,
+        'convenios': Cita.CONVENIO_CHOICES,
+    })
 
 
 @login_required
@@ -2013,7 +2267,11 @@ def adjuntar_informe(request, cita_id):
         messages.error(request, 'El técnico todavía no adjunta las imágenes de este estudio.')
         return redirect('citas_procesadas')
     volver_url = reverse('citas_procesadas')
-    puede_agregar_extra = cita.convenio == Cita.CONVENIO_PRIVADO
+    puede_agregar_extra = cita.convenio in (
+        Cita.CONVENIO_PRIVADO,
+        Cita.CONVENIO_COEX,
+        Cita.CONVENIO_EMERGENCIA_IGSS,
+    )
 
     if request.method == 'POST':
         form = AdjuntarInformeForm(request.POST, request.FILES)
@@ -2076,6 +2334,19 @@ def _registrar_estudio_extra(request, cita, form):
         agregado_por=request.user,
         notas=form.cleaned_data['notas'],
     )
+    cobro, _ = Cobro.objects.get_or_create(cita=cita)
+    if cobro.estado == Cobro.ESTADO_PAGADO:
+        cobro.estado = Cobro.ESTADO_PENDIENTE
+        cobro.pagado_en = None
+        cobro.cobrado_por = None
+        cobro.forma_pago = ''
+        cobro.numero_boleta = ''
+        cobro.comprobante_bancario = None
+        cobro.notas = 'Ajuste pendiente por estudio extra agregado.'
+        cobro.save(update_fields=[
+            'estado', 'pagado_en', 'cobrado_por', 'forma_pago', 'numero_boleta',
+            'comprobante_bancario', 'notas',
+        ])
     mensaje = (
         f'{request.user.get_full_name() or request.user.username} agregó el estudio extra '
         f'"{extra.tipo_estudio.nombre}" (Q{extra.precio:.2f}) para {cita.paciente.nombre} '
@@ -2106,11 +2377,16 @@ def _registrar_estudio_extra(request, cita, form):
 @require_POST
 def agregar_estudio_extra(request, cita_id):
     """El radiólogo avisa que le realizó al paciente un estudio extra al
-    agendado. Solo aplica a Privado: es el único convenio donde Caja le
-    cobra el estudio directamente al paciente. Sube el total de la cita
-    (ver Cita.precio) y le notifica a recepción."""
+    agendado. Caja lo cobra directamente o lo agrupa según el convenio."""
     cita = get_object_or_404(
-        Cita, id=cita_id, convenio=Cita.CONVENIO_PRIVADO, estado=Cita.ESTADO_EN_PROCESO,
+        Cita,
+        id=cita_id,
+        convenio__in=(
+            Cita.CONVENIO_PRIVADO,
+            Cita.CONVENIO_COEX,
+            Cita.CONVENIO_EMERGENCIA_IGSS,
+        ),
+        estado=Cita.ESTADO_EN_PROCESO,
     )
     volver_url = reverse('adjuntar_informe', args=[cita.id])
     form = AgregarEstudioExtraForm(request.POST)

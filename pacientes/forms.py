@@ -668,9 +668,21 @@ class SubirConstanciaFirmadaForm(forms.Form):
     )
 
 
+class CrearOrdenPagoForm(forms.Form):
+    combo = forms.ModelChoiceField(
+        queryset=Combo.objects.filter(activo=True).order_by('nombre'),
+        required=False,
+        label='Combo o tarifa preferencial',
+    )
+    notas = forms.CharField(
+        label='Notas', max_length=255, required=False,
+        widget=forms.Textarea(attrs={'rows': 2}),
+    )
+
+
 class AgregarEstudioExtraForm(forms.Form):
     """El radiólogo avisa que le realizó al paciente un estudio extra al
-    agendado (solo aplica a Privado). Sube el total que ve Caja."""
+    agendado. Caja lo cobra directamente o lo agrupa según el convenio."""
 
     tipo_estudio = forms.ModelChoiceField(
         queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),

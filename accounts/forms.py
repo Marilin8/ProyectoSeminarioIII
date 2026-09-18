@@ -32,27 +32,6 @@ def _validar_fecha_ingreso_no_futura(fecha):
     return fecha
 
 
-def _campo_fecha_ingreso(inicial=None):
-    """Desde cuándo trabaja el empleado en la clínica: se usa para saber a
-    partir de qué mes se le debe salario/comisiones (ver accounts.planilla
-    y la pestaña "Pendiente de pago"), en vez de asumir que empezó el día
-    que se le creó la cuenta en el sistema."""
-    return forms.DateField(
-        label='Fecha de ingreso a la clínica',
-        required=True,
-        initial=inicial,
-        widget=forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'),
-        input_formats=['%Y-%m-%d'],
-        help_text='Desde esta fecha se le empieza a contar salario y comisiones pendientes.',
-    )
-
-
-def _validar_fecha_ingreso_no_futura(fecha):
-    if fecha and fecha > timezone.localdate():
-        raise forms.ValidationError('La fecha de ingreso no puede ser futura.')
-    return fecha
-
-
 class LoginForm(AuthenticationForm):
     """Login con un mensaje claro cuando el usuario existe pero está inactivo
     (Django, para un usuario inactivo, muestra el error genérico de
