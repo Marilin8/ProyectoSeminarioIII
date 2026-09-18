@@ -4,7 +4,7 @@ from django import forms
 from django.utils import timezone
 
 from accounts.models import Usuario
-from clinica.validators import validar_dominio_correo
+from clinica.validators import validar_correo_existente, validar_dominio_correo
 
 from .models import Cita, Cobro, Combo, Paciente, TipoEstudio
 
@@ -183,7 +183,7 @@ class AgendarCitaForm(forms.Form):
         }),
     )
     sexo = forms.ChoiceField(
-        choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
+        choices=[('', '---------')] + list(Paciente.SEXO_CHOICES),
     )
     telefono = forms.CharField(max_length=20, required=False, validators=[validar_telefono_pais])
     correo = forms.EmailField(
@@ -269,6 +269,7 @@ class AgendarCitaForm(forms.Form):
     def clean_correo(self):
         correo = self.cleaned_data['correo'].strip().lower()
         validar_dominio_correo(correo)
+        validar_correo_existente(correo)
         return correo
 
     def clean_fecha_nacimiento(self):
@@ -320,7 +321,7 @@ class AgendarCitaPrivadoForm(forms.Form):
         }),
     )
     sexo = forms.ChoiceField(
-        choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
+        choices=[('', '---------')] + list(Paciente.SEXO_CHOICES),
     )
     telefono = forms.CharField(max_length=20, required=False, validators=[validar_telefono_pais])
     correo = forms.EmailField(
@@ -391,6 +392,7 @@ class AgendarCitaPrivadoForm(forms.Form):
     def clean_correo(self):
         correo = (self.cleaned_data['correo'] or '').strip().lower()
         validar_dominio_correo(correo)
+        validar_correo_existente(correo)
         return correo
 
     def clean_fecha_nacimiento(self):
@@ -434,7 +436,7 @@ class RegistrarTicketForm(forms.Form):
         }),
     )
     sexo = forms.ChoiceField(
-        choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
+        choices=[('', '---------')] + list(Paciente.SEXO_CHOICES),
     )
     telefono = forms.CharField(max_length=20, required=False, validators=[validar_telefono_pais])
     correo = forms.EmailField(
@@ -487,6 +489,7 @@ class RegistrarTicketForm(forms.Form):
     def clean_correo(self):
         correo = self.cleaned_data['correo'].strip().lower()
         validar_dominio_correo(correo)
+        validar_correo_existente(correo)
         return correo
 
     def clean_fecha_nacimiento(self):
@@ -504,12 +507,10 @@ class RegistrarTicketForm(forms.Form):
 
 class CompletarDatosPacienteForm(forms.Form):
     """Usado desde la notificación de datos pendientes: solo pide los
-    campos opcionales que se pueden completar después (sexo, teléfono y
-    fecha de nacimiento)."""
+    campos opcionales que se pueden completar después (teléfono y fecha de
+    nacimiento). El sexo ya no entra acá: es obligatorio desde el registro,
+    nunca queda pendiente."""
 
-    sexo = forms.ChoiceField(
-        choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
-    )
     telefono = forms.CharField(max_length=20, required=False, validators=[validar_telefono_pais])
     fecha_nacimiento = forms.DateField(
         required=False, widget=forms.DateInput(attrs={'type': 'date'}),
@@ -538,6 +539,7 @@ class IngresarCorreoEnvioForm(forms.Form):
     def clean_correo(self):
         correo = self.cleaned_data['correo'].strip().lower()
         validar_dominio_correo(correo)
+        validar_correo_existente(correo)
         return correo
 
 

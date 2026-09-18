@@ -7,6 +7,7 @@ urlpatterns = [
     path('estudios/nuevo/', views.crear_estudio, name='crear_estudio'),
     path('estudios/', views.lista_estudios, name='lista_estudios'),
     path('estudios/<int:estudio_id>/editar/', views.editar_estudio, name='editar_estudio'),
+    path('estudios/historial-precios/', views.historial_precios_estudio, name='historial_precios_estudio'),
     path('combos/nuevo/', views.crear_combo, name='crear_combo'),
     path('combos/', views.lista_combos, name='lista_combos'),
     path('combos/<int:combo_id>/editar/', views.editar_combo, name='editar_combo'),
@@ -207,6 +208,7 @@ urlpatterns = [
         views.marcar_notificaciones_leidas,
         name='marcar_notificaciones_leidas',
     ),
+    path('reportes/anual/', views.informe_anual, name='informe_anual'),
     path(
         'reportes/coex/',
         views.lista_reportes_diarios,

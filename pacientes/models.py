@@ -54,7 +54,7 @@ class Paciente(models.Model):
     )
     nombre = models.CharField(max_length=100)
     apellido = models.CharField(max_length=100)
-    sexo = models.CharField(max_length=1, choices=SEXO_CHOICES, blank=True)
+    sexo = models.CharField(max_length=1, choices=SEXO_CHOICES)
     telefono = models.CharField(max_length=20, blank=True)
     correo = models.EmailField(max_length=254, blank=True, null=True)
     fecha_nacimiento = models.DateField(null=True, blank=True)
@@ -62,9 +62,11 @@ class Paciente(models.Model):
     # Campos que se pueden dejar sin llenar al registrar al paciente (ej. en
     # una emergencia) y que luego se le avisan pendientes a recepción. Ver
     # accounts.management.commands.notificar_pacientes_pendientes.
-    CAMPOS_OPCIONALES = ('sexo', 'fecha_nacimiento', 'telefono')
+    # 'sexo' salió de esta lista: ahora es obligatorio siempre (a diferencia
+    # de teléfono/fecha de nacimiento, es un dato que se puede determinar
+    # incluso en una emergencia).
+    CAMPOS_OPCIONALES = ('fecha_nacimiento', 'telefono')
     ETIQUETAS_CAMPOS_OPCIONALES = {
-        'sexo': 'Sexo',
         'fecha_nacimiento': 'Fecha de nacimiento',
         'telefono': 'Teléfono',
     }
@@ -152,16 +154,48 @@ class TipoEstudio(models.Model):
     def __str__(self):
         return self.nombre
 
-    def precio_para(self, convenio, horario_habil=True):
+    def precio_para(self, convenio, horario_habil=True, fecha=None):
         """Precio de este estudio para un convenio y tipo de horario.
-        Si no hay tarifa inhábil cargada, cae a la hábil; si no hay ninguna,
-        devuelve 0."""
+
+        Si se pasa `fecha`, devuelve el precio que estaba vigente ESE día
+        según HistorialPrecioEstudio, no el precio actual -- así un reporte
+        o una boleta de una cita vieja no cambia si después se actualiza la
+        tarifa (ver historial_precio_vigente_en). Sin `fecha`, o si no hay
+        ningún cambio registrado antes de esa fecha (ej. citas de antes de
+        que existiera este historial), se usa el precio actual.
+
+        Si no hay tarifa inhábil cargada, cae a la hábil; si no hay
+        ninguna, devuelve 0."""
+        if fecha is not None:
+            precio_historico = self.historial_precio_vigente_en(convenio, horario_habil, fecha)
+            if precio_historico is None and not horario_habil:
+                precio_historico = self.historial_precio_vigente_en(convenio, True, fecha)
+            if precio_historico is not None:
+                return precio_historico
+
         precios = {(p.convenio, p.horario_habil): p.precio for p in self.precios.all()}
         return (
             precios.get((convenio, horario_habil))
             or precios.get((convenio, True))
             or Decimal('0.00')
         )
+
+    def historial_precio_vigente_en(self, convenio, horario_habil, fecha):
+        """Precio de (convenio, horario_habil) vigente en `fecha`, buscando
+        en HistorialPrecioEstudio el cambio más próximo que haya ocurrido
+        DESPUÉS de esa fecha: el valor que tenía justo antes de ese cambio
+        es el que estaba vigente en `fecha` (encadena hacia atrás si hubo
+        varios cambios). None si no hay ningún cambio posterior a `fecha`
+        -- en ese caso el precio vigente en `fecha` es el mismo que el
+        actual, porque nada cambió desde entonces."""
+        limite = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.max))
+        siguiente_cambio = (
+            self.historial_precios
+            .filter(convenio=convenio, horario_habil=horario_habil, creado_en__gt=limite)
+            .order_by('creado_en')
+            .first()
+        )
+        return siguiente_cambio.valor_anterior if siguiente_cambio else None
 
     @property
     def precio_referencia(self):
@@ -195,6 +229,44 @@ class PrecioEstudio(models.Model):
     def __str__(self):
         horario = 'hábil' if self.horario_habil else 'inhábil'
         return f'{self.tipo_estudio.nombre} · {self.get_convenio_display()} {horario}: Q{self.precio}'
+
+
+class HistorialPrecioEstudio(models.Model):
+    """Auditoría de los cambios de precio de un estudio (una celda de la
+    matriz convenio×horario): guarda el valor anterior y el nuevo, con la
+    fecha y el administrador que lo hizo. Mismo patrón que
+    accounts.models.HistorialComision, pero para precios de estudio.
+
+    Además de auditoría, esto es lo que permite que un reporte o una
+    boleta de una cita vieja siga mostrando el precio que estaba vigente
+    ese día, aunque después se haya actualizado la tarifa (ver
+    TipoEstudio.precio_para / historial_precio_vigente_en)."""
+
+    tipo_estudio = models.ForeignKey(
+        TipoEstudio, on_delete=models.CASCADE, related_name='historial_precios',
+    )
+    convenio = models.CharField(max_length=20, choices=CONVENIO_CHOICES)
+    horario_habil = models.BooleanField(default=True, choices=PrecioEstudio.HORARIO_CHOICES)
+    valor_anterior = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    valor_nuevo = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    modificado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='cambios_precio_estudio_realizados',
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'historial_precios_estudio'
+        verbose_name = 'cambio de precio de estudio'
+        verbose_name_plural = 'historial de precios de estudio'
+        ordering = ['-creado_en']
+
+    def __str__(self):
+        horario = 'hábil' if self.horario_habil else 'inhábil'
+        return (
+            f'{self.tipo_estudio} · {self.get_convenio_display()} {horario}: '
+            f'Q{self.valor_anterior} -> Q{self.valor_nuevo} ({self.modificado_por})'
+        )
 
 
 class Combo(models.Model):
@@ -375,8 +447,13 @@ class Cita(models.Model):
     @property
     def precio_base(self):
         """Precio del estudio agendado originalmente, sin contar los
-        estudios extra que el radiólogo haya agregado durante la atención."""
-        return self.tipo_estudio.precio_para(self.convenio, self.horario_habil)
+        estudios extra que el radiólogo haya agregado durante la atención.
+
+        Usa el precio vigente en la fecha de la cita (no el precio actual
+        del estudio): así un reporte o boleta de una cita vieja no cambia
+        si después se actualiza la tarifa. Ver
+        TipoEstudio.precio_para/HistorialPrecioEstudio."""
+        return self.tipo_estudio.precio_para(self.convenio, self.horario_habil, fecha=self.fecha)
 
     @property
     def precio(self):
@@ -412,7 +489,9 @@ class EstudioExtra(models.Model):
 
     @property
     def precio(self):
-        return self.tipo_estudio.precio_para(self.cita.convenio, self.cita.horario_habil)
+        return self.tipo_estudio.precio_para(
+            self.cita.convenio, self.cita.horario_habil, fecha=self.cita.fecha,
+        )
 
 
 class Cobro(models.Model):

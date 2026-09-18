@@ -232,6 +232,14 @@ DEFAULT_FROM_EMAIL = (
 # Por ahora local; en producción se pone el dominio real en el .env.
 VISOR_BASE_URL = config('VISOR_BASE_URL', default='http://localhost:8001').rstrip('/')
 
+# validar_correo_existente (clinica/validators.py) hace una consulta DNS real
+# por cada correo que se valida. En True siempre (dev/producción); se apaga
+# en settings_test.py para que las pruebas no dependan de salida a internet
+# ni tarden segundos por cada correo -- las pruebas que sí necesitan
+# ejercitar esta validación la vuelven a prender con
+# @override_settings(VERIFICAR_CORREO_EXISTENTE=True) y mockean dns.resolver.
+VERIFICAR_CORREO_EXISTENTE = config('VERIFICAR_CORREO_EXISTENTE', default=True, cast=bool)
+
 # El técnico sube la carpeta completa de un estudio DICOM (adjuntar_imagenes),
 # que puede traer varios cientos de archivos (una serie de TAC/resonancia).
 # El límite por defecto de Django (100) es insuficiente para eso.

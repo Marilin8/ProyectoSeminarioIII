@@ -58,7 +58,7 @@
             {{ form.apellido }}
             {{ form.apellido.errors }}
 
-            <label for="{{ form.sexo.id_for_label }}">Sexo (opcional)</label>
+            <label for="{{ form.sexo.id_for_label }}">Sexo</label>
             {{ form.sexo }}
             {{ form.sexo.errors }}
 
@@ -491,6 +491,17 @@
             function enviarFormulario() {
                 if (form.dataset.enviando) return;
                 form.dataset.enviando = '1';
+                // Un <select> "bloqueado" (autocompletado de un paciente ya
+                // registrado, ver bloquearCampo más abajo) usa disabled, no
+                // readOnly, porque <select readonly> no existe en HTML. Pero
+                // los campos disabled NO se mandan en el POST del navegador
+                // -- si no se reactivan antes de enviar, Sexo (obligatorio)
+                // llega vacío y Django lo rechaza aunque se vea seleccionado
+                // en pantalla. Reactivar acá no cambia el valor, solo hace
+                // que el navegador lo incluya al mandar el formulario.
+                form.querySelectorAll('select[disabled]').forEach(function (select) {
+                    select.disabled = false;
+                });
                 form.submit();
             }
 

@@ -5,10 +5,31 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm, UserCreationForm
 from django.utils import timezone
 
-from clinica.validators import validar_dominio_correo
+from clinica.validators import validar_correo_existente, validar_dominio_correo
 from pacientes.models import TipoEstudio
 
-from .models import Usuario
+from .models import RolAdicional, Usuario
+
+
+def _campo_fecha_ingreso(inicial=None):
+    """Desde cuándo trabaja el empleado en la clínica: se usa para saber a
+    partir de qué mes se le debe salario/comisiones (ver accounts.planilla
+    y la pestaña "Pendiente de pago"), en vez de asumir que empezó el día
+    que se le creó la cuenta en el sistema."""
+    return forms.DateField(
+        label='Fecha de ingreso a la clínica',
+        required=True,
+        initial=inicial,
+        widget=forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'),
+        input_formats=['%Y-%m-%d'],
+        help_text='Desde esta fecha se le empieza a contar salario y comisiones pendientes.',
+    )
+
+
+def _validar_fecha_ingreso_no_futura(fecha):
+    if fecha and fecha > timezone.localdate():
+        raise forms.ValidationError('La fecha de ingreso no puede ser futura.')
+    return fecha
 
 
 def _campo_fecha_ingreso(inicial=None):
@@ -41,6 +62,10 @@ class LoginForm(AuthenticationForm):
     error_messages = {
         **AuthenticationForm.error_messages,
         'inactive': 'Tu usuario está inactivo. Pedile al administrador que lo reactive.',
+        'correo_sin_confirmar': (
+            'Todavía no confirmaste tu correo. Revisá tu bandeja de entrada (y spam) '
+            'y entrá al link que te mandamos para poder ingresar.'
+        ),
     }
 
     def clean(self):
@@ -53,6 +78,14 @@ class LoginForm(AuthenticationForm):
             except Modelo.DoesNotExist:
                 usuario = None
             if usuario is not None and not usuario.is_active:
+                # Cuenta recién creada esperando que confirme su correo (ver
+                # accounts.views.crear_usuario) vs. suspendida a mano por un
+                # administrador (cambiar_estado_usuario): son dos motivos
+                # distintos de estar inactivo, con mensajes distintos.
+                if usuario.token_confirmacion_correo:
+                    raise forms.ValidationError(
+                        self.error_messages['correo_sin_confirmar'], code='correo_sin_confirmar',
+                    )
                 raise forms.ValidationError(self.error_messages['inactive'], code='inactive')
         return super().clean()
 
@@ -74,7 +107,7 @@ def _campo_email():
     return forms.EmailField(
         label='Correo',
         required=True,
-        validators=[validar_dominio_correo],
+        validators=[validar_dominio_correo, validar_correo_existente],
         error_messages={
             'required': 'El correo es obligatorio.',
             'invalid': 'Ingresá un correo electrónico válido (ejemplo: nombre@dominio.com).',
@@ -101,12 +134,45 @@ def _validar_porcentajes(form, cleaned):
     return cleaned
 
 
+def _campo_roles_adicionales():
+    """Además de su rol principal (que define comportamiento por defecto,
+    ej. en qué lista aparece primero), un usuario puede tener roles
+    adicionales -- ej. un técnico al que también se le habilita el rol de
+    radiólogo. Ver Usuario.tiene_rol / accounts.models.RolAdicional."""
+    return forms.MultipleChoiceField(
+        choices=Usuario.ROL_CHOICES,
+        required=False,
+        widget=forms.CheckboxSelectMultiple,
+        label='Roles adicionales',
+        help_text=(
+            'Además de su rol principal, este usuario también ve las pantallas y '
+            'tiene los permisos de los roles que marques acá.'
+        ),
+    )
+
+
+def _guardar_roles_adicionales(usuario, roles_seleccionados):
+    """Sincroniza RolAdicional con lo que se marcó en el form -- solo
+    agrega/quita lo que cambió, sin borrar y recrear todo."""
+    seleccionados = set(roles_seleccionados or ()) - {usuario.rol}
+    actuales = set(usuario.roles_adicionales.values_list('rol', flat=True))
+    a_quitar = actuales - seleccionados
+    a_agregar = seleccionados - actuales
+    if a_quitar:
+        RolAdicional.objects.filter(usuario=usuario, rol__in=a_quitar).delete()
+    if a_agregar:
+        RolAdicional.objects.bulk_create([
+            RolAdicional(usuario=usuario, rol=rol) for rol in a_agregar
+        ])
+
+
 class CrearUsuarioForm(UserCreationForm):
     email = _campo_email()
     puede_operar_caja = forms.BooleanField(
         label='Puede operar Caja', required=False,
         help_text='Permite gestionar pagos de estudios sin cambiar el rol principal.',
     )
+    roles_adicionales = _campo_roles_adicionales()
     fecha_ingreso = _campo_fecha_ingreso(inicial=timezone.localdate)
 
     class Meta(UserCreationForm.Meta):
@@ -131,8 +197,15 @@ class CrearUsuarioForm(UserCreationForm):
             usuario.date_joined = timezone.make_aware(
                 datetime.datetime.combine(fecha, datetime.time.min)
             )
+
+        def guardar_roles_adicionales():
+            _guardar_roles_adicionales(usuario, self.cleaned_data.get('roles_adicionales'))
+
         if commit:
             usuario.save()
+            guardar_roles_adicionales()
+        else:
+            self._guardar_roles_adicionales = guardar_roles_adicionales
         return usuario
 
 
@@ -214,6 +287,7 @@ class EditarUsuarioForm(forms.ModelForm):
         label='Estudios que este radiólogo puede realizar',
         help_text='Al agendar una cita, solo se podrá asignar el estudio a los radiólogos marcados aquí.',
     )
+    roles_adicionales = _campo_roles_adicionales()
     fecha_ingreso = _campo_fecha_ingreso()
 
     class Meta:
@@ -230,6 +304,9 @@ class EditarUsuarioForm(forms.ModelForm):
         if self.instance and self.instance.pk:
             self.fields['tipos_estudio'].initial = self.instance.tipos_estudio_asignados.all()
             self.fields['fecha_ingreso'].initial = self.instance.date_joined.date()
+            self.fields['roles_adicionales'].initial = list(
+                self.instance.roles_adicionales.values_list('rol', flat=True)
+            )
 
     def clean(self):
         cleaned = super().clean()
@@ -255,6 +332,7 @@ class EditarUsuarioForm(forms.ModelForm):
         if commit:
             usuario.save()
             guardar_estudios()
+            _guardar_roles_adicionales(usuario, self.cleaned_data.get('roles_adicionales'))
         else:
             self._guardar_estudios = guardar_estudios
         return usuario

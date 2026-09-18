@@ -19,3 +19,6 @@ staticfiles/
 
 # Config local del agente (Claude Code) - no es parte del proyecto
 .claude/
+
+# Generado por collectstatic (WhiteNoise) al exponerlo a internet
+staticfiles/

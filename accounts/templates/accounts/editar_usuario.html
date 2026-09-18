@@ -39,6 +39,11 @@
                 {{ form.rol }}
                 {{ form.rol.errors }}
 
+                <label style="margin-top:0.75rem;">{{ form.roles_adicionales.label }}</label>
+                {{ form.roles_adicionales }}
+                <p class="form-help">{{ form.roles_adicionales.help_text }}</p>
+                {{ form.roles_adicionales.errors }}
+
                 <label for="{{ form.fecha_ingreso.id_for_label }}">{{ form.fecha_ingreso.label }}</label>
                 {{ form.fecha_ingreso }}
                 <p class="form-help">{{ form.fecha_ingreso.help_text }}</p>

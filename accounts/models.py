@@ -1,9 +1,11 @@
 import calendar
 import datetime
+import uuid
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, Group, Permission
 from django.db import models
+from django.utils import timezone
 
 
 class Usuario(AbstractUser):
@@ -54,6 +56,35 @@ class Usuario(AbstractUser):
     # login más nuevo desde otro equipo.
     sesion_activa = models.CharField(max_length=40, blank=True, default='')
 
+    # Confirmación del correo al crear la cuenta (ver
+    # accounts.views.crear_usuario / confirmar_correo_usuario): el usuario
+    # queda con is_active=False hasta que entra al link que se le manda a
+    # su correo, para asegurarnos de que esa casilla es real y suya. Si el
+    # correo nunca le llega, un administrador puede activarlo a mano desde
+    # "Usuarios activos" (cambiar_estado_usuario) sin depender de esto.
+    token_confirmacion_correo = models.UUIDField(null=True, blank=True, unique=True, editable=False)
+    token_confirmacion_generado_en = models.DateTimeField(null=True, blank=True, editable=False)
+
+    VIGENCIA_TOKEN_CONFIRMACION = datetime.timedelta(days=2)
+
+    def generar_token_confirmacion_correo(self):
+        self.token_confirmacion_correo = uuid.uuid4()
+        self.token_confirmacion_generado_en = timezone.now()
+        self.save(update_fields=['token_confirmacion_correo', 'token_confirmacion_generado_en'])
+        return self.token_confirmacion_correo
+
+    def token_confirmacion_vencido(self):
+        if not self.token_confirmacion_generado_en:
+            return True
+        return timezone.now() - self.token_confirmacion_generado_en > self.VIGENCIA_TOKEN_CONFIRMACION
+
+    def confirmar_correo(self):
+        """Activa la cuenta y consume el token (de un solo uso)."""
+        self.is_active = True
+        self.token_confirmacion_correo = None
+        self.token_confirmacion_generado_en = None
+        self.save(update_fields=['is_active', 'token_confirmacion_correo', 'token_confirmacion_generado_en'])
+
     # Salario fijo mensual del empleado, antes de comisiones. Se usa en la
     # pantalla de Planilla (salario base + comisiones del período = total).
     salario_base = models.DecimalField(
@@ -94,6 +125,59 @@ class Usuario(AbstractUser):
         verbose_name = 'usuario'
         verbose_name_plural = 'usuarios'
 
+    def tiene_rol(self, rol):
+        """True si `rol` es el rol principal de este usuario o uno de sus
+        roles adicionales (ver RolAdicional) -- ej. un técnico al que
+        además se le habilitó el rol de radiólogo. Los `es_<rol>` de
+        accounts/pacientes.views usan esto en vez de comparar `self.rol`
+        directo, para que un usuario con roles adicionales vea también las
+        pantallas y tenga los permisos de esos roles (pantallas_de hace lo
+        mismo del lado de los tiles del panel).
+
+        No cambia nada de lo que depende del rol PRINCIPAL nada más (ej.
+        qué usuarios aparecen para asignar a TipoEstudio.radiologos): un
+        rol adicional no agrega a esas listas, hay que agregarlo a mano
+        ahí si corresponde."""
+        return self.rol == rol or self.roles_adicionales.filter(rol=rol).exists()
+
+
+class RolAdicional(models.Model):
+    """Rol extra que un usuario tiene ADEMÁS de su rol principal
+    (Usuario.rol) -- ej. un técnico al que también se le habilita el rol
+    de radiólogo. Ver Usuario.tiene_rol / accounts.pantallas.pantallas_de."""
+
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='roles_adicionales',
+    )
+    rol = models.CharField(max_length=25, choices=Usuario.ROL_CHOICES)
+
+    class Meta:
+        db_table = 'usuarios_roles_adicionales'
+        verbose_name = 'rol adicional'
+        verbose_name_plural = 'roles adicionales'
+        unique_together = ('usuario', 'rol')
+        ordering = ['usuario', 'rol']
+
+    def __str__(self):
+        return f'{self.usuario} · {self.get_rol_display()}'
+
+
+def _ip_real_del_visitante(request):
+    """IP del visitante para la bitácora.
+
+    Cuando el sitio se accede vía el Cloudflare Tunnel, la conexión le
+    llega a Django desde 'cloudflared' en esta misma máquina, así que
+    REMOTE_ADDR siempre da 127.0.0.1 — la bitácora no capturaba la IP
+    real de nadie que entrara por la web pública.
+
+    Cloudflare agrega el header CF-Connecting-IP con la IP real del
+    cliente en cada request que pasa por su borde (no se puede
+    falsificar: Cloudflare lo sobreescribe, ignora el que mande el
+    visitante). Si no viene (acceso directo por LAN sin pasar por el
+    túnel), se sigue usando REMOTE_ADDR como antes.
+    """
+    return request.META.get('HTTP_CF_CONNECTING_IP') or request.META.get('REMOTE_ADDR')
+
 
 def _ip_real_del_visitante(request):
     """IP del visitante para la bitácora.
@@ -116,11 +200,13 @@ class Bitacora(models.Model):
     ACCION_LOGIN_EXITOSO = 'login_exitoso'
     ACCION_LOGIN_FALLIDO = 'login_fallido'
     ACCION_CREAR_USUARIO = 'crear_usuario'
+    ACCION_CONFIRMAR_CORREO_USUARIO = 'confirmar_correo_usuario'
     ACCION_EDITAR_USUARIO = 'editar_usuario'
     ACCION_CAMBIAR_ESTADO_USUARIO = 'cambiar_estado_usuario'
     ACCION_EDITAR_COMISION = 'editar_comision'
     ACCION_CREAR_ESTUDIO = 'crear_estudio'
     ACCION_EDITAR_ESTUDIO = 'editar_estudio'
+    ACCION_EDITAR_PRECIO_ESTUDIO = 'editar_precio_estudio'
     ACCION_SOLICITAR_CITA = 'solicitar_cita'
     ACCION_CONFIRMAR_CITA = 'confirmar_cita'
     ACCION_RECHAZAR_CITA = 'rechazar_cita'
@@ -147,11 +233,13 @@ class Bitacora(models.Model):
         (ACCION_LOGIN_EXITOSO, 'Inicio de sesión'),
         (ACCION_LOGIN_FALLIDO, 'Intento de inicio de sesión fallido'),
         (ACCION_CREAR_USUARIO, 'Creación de usuario'),
+        (ACCION_CONFIRMAR_CORREO_USUARIO, 'Confirmación de correo de un usuario nuevo'),
         (ACCION_EDITAR_USUARIO, 'Edición de usuario'),
         (ACCION_CAMBIAR_ESTADO_USUARIO, 'Cambio de estado de usuario (suspensión/reactivación)'),
         (ACCION_EDITAR_COMISION, 'Cambio de comisión de un usuario'),
         (ACCION_CREAR_ESTUDIO, 'Creación de estudio'),
         (ACCION_EDITAR_ESTUDIO, 'Edición de estudio'),
+        (ACCION_EDITAR_PRECIO_ESTUDIO, 'Cambio de precio de un estudio'),
         (ACCION_SOLICITAR_CITA, 'Solicitud de cita'),
         (ACCION_CONFIRMAR_CITA, 'Confirmación de cita'),
         (ACCION_RECHAZAR_CITA, 'Rechazo de solicitud de cita'),

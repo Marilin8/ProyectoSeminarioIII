@@ -31,10 +31,6 @@
                 {% csrf_token %}
                 {{ form.non_field_errors }}
 
-                <label for="{{ form.sexo.id_for_label }}">Sexo</label>
-                {{ form.sexo }}
-                {{ form.sexo.errors }}
-
                 <label for="{{ form.telefono.id_for_label }}">Telefono</label>
                 {{ form.telefono }}
                 {{ form.telefono.errors }}

@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load roles %}
 
 {% block title %}Panel — Clínica de Imágenes{% endblock %}
 {% block page_title %}Bienvenido, {{ user.get_full_name|default:user.username }}{% endblock %}
@@ -66,14 +67,14 @@
         {% endif %}
     {% endfor %}
 
-    {% if user.rol == 'tecnico_imagenes' %}
+    {% if user|tiene_rol:'tecnico_imagenes' %}
         <a href="{% url 'ordenes_pendientes' %}" class="tile tile-accion">
             <svg><use href="#i-camera"/></svg>
             <span>Procesar orden / cargar captura</span>
         </a>
     {% endif %}
 
-    {% if user.rol == 'medico_radiologo' %}
+    {% if user|tiene_rol:'medico_radiologo' %}
         <a href="{% url 'citas_procesadas' %}" class="tile tile-accion">
             <svg><use href="#i-file-medical"/></svg>
             <span>Estudios</span>
