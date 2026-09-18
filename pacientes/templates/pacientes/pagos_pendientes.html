@@ -82,6 +82,14 @@
                         <div class="meta">
                             Creado {{ cobro.creado_en|date:'d/m/Y H:i' }} · Q{{ cobro.cita.precio|floatformat:2 }}
                         </div>
+                        {% if cobro.cita.estudios_extra.all %}
+                            <div class="meta" style="color:var(--primary-dark);">
+                                Incluye extra:
+                                {% for extra in cobro.cita.estudios_extra.all %}
+                                    {{ extra.tipo_estudio.nombre }} (Q{{ extra.precio|floatformat:2 }}){% if not forloop.last %}, {% endif %}
+                                {% endfor %}
+                            </div>
+                        {% endif %}
                         <div style="margin-top:0.4rem;">
                             {% if cobro.estado == 'pagado' %}
                                 <span class="badge badge-success">
@@ -98,19 +106,42 @@
                             <div class="meta">Ref.: {{ cobro.numero_boleta|default:'—' }}</div>
                             <a class="btn btn-outline btn-sm" href="{% url 'boleta_pago_pdf' cobro_id=cobro.id %}" target="_blank" rel="noopener">
                                 <svg width="14" height="14"><use href="#i-file-text"/></svg>
-                                Ver boleta PDF
+                                Ver recibo interno
                             </a>
+                            <a class="btn btn-outline btn-sm" href="{% url 'constancia_pago_pdf' cobro_id=cobro.id %}" target="_blank" rel="noopener">
+                                Generar constancia
+                            </a>
+                            {% if cobro.comprobante_bancario %}
+                                <a class="btn btn-outline btn-sm" href="{% url 'comprobante_bancario' cobro_id=cobro.id %}" target="_blank" rel="noopener">
+                                    Ver comprobante subido
+                                </a>
+                            {% endif %}
+                            {% if cobro.constancia_firmada %}
+                                <a class="btn btn-outline btn-sm" href="{% url 'constancia_firmada' cobro_id=cobro.id %}" target="_blank" rel="noopener">
+                                    Ver constancia firmada
+                                </a>
+                            {% endif %}
+                            <form method="post" action="{% url 'subir_constancia_firmada' cobro_id=cobro.id %}" enctype="multipart/form-data" style="margin-top:0.4rem;">
+                                {% csrf_token %}
+                                <input type="file" name="constancia_firmada" accept=".pdf,.jpg,.jpeg,.png" required>
+                                <button type="submit" class="btn btn-outline btn-sm">Subir constancia firmada</button>
+                            </form>
                         </div>
                     {% else %}
-                        <form method="post" action="{% url 'marcar_cobrado' cita_id=cobro.cita_id %}" class="form-cobrar">
+                        <form method="post" action="{% url 'marcar_cobrado' cita_id=cobro.cita_id %}" class="form-cobrar form-cobrar-efectivo" enctype="multipart/form-data" data-precio="{{ cobro.cita.precio }}">
                             {% csrf_token %}
-                            <select name="forma_pago" required>
+                            <select name="forma_pago" class="campo-forma-pago" required>
                                 <option value="">Forma de pago</option>
                                 <option value="efectivo">Efectivo</option>
                                 <option value="tarjeta">Tarjeta</option>
                                 <option value="transferencia">Transferencia</option>
                             </select>
-                            <input type="text" name="numero_boleta" placeholder="Boleta / referencia">
+                            <input type="text" name="numero_boleta" class="campo-no-efectivo" placeholder="Boleta / referencia">
+                            <input type="file" name="comprobante_bancario" class="campo-no-efectivo" accept=".pdf,.jpg,.jpeg,.png">
+                            <span class="campo-efectivo" style="display:none;">
+                                <input type="number" step="0.01" min="0" class="campo-monto-recibido" placeholder="Cantidad recibida (Q)">
+                                <span class="texto-vuelto"></span>
+                            </span>
                             <button type="submit" class="btn btn-primary btn-sm">
                                 <svg width="14" height="14"><use href="#i-check"/></svg>
                                 Marcar pagado
@@ -142,4 +173,54 @@
             </span>
         </div>
     {% endif %}
+
+    <script>
+        // Al marcar un pago en Efectivo no tiene sentido pedir "boleta /
+        // referencia" (eso es de tarjeta/transferencia) ni el comprobante
+        // bancario: en su lugar se pide cuánto entregó el paciente en
+        // efectivo, y se calcula solo el vuelto contra el precio del
+        // estudio — para que Caja no tenga que sacar la cuenta a mano.
+        document.querySelectorAll('.form-cobrar-efectivo').forEach(function (form) {
+            var precio = parseFloat(form.dataset.precio) || 0;
+            var selectFormaPago = form.querySelector('.campo-forma-pago');
+            var camposNoEfectivo = form.querySelectorAll('.campo-no-efectivo');
+            var campoEfectivo = form.querySelector('.campo-efectivo');
+            var inputMonto = form.querySelector('.campo-monto-recibido');
+            var textoVuelto = form.querySelector('.texto-vuelto');
+
+            function actualizarVuelto() {
+                var monto = parseFloat(inputMonto.value);
+                if (isNaN(monto)) {
+                    textoVuelto.textContent = '';
+                    return;
+                }
+                var diferencia = monto - precio;
+                if (diferencia < 0) {
+                    textoVuelto.style.color = 'var(--danger)';
+                    textoVuelto.textContent = 'Falta Q' + Math.abs(diferencia).toFixed(2);
+                } else {
+                    textoVuelto.style.color = 'var(--success)';
+                    textoVuelto.textContent = 'Vuelto: Q' + diferencia.toFixed(2);
+                }
+            }
+
+            function aplicarFormaPago() {
+                var esEfectivo = selectFormaPago.value === 'efectivo';
+                camposNoEfectivo.forEach(function (campo) {
+                    campo.style.display = esEfectivo ? 'none' : '';
+                    campo.disabled = esEfectivo;
+                });
+                campoEfectivo.style.display = esEfectivo ? '' : 'none';
+                inputMonto.disabled = !esEfectivo;
+                if (!esEfectivo) {
+                    inputMonto.value = '';
+                    textoVuelto.textContent = '';
+                }
+            }
+
+            selectFormaPago.addEventListener('change', aplicarFormaPago);
+            inputMonto.addEventListener('input', actualizarVuelto);
+            aplicarFormaPago();
+        });
+    </script>
 {% endblock %}

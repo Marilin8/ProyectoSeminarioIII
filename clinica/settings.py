@@ -30,7 +30,13 @@ SECRET_KEY = config(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = []
+# Prueba de "servidor central en LAN": las otras 9 máquinas de la clínica
+# entran por navegador a la IP de esta PC en la red local. La IP/hostname
+# se define en el .env (ALLOWED_HOSTS), separada por comas, para no tener
+# que tocar código cuando cambie de red.
+ALLOWED_HOSTS = [
+    h.strip() for h in config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',') if h.strip()
+]
 
 
 # Application definition
@@ -50,6 +56,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -57,6 +64,7 @@ MIDDLEWARE = [
     'django_otp.middleware.OTPMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'accounts.middleware.SesionUnicaMiddleware',
     'pacientes.middleware.AutoMarcarAusenteMiddleware',
 ]
 
@@ -141,6 +149,50 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
+# collectstatic junta todo acá; WhiteNoise lo sirve directo sin necesitar
+# Nginx — necesario porque con DEBUG=False Django deja de servir estáticos
+# solo (imprescindible para exponerlo a internet).
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+# El storage con manifest (hashea nombres, ej. theme.b70aef88.css) exige que
+# ya se haya corrido collectstatic -- si no, hasta el {% static %} de los
+# templates revienta con "Missing staticfiles manifest entry". En desarrollo
+# (DEBUG=True) nadie corre collectstatic antes de cada cambio de CSS, así
+# que ahí se usa el storage simple de siempre; el de WhiteNoise con manifest
+# solo entra cuando esto se expone (DEBUG=False).
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {
+        'BACKEND': (
+            'whitenoise.storage.CompressedManifestStaticFilesStorage'
+            if not DEBUG
+            else 'django.contrib.staticfiles.storage.StaticFilesStorage'
+        ),
+    },
+}
+
+# --- Exposición a internet vía túnel (Cloudflare Tunnel) ---
+# El túnel llega a Django como HTTP local (localhost:8005), pero en el
+# navegador es HTTPS — sin esto Django cree que la conexión no es segura
+# y redirige/rompe cookies en loop. Cloudflare manda X-Forwarded-Proto.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# Dominio(s) públicos que van a apuntar acá (además del ALLOWED_HOSTS de LAN).
+# Ej: CSRF_TRUSTED_ORIGINS=https://clinica.tudominio.com
+CSRF_TRUSTED_ORIGINS = [
+    o.strip() for o in config('CSRF_TRUSTED_ORIGINS', default='').split(',') if o.strip()
+]
+
+# Cookies solo por HTTPS una vez que esto ya no es puro localhost/LAN.
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
+# Por defecto Django deja la cookie de sesion viva 2 semanas aunque se
+# cierre el navegador -- por eso alguien podia cerrar Chrome, abrirlo de
+# nuevo y seguir adentro con el usuario anterior sin volver a loguearse.
+# Con esto la sesion muere en cuanto se cierra el navegador de verdad
+# (algunos navegadores con "restaurar sesion" activado pueden no borrarla,
+# eso ya es comportamiento del navegador, no de Django).
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'

@@ -50,6 +50,22 @@ class AccountsConfig(AppConfig):
         from .models import Bitacora, Usuario
 
         def _registrar_login_exitoso(sender, request, user, **kwargs):
+            # request.session.session_key puede venir en None acá: si en esa
+            # misma sesión ya había otro usuario logueado, login() la vació
+            # (flush()) un momento antes y todavía no se generó una key
+            # nueva (eso pasa recién al guardar la sesión). Forzamos que
+            # exista antes de guardarla, si no sesion_activa quedaría NULL
+            # y el UPDATE revienta (la columna no admite NULL).
+            if not request.session.session_key:
+                request.session.save()
+
+            # Sesión única: este login pasa a ser la sesión "válida" del
+            # usuario. SesionUnicaMiddleware va a cerrar cualquier otra
+            # sesión abierta en otro equipo en cuanto esa haga su próxima
+            # petición.
+            user.sesion_activa = request.session.session_key
+            user.save(update_fields=['sesion_activa'])
+
             Bitacora.registrar(
                 request=request,
                 usuario=user,
@@ -69,5 +85,15 @@ class AccountsConfig(AppConfig):
                 descripcion=f'Intento de inicio de sesión fallido para "{username}".',
             )
 
-        user_logged_in.connect(_registrar_login_exitoso, dispatch_uid='bitacora_login_exitoso')
-        user_login_failed.connect(_registrar_login_fallido, dispatch_uid='bitacora_login_fallido')
+        # weak=False: por default Django conecta con una referencia debil, y
+        # como estas funciones son locales a ready() (no quedan con un
+        # nombre a nivel de modulo), nada mas las referencia una vez que
+        # ready() termina -- Python las recicla (garbage collection) y la
+        # señal queda conectada a una función que ya no existe, sin avisar
+        # el error. Por eso el login dejó de aparecer en la bitácora.
+        user_logged_in.connect(
+            _registrar_login_exitoso, dispatch_uid='bitacora_login_exitoso', weak=False,
+        )
+        user_login_failed.connect(
+            _registrar_login_fallido, dispatch_uid='bitacora_login_fallido', weak=False,
+        )

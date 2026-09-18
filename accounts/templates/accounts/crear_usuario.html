@@ -42,6 +42,11 @@
                 {{ form.rol }}
                 {{ form.rol.errors }}
 
+                <label for="{{ form.fecha_ingreso.id_for_label }}">{{ form.fecha_ingreso.label }}</label>
+                {{ form.fecha_ingreso }}
+                <p class="form-help">{{ form.fecha_ingreso.help_text }}</p>
+                {{ form.fecha_ingreso.errors }}
+
                 <label for="{{ form.puede_operar_caja.id_for_label }}" style="display:flex;align-items:center;gap:0.5rem;margin-top:0.75rem;">
                     {{ form.puede_operar_caja }}
                     <span>{{ form.puede_operar_caja.label }}</span>
@@ -120,6 +125,7 @@
                 ['id_last_name', 'Apellidos'],
                 ['id_email', 'Correo'],
                 ['id_rol', 'Rol'],
+                ['id_fecha_ingreso', 'Fecha de ingreso'],
                 ['id_porcentaje_coex', '% comisión COEX'],
                 ['id_porcentaje_privado', '% comisión Privado'],
                 ['id_porcentaje_emergencia_igss', '% comisión Emergencia IGSS'],

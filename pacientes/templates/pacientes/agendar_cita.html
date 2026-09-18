@@ -46,6 +46,9 @@
                 Paciente ya registrado — se cargaron sus datos. Podés corregir el teléfono y el correo si cambiaron.
                 <a href="#" id="btn-buscar-otro">No es este paciente</a>
             </div>
+            <div class="aviso-paciente" id="aviso-paciente-no-encontrado" style="background:var(--info-light);color:#1e3a8a;border:1px solid #bfdbfe;">
+                No hay ningún paciente registrado con ese DPI — completá los datos para registrarlo.
+            </div>
 
             <label for="{{ form.nombre.id_for_label }}">Nombre</label>
             {{ form.nombre }}
@@ -145,7 +148,9 @@
         </div>
     </div>
 
+    {% include 'includes/telefono_pais.html' %}
     <script>
+    activarSelectorTelefono('telefono');
     (function() {
         var STORAGE_KEY = 'agendar_cita_draft';
         var form = document.getElementById('form-agendar-cita');
@@ -193,6 +198,7 @@
         (function () {
             var dpiInput = document.getElementById('id_dpi');
             var aviso = document.getElementById('aviso-paciente-existente');
+            var avisoNoEncontrado = document.getElementById('aviso-paciente-no-encontrado');
             var ayudaIncompleto = document.getElementById('ayuda-dpi-incompleto');
             var camposAutocompletables = [
                 'nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento', 'carnet_igss',
@@ -243,8 +249,22 @@
                     .then(function (datos) {
                         if (!datos.encontrado) {
                             aviso.style.display = 'none';
+                            avisoNoEncontrado.style.display = 'block';
+                            // Si venían datos bloqueados de un DPI anterior (ya
+                            // registrado) y ahora se cambió a uno que no existe,
+                            // hay que liberar los campos — si no, quedaban con
+                            // los datos del paciente anterior y sin poder
+                            // editarlos.
+                            camposAutocompletables.forEach(function (nombreCampo) {
+                                var elemento = document.getElementById('id_' + nombreCampo);
+                                if (elemento) {
+                                    elemento.value = '';
+                                    bloquearCampo(elemento, false);
+                                }
+                            });
                             return;
                         }
+                        avisoNoEncontrado.style.display = 'none';
                         camposAutocompletables.forEach(function (nombreCampo) {
                             var elemento = document.getElementById('id_' + nombreCampo);
                             if (elemento) {
@@ -255,6 +275,9 @@
                                 // vacíos).
                                 var editable = CAMPOS_CONTACTO_EDITABLES.indexOf(nombreCampo) !== -1;
                                 bloquearCampo(elemento, !editable && !!datos[nombreCampo]);
+                                if (nombreCampo === 'telefono') {
+                                    resincronizarTelefonoPais('telefono');
+                                }
                             }
                         });
                         aviso.style.display = 'block';
@@ -264,6 +287,7 @@
                         // interrumpe el formulario: el recepcionista puede seguir
                         // escribiendo los datos a mano.
                         aviso.style.display = 'none';
+                        avisoNoEncontrado.style.display = 'none';
                     });
             }
 
@@ -275,6 +299,7 @@
                 actualizarAyudaIncompleto(dpi);
                 if (dpi.length !== 13) {
                     aviso.style.display = 'none';
+                    avisoNoEncontrado.style.display = 'none';
                     ultimoDpiBuscado = '';
                     return;
                 }

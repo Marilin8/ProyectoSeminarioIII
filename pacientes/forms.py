@@ -12,6 +12,45 @@ CONVENIOS_QUE_REQUIEREN_CARNET_IGSS = (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGEN
 
 NOMBRE_REGEX = re.compile(r'^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]+$')
 
+# Código de país -> cantidad de dígitos esperada. Debe reflejar la misma
+# lista que pacientes/templates/includes/telefono_pais.html (PAISES_TELEFONO
+# en JS) — ahí se arma el selector y se limitan los dígitos mientras se
+# escribe; esto es el respaldo del lado del servidor por si alguien manda
+# el formulario sin pasar por ese JS.
+DIGITOS_POR_CODIGO_PAIS = {
+    '502': 8, '501': 7, '503': 8, '504': 8, '505': 8, '506': 8, '507': 8,
+    '52': 10, '1': 10, '57': 10, '58': 10, '593': 9, '51': 9, '591': 8,
+    '56': 9, '54': 10, '34': 9,
+}
+
+TELEFONO_REGEX = re.compile(r'^\+(\d{1,3})\s(\d+)$')
+
+
+def validar_telefono_pais(valor):
+    """Valida un teléfono armado con el selector de país (ver
+    includes/telefono_pais.html): "+<código> <dígitos>", con la cantidad de
+    dígitos exacta que le corresponde a ese código (ej. "+502 12345678").
+    Vacío es válido — el campo siempre es opcional.
+
+    Si el valor NO trae ese formato (ej. un teléfono viejo guardado antes de
+    que existiera el selector de país, con solo dígitos sueltos), se deja
+    pasar tal cual: esto es un respaldo para cuando sí se manda con el
+    prefijo, no una migración retroactiva de los datos existentes."""
+    valor = (valor or '').strip()
+    if not valor:
+        return
+    coincide = TELEFONO_REGEX.match(valor)
+    if not coincide:
+        return
+    codigo, digitos = coincide.groups()
+    esperado = DIGITOS_POR_CODIGO_PAIS.get(codigo)
+    if esperado is None:
+        raise forms.ValidationError('País no reconocido para el teléfono.')
+    if len(digitos) != esperado:
+        raise forms.ValidationError(
+            f'El teléfono debe tener {esperado} dígitos para el código +{codigo}.'
+        )
+
 
 class TipoEstudioSelect(forms.Select):
     """Select de tipo de estudio que agrega precio (hábil e inhábil),
@@ -146,7 +185,7 @@ class AgendarCitaForm(forms.Form):
     sexo = forms.ChoiceField(
         choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
     )
-    telefono = forms.CharField(max_length=20, required=False)
+    telefono = forms.CharField(max_length=20, required=False, validators=[validar_telefono_pais])
     correo = forms.EmailField(
         label='Correo electrónico',
         max_length=254,
@@ -283,7 +322,7 @@ class AgendarCitaPrivadoForm(forms.Form):
     sexo = forms.ChoiceField(
         choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
     )
-    telefono = forms.CharField(max_length=20, required=False)
+    telefono = forms.CharField(max_length=20, required=False, validators=[validar_telefono_pais])
     correo = forms.EmailField(
         label='Correo electrónico (opcional)',
         max_length=254,
@@ -397,7 +436,7 @@ class RegistrarTicketForm(forms.Form):
     sexo = forms.ChoiceField(
         choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
     )
-    telefono = forms.CharField(max_length=20, required=False)
+    telefono = forms.CharField(max_length=20, required=False, validators=[validar_telefono_pais])
     correo = forms.EmailField(
         label='Correo electrónico',
         max_length=254,
@@ -471,7 +510,7 @@ class CompletarDatosPacienteForm(forms.Form):
     sexo = forms.ChoiceField(
         choices=[('', '---------')] + list(Paciente.SEXO_CHOICES), required=False,
     )
-    telefono = forms.CharField(max_length=20, required=False)
+    telefono = forms.CharField(max_length=20, required=False, validators=[validar_telefono_pais])
     fecha_nacimiento = forms.DateField(
         required=False, widget=forms.DateInput(attrs={'type': 'date'}),
     )
@@ -598,9 +637,46 @@ class RegistrarPagoEstudioForm(forms.Form):
 
     forma_pago = forms.ChoiceField(label='Forma de pago', choices=Cobro.FORMA_PAGO_CHOICES)
     numero_boleta = forms.CharField(label='Número de boleta / referencia', max_length=60, required=False)
+    comprobante_bancario = forms.FileField(
+        label='Boleta o comprobante bancario',
+        required=False,
+        help_text='Suba la boleta del banco, transferencia o comprobante del pago.',
+    )
     notas = forms.CharField(
         label='Notas', max_length=255, required=False,
         widget=forms.Textarea(attrs={'rows': 2}),
+    )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        forma_pago = cleaned_data.get('forma_pago')
+        comprobante = cleaned_data.get('comprobante_bancario')
+        if forma_pago == Cobro.FORMA_TRANSFERENCIA and not comprobante:
+            self.add_error(
+                'comprobante_bancario',
+                'Debe adjuntar la boleta o comprobante de la transferencia.',
+            )
+        return cleaned_data
+
+
+class SubirConstanciaFirmadaForm(forms.Form):
+    constancia_firmada = forms.FileField(
+        label='Constancia firmada',
+        help_text='Suba la constancia interna firmada por los responsables.',
+    )
+
+
+class AgregarEstudioExtraForm(forms.Form):
+    """El radiólogo avisa que le realizó al paciente un estudio extra al
+    agendado (solo aplica a Privado). Sube el total que ve Caja."""
+
+    tipo_estudio = forms.ModelChoiceField(
+        queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
+        label='Estudio extra realizado',
+    )
+    notas = forms.CharField(
+        label='Notas (opcional)', max_length=255, required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'Ej.: se agregó contraste adicional'}),
     )
 
 

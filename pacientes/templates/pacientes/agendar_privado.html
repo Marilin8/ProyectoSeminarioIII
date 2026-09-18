@@ -43,6 +43,9 @@
                 Paciente ya registrado — se completaron sus datos.
                 <a href="#" id="btn-buscar-otro">No es este paciente</a>
             </div>
+            <div class="aviso-paciente" id="aviso-paciente-no-encontrado" style="background:var(--info-light);color:#1e3a8a;border:1px solid #bfdbfe;">
+                No hay ningún paciente registrado con ese DPI — completá los datos para registrarlo.
+            </div>
 
             <label for="{{ form.nombre.id_for_label }}">Nombre</label>
             {{ form.nombre }}
@@ -104,11 +107,14 @@
         </form>
     </div>
 
+    {% include 'includes/telefono_pais.html' %}
     <script>
+        activarSelectorTelefono('telefono');
         // Autocompletar datos del paciente por DPI.
         (function () {
             var dpi = document.getElementById('id_dpi');
             var aviso = document.getElementById('aviso-paciente-existente');
+            var avisoNoEncontrado = document.getElementById('aviso-paciente-no-encontrado');
             var campos = ['nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento'];
             var CONTACTO_EDITABLE = ['telefono', 'correo'];
             var timer = null;
@@ -127,7 +133,20 @@
                 fetch('{% url "buscar_paciente_por_dpi" %}?dpi=' + encodeURIComponent(valor))
                     .then(function (r) { return r.json(); })
                     .then(function (d) {
-                        if (!d.encontrado) { aviso.style.display = 'none'; return; }
+                        if (!d.encontrado) {
+                            aviso.style.display = 'none';
+                            avisoNoEncontrado.style.display = 'block';
+                            // Libera los campos si venían bloqueados de un DPI
+                            // anterior que sí estaba registrado.
+                            campos.forEach(function (c) {
+                                var el = document.getElementById('id_' + c);
+                                if (!el) return;
+                                el.value = '';
+                                bloquear(el, false);
+                            });
+                            return;
+                        }
+                        avisoNoEncontrado.style.display = 'none';
                         campos.forEach(function (c) {
                             var el = document.getElementById('id_' + c);
                             if (!el) return;
@@ -137,6 +156,9 @@
                             // cambian acá (solo se completan los vacíos).
                             var editable = CONTACTO_EDITABLE.indexOf(c) !== -1;
                             bloquear(el, !editable && !!d[c]);
+                            if (c === 'telefono') {
+                                resincronizarTelefonoPais('telefono');
+                            }
                         });
                         aviso.style.display = 'block';
                     });
@@ -144,7 +166,12 @@
 
             dpi.addEventListener('input', function () {
                 clearTimeout(timer);
-                if (dpi.value.trim().length !== 13) { aviso.style.display = 'none'; ultimo = ''; return; }
+                if (dpi.value.trim().length !== 13) {
+                    aviso.style.display = 'none';
+                    avisoNoEncontrado.style.display = 'none';
+                    ultimo = '';
+                    return;
+                }
                 timer = setTimeout(buscar, 300);
             });
             dpi.addEventListener('blur', buscar);

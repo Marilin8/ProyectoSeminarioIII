@@ -14,5 +14,8 @@ reports/
 .pytest_cache/
 flake8-report.txt
 
+# Generado por collectstatic (WhiteNoise) al exponerlo a internet
+staticfiles/
+
 # Config local del agente (Claude Code) - no es parte del proyecto
 .claude/
