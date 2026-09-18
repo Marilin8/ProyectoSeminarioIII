@@ -113,13 +113,27 @@ def _validar_porcentajes(form, cleaned):
     return cleaned
 
 
+ROLES_NO_ASIGNABLES_COMO_ADICIONALES = (
+    Usuario.ROL_ADMINISTRADOR,
+    Usuario.ROL_ADMINISTRADOR_FINANCIERO,
+    Usuario.ROL_MEDICO_RADIOLOGO,
+    Usuario.ROL_MEDICO_REMITENTE,
+)
+
+
 def _campo_roles_adicionales():
     """Además de su rol principal (que define comportamiento por defecto,
     ej. en qué lista aparece primero), un usuario puede tener roles
     adicionales -- ej. un técnico al que también se le habilita el rol de
-    radiólogo. Ver Usuario.tiene_rol / accounts.models.RolAdicional."""
+    recepcionista. Administrador, administrador financiero, médico
+    radiólogo y médico remitente no se ofrecen como roles adicionales, solo
+    como rol principal. Ver Usuario.tiene_rol / accounts.models.RolAdicional."""
+    choices = [
+        choice for choice in Usuario.ROL_CHOICES
+        if choice[0] not in ROLES_NO_ASIGNABLES_COMO_ADICIONALES
+    ]
     return forms.MultipleChoiceField(
-        choices=Usuario.ROL_CHOICES,
+        choices=choices,
         required=False,
         widget=forms.CheckboxSelectMultiple,
         label='Roles adicionales',
