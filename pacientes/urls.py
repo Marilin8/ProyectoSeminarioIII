@@ -53,6 +53,8 @@ urlpatterns = [
         name='marcar_cobrado',
     ),
     path('pagos/', views.pagos_pendientes, name='pagos_pendientes'),
+    path('pagos/ordenes/nueva/', views.crear_orden_pago, name='crear_orden_pago'),
+    path('pagos/ordenes/<int:orden_id>/pagar/', views.pagar_orden_pago, name='pagar_orden_pago'),
     path('pagos/<int:cobro_id>/boleta/', views.boleta_pago_pdf, name='boleta_pago_pdf'),
     path('pagos/<int:cobro_id>/constancia/', views.constancia_pago_pdf, name='constancia_pago_pdf'),
     path('pagos/<int:cobro_id>/comprobante-bancario/', views.comprobante_bancario, name='comprobante_bancario'),

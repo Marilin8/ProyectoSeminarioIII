@@ -20,6 +20,7 @@ from pacientes.models import (
     HistorialPrecioEstudio,
     ImagenEstudio,
     Notificacion,
+    OrdenPago,
     OrdenTrabajo,
     Paciente,
     PrecioEstudio,
@@ -2281,7 +2282,7 @@ class EstudioExtraTests(TestCase):
         self.assertIn('250.00', notificacion.mensaje)
         self.assertEqual(notificacion.cita, self.cita)
 
-    def test_agregar_estudio_extra_solo_aplica_a_privado(self):
+    def test_agregar_estudio_extra_tambien_aplica_a_coex(self):
         cita_coex = crear_cita(
             self.recepcion, tipo_estudio=self.estudio_agendado, convenio=Cita.CONVENIO_COEX,
             estado=Cita.ESTADO_EN_PROCESO, paciente=crear_paciente(dpi='5554443332221'),
@@ -2294,8 +2295,12 @@ class EstudioExtraTests(TestCase):
             {'tipo_estudio': self.estudio_extra.id, 'notas': ''},
         )
 
-        self.assertEqual(respuesta.status_code, 404)
-        self.assertFalse(EstudioExtra.objects.filter(cita=cita_coex).exists())
+        self.assertRedirects(
+            respuesta,
+            reverse('adjuntar_informe', args=[cita_coex.id]),
+            fetch_redirect_response=False,
+        )
+        self.assertTrue(EstudioExtra.objects.filter(cita=cita_coex).exists())
 
     def test_agregar_estudio_extra_requiere_rol_radiologo(self):
         self.client.force_login(self.recepcion)
@@ -2310,7 +2315,7 @@ class EstudioExtraTests(TestCase):
 
     def test_boleta_pago_pdf_incluye_el_total_con_estudios_extra(self):
         self._agregar()
-        cobro = Cobro.objects.create(cita=self.cita)
+        cobro, _ = Cobro.objects.get_or_create(cita=self.cita)
         cobro.marcar_pagado(self.recepcion)
         self.client.force_login(self.recepcion)
 
@@ -2362,3 +2367,89 @@ class EstudioExtraTests(TestCase):
 
         self.assertRedirects(respuesta, reverse('citas_procesadas'))
         self.assertFalse(EstudioExtra.objects.filter(cita=self.cita).exists())
+
+
+class OrdenPagoTests(TestCase):
+    def setUp(self):
+        self.caja = crear_usuario('caja_orden', rol=Usuario.ROL_RECEPCIONISTA, puede_operar_caja=True)
+        self.paciente = crear_paciente(dpi='7776665554443')
+        self.estudio_a = TipoEstudio.objects.create(nombre='COEX Tórax frontal')
+        self.estudio_b = TipoEstudio.objects.create(nombre='COEX Tórax lateral')
+        for estudio, precio in ((self.estudio_a, 100), (self.estudio_b, 80)):
+            PrecioEstudio.objects.create(
+                tipo_estudio=estudio, convenio=Cita.CONVENIO_COEX,
+                horario_habil=True, precio=Decimal(precio),
+            )
+        self.cita_a = crear_cita(
+            self.caja, paciente=self.paciente, tipo_estudio=self.estudio_a,
+            convenio=Cita.CONVENIO_COEX, estado=Cita.ESTADO_EN_PROCESO,
+            hora=datetime.time(9, 0),
+        )
+        self.cita_b = crear_cita(
+            self.caja, paciente=self.paciente, tipo_estudio=self.estudio_b,
+            convenio=Cita.CONVENIO_COEX, estado=Cita.ESTADO_EN_PROCESO,
+            hora=datetime.time(9, 30),
+        )
+        for cita in (self.cita_a, self.cita_b):
+            OrdenTrabajo.objects.create(cita=cita, motivo='demo HU-058', creada_por=self.caja)
+            Cobro.objects.create(cita=cita)
+        self.client.force_login(self.caja)
+
+    def test_crea_orden_agrupada_para_mismo_paciente_y_convenio(self):
+        respuesta = self.client.post(reverse('crear_orden_pago'), {
+            'cita_ids': [self.cita_a.id, self.cita_b.id],
+            'notas': 'Orden global COEX',
+        })
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
+        orden = OrdenPago.objects.get()
+        self.assertEqual(orden.convenio, Cita.CONVENIO_COEX)
+        self.assertEqual(orden.paciente, self.paciente)
+        self.assertEqual(orden.subtotal, Decimal('180.00'))
+        self.assertEqual(orden.total, Decimal('180.00'))
+        self.assertEqual(orden.detalles.count(), 2)
+
+    def test_pagar_orden_agrupada_liquida_todos_los_cobros(self):
+        self.client.post(reverse('crear_orden_pago'), {
+            'cita_ids': [self.cita_a.id, self.cita_b.id],
+        })
+        orden = OrdenPago.objects.get()
+        boleta = SimpleUploadedFile('boleta-global.pdf', b'pdf demo', content_type='application/pdf')
+        respuesta = self.client.post(
+            reverse('pagar_orden_pago', args=[orden.id]),
+            {
+                'forma_pago': Cobro.FORMA_TRANSFERENCIA,
+                'numero_boleta': 'COEX-GLOBAL-001',
+                'comprobante_bancario': boleta,
+                'notas': 'Pago global',
+            },
+        )
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
+        orden.refresh_from_db()
+        self.assertEqual(orden.estado, OrdenPago.ESTADO_PAGADA)
+        self.assertTrue(orden.comprobante_bancario)
+        self.assertTrue(Cobro.objects.get(cita=self.cita_a).pagado)
+        self.assertTrue(Cobro.objects.get(cita=self.cita_b).pagado)
+
+    def test_no_permite_mezclar_pacientes_en_orden_agrupada(self):
+        otro = crear_cita(
+            self.caja, paciente=crear_paciente(dpi='7776665554444'),
+            tipo_estudio=self.estudio_a, convenio=Cita.CONVENIO_COEX,
+            estado=Cita.ESTADO_EN_PROCESO, hora=datetime.time(10, 0),
+        )
+        OrdenTrabajo.objects.create(cita=otro, motivo='demo HU-058', creada_por=self.caja)
+        Cobro.objects.create(cita=otro)
+
+        respuesta = self.client.post(reverse('crear_orden_pago'), {
+            'cita_ids': [self.cita_a.id, otro.id],
+        })
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
+        self.assertFalse(OrdenPago.objects.exists())
+
+    def test_orden_pendiente_mantiene_bloqueado_el_envio(self):
+        self.client.post(reverse('crear_orden_pago'), {'cita_ids': [self.cita_a.id]})
+        from pacientes.views import _cobro_bloquea_envio
+
+        self.assertTrue(_cobro_bloquea_envio(self.cita_a))
