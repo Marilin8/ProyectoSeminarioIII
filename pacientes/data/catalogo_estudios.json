@@ -1,0 +1,1574 @@
+[
+  {
+    "nombre": "DENSITOMETRIA DE CADERA",
+    "modalidad": "mamo_densit",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 450.0,
+      "privado_inhabil": 450.0,
+      "coex_habil": 400.0,
+      "emergencia_igss_habil": 450.0,
+      "emergencia_igss_inhabil": 450.0
+    }
+  },
+  {
+    "nombre": "DENSITOMETRIA DE COLUMNA",
+    "modalidad": "mamo_densit",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 450.0,
+      "privado_inhabil": 450.0,
+      "coex_habil": 400.0,
+      "emergencia_igss_habil": 450.0,
+      "emergencia_igss_inhabil": 450.0
+    }
+  },
+  {
+    "nombre": "MAMOGRAFIA DIGITAL",
+    "modalidad": "mamo_densit",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 450.0,
+      "privado_inhabil": 450.0,
+      "coex_habil": 400.0,
+      "emergencia_igss_habil": 450.0,
+      "emergencia_igss_inhabil": 450.0
+    }
+  },
+  {
+    "nombre": "ABDOMEN AP",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 350.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 350.0
+    }
+  },
+  {
+    "nombre": "ABDOMEN SIMPLE BIPEDESTACION Y DECUBITO",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 380.0,
+      "privado_inhabil": 650.0,
+      "coex_habil": 340.0,
+      "emergencia_igss_habil": 380.0,
+      "emergencia_igss_inhabil": 650.0
+    }
+  },
+  {
+    "nombre": "ANTEBRAZO",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 350.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 350.0
+    }
+  },
+  {
+    "nombre": "ARCOS CIGOMATICOS",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 420.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 420.0
+    }
+  },
+  {
+    "nombre": "ARTICULACION SACRO ILIACA",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 280.0,
+      "privado_inhabil": 450.0,
+      "coex_habil": 240.0,
+      "emergencia_igss_habil": 280.0,
+      "emergencia_igss_inhabil": 450.0
+    }
+  },
+  {
+    "nombre": "ARTICULACION TEMPOROMANDIBULAR CADA LADO",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 350.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 350.0
+    }
+  },
+  {
+    "nombre": "CADERA",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 300.0,
+      "privado_inhabil": 390.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 300.0,
+      "emergencia_igss_inhabil": 390.0
+    }
+  },
+  {
+    "nombre": "CALCANEO",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 420.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 420.0
+    }
+  },
+  {
+    "nombre": "CALCANEOS O BILATERAL CALCANEOS",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 460.0,
+      "privado_inhabil": 840.0,
+      "coex_habil": 425.0,
+      "emergencia_igss_habil": 460.0,
+      "emergencia_igss_inhabil": 840.0
+    }
+  },
+  {
+    "nombre": "CLAVICULA",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 350.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 350.0
+    }
+  },
+  {
+    "nombre": "CODO",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "COLUMNA CERVICAL",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "COLUMNA CERVICAL AP / OBLICUAS / FLEXION Y EXTENSION",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 430.0,
+      "privado_inhabil": 600.0,
+      "coex_habil": 370.0,
+      "emergencia_igss_habil": 430.0,
+      "emergencia_igss_inhabil": 600.0
+    }
+  },
+  {
+    "nombre": "COLUMNA CERVICAL AP Y OBLICUAS",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 330.0,
+      "privado_inhabil": 500.0,
+      "coex_habil": 280.0,
+      "emergencia_igss_habil": 330.0,
+      "emergencia_igss_inhabil": 500.0
+    }
+  },
+  {
+    "nombre": "COLUMNA DORSAL",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "COLUMNA DORSOLUMBAR NIÑOS",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 330.0,
+      "privado_inhabil": 550.0,
+      "coex_habil": 280.0,
+      "emergencia_igss_habil": 330.0,
+      "emergencia_igss_inhabil": 550.0
+    }
+  },
+  {
+    "nombre": "COLUMNA LUMBAR",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "COLUMNA LUMBOSACRA AP LATERAL Y OBLICUAS",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 480.0,
+      "privado_inhabil": 650.0,
+      "coex_habil": 400.0,
+      "emergencia_igss_habil": 480.0,
+      "emergencia_igss_inhabil": 650.0
+    }
+  },
+  {
+    "nombre": "COLUMNA LUMBOSACRA AP Y LATERAL",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 280.0,
+      "privado_inhabil": 450.0,
+      "coex_habil": 240.0,
+      "emergencia_igss_habil": 280.0,
+      "emergencia_igss_inhabil": 450.0
+    }
+  },
+  {
+    "nombre": "COLUMNA LUMBOSACRA DINAMICA",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 280.0,
+      "privado_inhabil": 500.0,
+      "coex_habil": 240.0,
+      "emergencia_igss_habil": 280.0,
+      "emergencia_igss_inhabil": 500.0
+    }
+  },
+  {
+    "nombre": "COLUMNA SACROCOXIS AP Y LATERAL O COCCIX",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 420.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 420.0
+    }
+  },
+  {
+    "nombre": "CRANEO AP Y LATERAL",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 450.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 450.0
+    }
+  },
+  {
+    "nombre": "CUELLO AP Y LATERAL",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 280.0,
+      "privado_inhabil": 450.0,
+      "coex_habil": 240.0,
+      "emergencia_igss_habil": 280.0,
+      "emergencia_igss_inhabil": 450.0
+    }
+  },
+  {
+    "nombre": "DINAMICAS O FLEXION Y EXTENSION CERVICAL",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 420.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 420.0
+    }
+  },
+  {
+    "nombre": "DINAMICAS O FLEXION Y EXTENSION LUMBAR",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 420.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 420.0
+    }
+  },
+  {
+    "nombre": "ESCANOGRAMA",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 700.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "ESCAPULA",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 420.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 420.0
+    }
+  },
+  {
+    "nombre": "ESTERNON",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 420.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 420.0
+    }
+  },
+  {
+    "nombre": "HOMBRO",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "HUESOS NARIZ",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 500.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 500.0
+    }
+  },
+  {
+    "nombre": "HUMERO",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 500.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 500.0
+    }
+  },
+  {
+    "nombre": "MANO AP Y LATERAL",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 350.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 350.0
+    }
+  },
+  {
+    "nombre": "MASTOIDES",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 420.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 420.0
+    }
+  },
+  {
+    "nombre": "MAXILAR INFERIOR",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "MAXILAR SUPERIOR",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "MUÑECA",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "NASOFARINGE (CAVUM FARINGEO)",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 420.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 420.0
+    }
+  },
+  {
+    "nombre": "OBLICUA DE COLUMNA CERVICAL",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 280.0,
+      "privado_inhabil": 440.0,
+      "coex_habil": 240.0,
+      "emergencia_igss_habil": 280.0,
+      "emergencia_igss_inhabil": 440.0
+    }
+  },
+  {
+    "nombre": "OBLICUAS DE COLUMNA DORSAL",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 280.0,
+      "privado_inhabil": 440.0,
+      "coex_habil": 240.0,
+      "emergencia_igss_habil": 280.0,
+      "emergencia_igss_inhabil": 440.0
+    }
+  },
+  {
+    "nombre": "OBLICUAS DE COLUMNA LUMBAR",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 280.0,
+      "privado_inhabil": 440.0,
+      "coex_habil": 240.0,
+      "emergencia_igss_habil": 280.0,
+      "emergencia_igss_inhabil": 440.0
+    }
+  },
+  {
+    "nombre": "OIDOS",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "OJO CUERPO EXTRAÑO",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 420.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 420.0
+    }
+  },
+  {
+    "nombre": "OMOPLATO / ESCAPULA",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 420.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 420.0
+    }
+  },
+  {
+    "nombre": "ORBITAS",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "PARRILLA COSTAL Y TORAX PA",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 280.0,
+      "privado_inhabil": 440.0,
+      "coex_habil": 240.0,
+      "emergencia_igss_habil": 280.0,
+      "emergencia_igss_inhabil": 440.0
+    }
+  },
+  {
+    "nombre": "PELVIMETRIA",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 330.0,
+      "privado_inhabil": 580.0,
+      "coex_habil": 280.0,
+      "emergencia_igss_habil": 330.0,
+      "emergencia_igss_inhabil": 580.0
+    }
+  },
+  {
+    "nombre": "PELVIS AP",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 280.0,
+      "privado_inhabil": 420.0,
+      "coex_habil": 240.0,
+      "emergencia_igss_habil": 280.0,
+      "emergencia_igss_inhabil": 420.0
+    }
+  },
+  {
+    "nombre": "PELVIS AP Y POSICION DE RANA",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 500.0,
+      "privado_inhabil": 580.0,
+      "coex_habil": 425.0,
+      "emergencia_igss_habil": 500.0,
+      "emergencia_igss_inhabil": 580.0
+    }
+  },
+  {
+    "nombre": "PIE",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 350.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 350.0
+    }
+  },
+  {
+    "nombre": "PIE AP LATERAL Y OBLICUO",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 280.0,
+      "privado_inhabil": 450.0,
+      "coex_habil": 240.0,
+      "emergencia_igss_habil": 280.0,
+      "emergencia_igss_inhabil": 450.0
+    }
+  },
+  {
+    "nombre": "PIERNA",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 420.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 420.0
+    }
+  },
+  {
+    "nombre": "RODILLA 30-60-90 (ROTULA)",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 350.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 350.0
+    }
+  },
+  {
+    "nombre": "RODILLA AP Y LATERAL",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 350.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 350.0
+    }
+  },
+  {
+    "nombre": "RX FEMUR",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 230.0,
+      "privado_inhabil": 420.0,
+      "coex_habil": 200.0,
+      "emergencia_igss_habil": 230.0,
+      "emergencia_igss_inhabil": 420.0
+    }
+  },
+  {
+    "nombre": "SENOS PARANASALES",
+    "modalidad": "rx",
+    "duracion_minutos": 20,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "SILLA TURCA",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "TOBILLO",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "TORAX AP PA Y LATERAL",
+    "modalidad": "rx",
+    "duracion_minutos": 10,
+    "precios": {
+      "privado_habil": 280.0,
+      "privado_inhabil": 430.0,
+      "coex_habil": 240.0,
+      "emergencia_igss_habil": 280.0,
+      "emergencia_igss_inhabil": 430.0
+    }
+  },
+  {
+    "nombre": "CISTOGRAMA MICCIONAL (MUJER U HOMBRE)",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 900.0,
+      "privado_inhabil": 900.0,
+      "coex_habil": 425.0,
+      "emergencia_igss_habil": 900.0,
+      "emergencia_igss_inhabil": 900.0
+    }
+  },
+  {
+    "nombre": "COLANGIOGRAMA POR TUBO DE KERR",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 600.0,
+      "privado_inhabil": 600.0,
+      "coex_habil": 425.0,
+      "emergencia_igss_habil": 600.0,
+      "emergencia_igss_inhabil": 600.0
+    }
+  },
+  {
+    "nombre": "COLOSTOGRAMA",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 800.0,
+      "privado_inhabil": 800.0,
+      "coex_habil": 800.0,
+      "emergencia_igss_habil": 800.0,
+      "emergencia_igss_inhabil": 800.0
+    }
+  },
+  {
+    "nombre": "ENEMA DE BARIO",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 900.0,
+      "privado_inhabil": 900.0,
+      "coex_habil": 750.0,
+      "emergencia_igss_habil": 900.0,
+      "emergencia_igss_inhabil": 900.0
+    }
+  },
+  {
+    "nombre": "ESOFAGOGRAMA",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 650.0,
+      "privado_inhabil": 850.0,
+      "coex_habil": 370.0,
+      "emergencia_igss_habil": 650.0,
+      "emergencia_igss_inhabil": 850.0
+    }
+  },
+  {
+    "nombre": "FISTULOGRAMA",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 530.0,
+      "privado_inhabil": 530.0,
+      "coex_habil": 425.0,
+      "emergencia_igss_habil": 530.0,
+      "emergencia_igss_inhabil": 530.0
+    }
+  },
+  {
+    "nombre": "HISTEROSALPINGOGRAMA (HSG)",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 850.0,
+      "privado_inhabil": 850.0,
+      "coex_habil": 750.0,
+      "emergencia_igss_habil": 850.0,
+      "emergencia_igss_inhabil": 850.0
+    }
+  },
+  {
+    "nombre": "ILEOSTOGRAMA",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 800.0,
+      "privado_inhabil": 800.0,
+      "coex_habil": 800.0,
+      "emergencia_igss_habil": 800.0,
+      "emergencia_igss_inhabil": 800.0
+    }
+  },
+  {
+    "nombre": "PIELOGRAMA",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 800.0,
+      "privado_inhabil": 800.0,
+      "coex_habil": 535.0,
+      "emergencia_igss_habil": 800.0,
+      "emergencia_igss_inhabil": 800.0
+    }
+  },
+  {
+    "nombre": "SERIE ESOFAGOGASTRODUODENAL",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 700.0,
+      "privado_inhabil": 1200.0,
+      "coex_habil": 600.0,
+      "emergencia_igss_habil": 700.0,
+      "emergencia_igss_inhabil": 1200.0
+    }
+  },
+  {
+    "nombre": "SERIE GASTRODUODENAL (SGD)",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 800.0,
+      "privado_inhabil": 1100.0,
+      "coex_habil": 400.0,
+      "emergencia_igss_habil": 800.0,
+      "emergencia_igss_inhabil": 1100.0
+    }
+  },
+  {
+    "nombre": "SERIE GASTROINTESTINAL (SGI)",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 800.0,
+      "privado_inhabil": 1100.0,
+      "coex_habil": 400.0,
+      "emergencia_igss_habil": 800.0,
+      "emergencia_igss_inhabil": 1100.0
+    }
+  },
+  {
+    "nombre": "URETROGRAMA RETROGRADO",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 880.0,
+      "privado_inhabil": 880.0,
+      "coex_habil": 750.0,
+      "emergencia_igss_habil": 880.0,
+      "emergencia_igss_inhabil": 880.0
+    }
+  },
+  {
+    "nombre": "URETROGRAMA Y CISTOGRAMA MICCIONAL",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 880.0,
+      "privado_inhabil": 880.0,
+      "coex_habil": 850.0,
+      "emergencia_igss_habil": 880.0,
+      "emergencia_igss_inhabil": 880.0
+    }
+  },
+  {
+    "nombre": "URETROGRAMA Y CISTOMICC MASCULINO",
+    "modalidad": "rx_contraste",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 880.0,
+      "privado_inhabil": 880.0,
+      "coex_habil": 800.0,
+      "emergencia_igss_habil": 880.0,
+      "emergencia_igss_inhabil": 880.0
+    }
+  },
+  {
+    "nombre": "ABDOMEN COMPLETO",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 2600.0,
+      "privado_inhabil": 3400.0,
+      "coex_habil": 2400.0,
+      "emergencia_igss_habil": 2600.0,
+      "emergencia_igss_inhabil": 3400.0
+    }
+  },
+  {
+    "nombre": "ABDOMEN INFERIOR",
+    "modalidad": "tac",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "ABDOMEN INFERIOR / CONTRASTADA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 1600.0,
+      "privado_inhabil": 2100.0,
+      "coex_habil": 1600.0,
+      "emergencia_igss_habil": 1600.0,
+      "emergencia_igss_inhabil": 2100.0
+    }
+  },
+  {
+    "nombre": "ABDOMEN SUPERIOR",
+    "modalidad": "tac",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "ABDOMEN SUPERIOR / CONTRASTADA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 1600.0,
+      "privado_inhabil": 2100.0,
+      "coex_habil": 1600.0,
+      "emergencia_igss_habil": 1600.0,
+      "emergencia_igss_inhabil": 2100.0
+    }
+  },
+  {
+    "nombre": "ANGIOTAC ABDOMEN",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 2800.0,
+      "privado_inhabil": 3700.0,
+      "coex_habil": 2500.0,
+      "emergencia_igss_habil": 2800.0,
+      "emergencia_igss_inhabil": 3700.0
+    }
+  },
+  {
+    "nombre": "ANGIOTAC CEREBRAL",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 1800.0,
+      "privado_inhabil": 2400.0,
+      "coex_habil": 1500.0,
+      "emergencia_igss_habil": 1800.0,
+      "emergencia_igss_inhabil": 2400.0
+    }
+  },
+  {
+    "nombre": "ANGIOTAC CUELLO",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 1500.0,
+      "privado_inhabil": 2000.0,
+      "coex_habil": 1300.0,
+      "emergencia_igss_habil": 1500.0,
+      "emergencia_igss_inhabil": 2000.0
+    }
+  },
+  {
+    "nombre": "ANGIOTAC MIEMBRO INFERIOR",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 2400.0,
+      "privado_inhabil": 3200.0,
+      "coex_habil": 2200.0,
+      "emergencia_igss_habil": 2400.0,
+      "emergencia_igss_inhabil": 3200.0
+    }
+  },
+  {
+    "nombre": "ANGIOTAC MIEMBRO SUPERIOR",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 2400.0,
+      "privado_inhabil": 3200.0,
+      "coex_habil": 2200.0,
+      "emergencia_igss_habil": 2400.0,
+      "emergencia_igss_inhabil": 3200.0
+    }
+  },
+  {
+    "nombre": "ANGIOTAC TORAX",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 2800.0,
+      "privado_inhabil": 3700.0,
+      "coex_habil": 2500.0,
+      "emergencia_igss_habil": 2800.0,
+      "emergencia_igss_inhabil": 3700.0
+    }
+  },
+  {
+    "nombre": "ANGIOTAC TRONCOS SUPRA AORTICOS",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 1800.0,
+      "privado_inhabil": 2400.0,
+      "coex_habil": 1300.0,
+      "emergencia_igss_habil": 1800.0,
+      "emergencia_igss_inhabil": 2400.0
+    }
+  },
+  {
+    "nombre": "ARTICULACIONES TEMPOROMANDIBULAR",
+    "modalidad": "tac",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "ARTICULACIONES TEMPOROMANDIBULAR / CONTRASTADA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 1800.0,
+      "privado_inhabil": 2400.0,
+      "coex_habil": 1400.0,
+      "emergencia_igss_habil": 1800.0,
+      "emergencia_igss_inhabil": 2400.0
+    }
+  },
+  {
+    "nombre": "CEREBRAL",
+    "modalidad": "tac",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "CEREBRAL / CONTRASTADA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 1800.0,
+      "privado_inhabil": 2400.0,
+      "coex_habil": 1400.0,
+      "emergencia_igss_habil": 1800.0,
+      "emergencia_igss_inhabil": 2400.0
+    }
+  },
+  {
+    "nombre": "COLUMNA LUMBOSACRA",
+    "modalidad": "tac",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "CRANEO",
+    "modalidad": "tac",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "CUELLO",
+    "modalidad": "tac",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "CUELLO / CONTRASTADA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 1800.0,
+      "privado_inhabil": 2400.0,
+      "coex_habil": 1400.0,
+      "emergencia_igss_habil": 1800.0,
+      "emergencia_igss_inhabil": 2400.0
+    }
+  },
+  {
+    "nombre": "MANO",
+    "modalidad": "tac",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "MAXILAR INFERIOR / CONTRASTADA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 1800.0,
+      "privado_inhabil": 2400.0,
+      "coex_habil": 1400.0,
+      "emergencia_igss_habil": 1800.0,
+      "emergencia_igss_inhabil": 2400.0
+    }
+  },
+  {
+    "nombre": "MAXILAR SUPERIOR / CONTRASTADA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 1800.0,
+      "privado_inhabil": 2400.0,
+      "coex_habil": 1400.0,
+      "emergencia_igss_habil": 1800.0,
+      "emergencia_igss_inhabil": 2400.0
+    }
+  },
+  {
+    "nombre": "OIDOS / CONTRASTADA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 1800.0,
+      "privado_inhabil": 2400.0,
+      "coex_habil": 1400.0,
+      "emergencia_igss_habil": 1800.0,
+      "emergencia_igss_inhabil": 2400.0
+    }
+  },
+  {
+    "nombre": "ORBITAS / CONTRASTADA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 1800.0,
+      "privado_inhabil": 2400.0,
+      "coex_habil": 1400.0,
+      "emergencia_igss_habil": 1800.0,
+      "emergencia_igss_inhabil": 2400.0
+    }
+  },
+  {
+    "nombre": "PELVIS",
+    "modalidad": "tac",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "PIELOTOMOGRAFIA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 2800.0,
+      "privado_inhabil": 2800.0,
+      "coex_habil": 2400.0,
+      "emergencia_igss_habil": 2800.0,
+      "emergencia_igss_inhabil": 2800.0
+    }
+  },
+  {
+    "nombre": "RODILLA",
+    "modalidad": "tac",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 350.0,
+      "privado_inhabil": 455.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 350.0,
+      "emergencia_igss_inhabil": 455.0
+    }
+  },
+  {
+    "nombre": "SILLA TURCA / CONTRASTADA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 1800.0,
+      "privado_inhabil": 2400.0,
+      "coex_habil": 1400.0,
+      "emergencia_igss_habil": 1800.0,
+      "emergencia_igss_inhabil": 2400.0
+    }
+  },
+  {
+    "nombre": "TORAX",
+    "modalidad": "tac",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 1400.0,
+      "privado_inhabil": 1800.0,
+      "coex_habil": 1200.0,
+      "emergencia_igss_habil": 1400.0,
+      "emergencia_igss_inhabil": 1800.0
+    }
+  },
+  {
+    "nombre": "TORAX / CONTRASTADA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 1800.0,
+      "privado_inhabil": 2400.0,
+      "coex_habil": 1600.0,
+      "emergencia_igss_habil": 1800.0,
+      "emergencia_igss_inhabil": 2400.0
+    }
+  },
+  {
+    "nombre": "TRIFASICA HEPATICA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 2800.0,
+      "privado_inhabil": 3700.0,
+      "coex_habil": 2500.0,
+      "emergencia_igss_habil": 2800.0,
+      "emergencia_igss_inhabil": 3700.0
+    }
+  },
+  {
+    "nombre": "TRIFASICA PANCREATICA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 2800.0,
+      "privado_inhabil": 3700.0,
+      "coex_habil": 2500.0,
+      "emergencia_igss_habil": 2800.0,
+      "emergencia_igss_inhabil": 3700.0
+    }
+  },
+  {
+    "nombre": "UROTOMOGRAFIA",
+    "modalidad": "tac",
+    "duracion_minutos": 75,
+    "precios": {
+      "privado_habil": 2600.0,
+      "privado_inhabil": 3400.0,
+      "coex_habil": 2400.0,
+      "emergencia_igss_habil": 2600.0,
+      "emergencia_igss_inhabil": 3400.0
+    }
+  },
+  {
+    "nombre": "ABDOMINAL COMPLETO",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 700.0,
+      "privado_inhabil": 910.0,
+      "coex_habil": 600.0,
+      "emergencia_igss_habil": 700.0,
+      "emergencia_igss_inhabil": 910.0
+    }
+  },
+  {
+    "nombre": "ABDOMINAL INFERIOR",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 300.0,
+      "privado_inhabil": 390.0,
+      "coex_habil": 250.0,
+      "emergencia_igss_habil": 300.0,
+      "emergencia_igss_inhabil": 390.0
+    }
+  },
+  {
+    "nombre": "ABDOMINAL SUPERIOR",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 400.0,
+      "privado_inhabil": 520.0,
+      "coex_habil": 350.0,
+      "emergencia_igss_habil": 400.0,
+      "emergencia_igss_inhabil": 520.0
+    }
+  },
+  {
+    "nombre": "DOPPLER ARTERIAL MIEMBRO INFERIOR",
+    "modalidad": "usg",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 750.0,
+      "privado_inhabil": 975.0,
+      "coex_habil": 600.0,
+      "emergencia_igss_habil": 750.0,
+      "emergencia_igss_inhabil": 975.0
+    }
+  },
+  {
+    "nombre": "DOPPLER ARTERIAL MIEMBRO SUPERIOR",
+    "modalidad": "usg",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 750.0,
+      "privado_inhabil": 975.0,
+      "coex_habil": 600.0,
+      "emergencia_igss_habil": 750.0,
+      "emergencia_igss_inhabil": 975.0
+    }
+  },
+  {
+    "nombre": "DOPPLER CAROTIDEO",
+    "modalidad": "usg",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 700.0,
+      "privado_inhabil": 910.0,
+      "coex_habil": 600.0,
+      "emergencia_igss_habil": 700.0,
+      "emergencia_igss_inhabil": 910.0
+    }
+  },
+  {
+    "nombre": "DOPPLER VENOSO MIEMBRO INFERIOR",
+    "modalidad": "usg",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 750.0,
+      "privado_inhabil": 975.0,
+      "coex_habil": 600.0,
+      "emergencia_igss_habil": 750.0,
+      "emergencia_igss_inhabil": 975.0
+    }
+  },
+  {
+    "nombre": "DOPPLER VENOSO MIEMBRO SUPERIOR",
+    "modalidad": "usg",
+    "duracion_minutos": 45,
+    "precios": {
+      "privado_habil": 750.0,
+      "privado_inhabil": 975.0,
+      "coex_habil": 600.0,
+      "emergencia_igss_habil": 750.0,
+      "emergencia_igss_inhabil": 975.0
+    }
+  },
+  {
+    "nombre": "ENDOVAGINAL",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 350.0,
+      "privado_inhabil": 455.0,
+      "coex_habil": 300.0,
+      "emergencia_igss_habil": 350.0,
+      "emergencia_igss_inhabil": 455.0
+    }
+  },
+  {
+    "nombre": "HEPATICO Y VIAS BILIARES",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 300.0,
+      "privado_inhabil": 390.0,
+      "coex_habil": 250.0,
+      "emergencia_igss_habil": 300.0,
+      "emergencia_igss_inhabil": 390.0
+    }
+  },
+  {
+    "nombre": "MAMARIO",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 300.0,
+      "privado_inhabil": 390.0,
+      "coex_habil": 250.0,
+      "emergencia_igss_habil": 300.0,
+      "emergencia_igss_inhabil": 390.0
+    }
+  },
+  {
+    "nombre": "OBSTETRICO",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 300.0,
+      "privado_inhabil": 390.0,
+      "coex_habil": 250.0,
+      "emergencia_igss_habil": 300.0,
+      "emergencia_igss_inhabil": 390.0
+    }
+  },
+  {
+    "nombre": "PELVICO",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 300.0,
+      "privado_inhabil": 390.0,
+      "coex_habil": 250.0,
+      "emergencia_igss_habil": 300.0,
+      "emergencia_igss_inhabil": 390.0
+    }
+  },
+  {
+    "nombre": "PROSTATICO",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 300.0,
+      "privado_inhabil": 390.0,
+      "coex_habil": 250.0,
+      "emergencia_igss_habil": 300.0,
+      "emergencia_igss_inhabil": 390.0
+    }
+  },
+  {
+    "nombre": "RENAL",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 300.0,
+      "privado_inhabil": 390.0,
+      "coex_habil": 250.0,
+      "emergencia_igss_habil": 300.0,
+      "emergencia_igss_inhabil": 390.0
+    }
+  },
+  {
+    "nombre": "RENAL Y VESICAL",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 300.0,
+      "privado_inhabil": 390.0,
+      "coex_habil": 250.0,
+      "emergencia_igss_habil": 300.0,
+      "emergencia_igss_inhabil": 390.0
+    }
+  },
+  {
+    "nombre": "TEJIDOS BLANDOS",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 300.0,
+      "privado_inhabil": 390.0,
+      "coex_habil": 250.0,
+      "emergencia_igss_habil": 300.0,
+      "emergencia_igss_inhabil": 390.0
+    }
+  },
+  {
+    "nombre": "TENDON DE AQUILES",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 300.0,
+      "privado_inhabil": 390.0,
+      "coex_habil": 250.0,
+      "emergencia_igss_habil": 300.0,
+      "emergencia_igss_inhabil": 390.0
+    }
+  },
+  {
+    "nombre": "TESTICULAR",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 400.0,
+      "privado_inhabil": 520.0,
+      "coex_habil": 300.0,
+      "emergencia_igss_habil": 400.0,
+      "emergencia_igss_inhabil": 520.0
+    }
+  },
+  {
+    "nombre": "TIROIDES",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 300.0,
+      "privado_inhabil": 390.0,
+      "coex_habil": 250.0,
+      "emergencia_igss_habil": 300.0,
+      "emergencia_igss_inhabil": 390.0
+    }
+  },
+  {
+    "nombre": "TRANSFONTANELAR",
+    "modalidad": "usg",
+    "duracion_minutos": 30,
+    "precios": {
+      "privado_habil": 300.0,
+      "privado_inhabil": 390.0,
+      "coex_habil": 250.0,
+      "emergencia_igss_habil": 300.0,
+      "emergencia_igss_inhabil": 390.0
+    }
+  }
+]

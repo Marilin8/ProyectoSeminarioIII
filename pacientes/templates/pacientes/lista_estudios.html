@@ -1,0 +1,98 @@
+{% extends 'base.html' %}
+
+{% block title %}Estudios - Clínica de Imágenes{% endblock %}
+{% block page_title %}Estudios{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'historial_precios_estudio' %}">
+        <svg width="14" height="14"><use href="#i-clock"/></svg>
+        Historial de precios
+    </a>
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <form method="get" data-buscar-vivo class="card mb-2" style="padding:0.85rem 1rem;display:flex;gap:0.6rem;align-items:flex-end;flex-wrap:wrap;">
+        <div style="display:flex;flex-direction:column;gap:0.2rem;">
+            <label for="q" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Buscar</label>
+            <input type="text" name="q" id="q" value="{{ busqueda }}" placeholder="Nombre del estudio" style="min-width:16rem;">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:0.2rem;">
+            <label for="modalidad" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Categoría</label>
+            <select name="modalidad" id="modalidad">
+                <option value="">Todas</option>
+                {% for valor, texto in modalidades %}
+                    <option value="{{ valor }}" {% if modalidad == valor %}selected{% endif %}>{{ texto }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">
+            <svg width="14" height="14"><use href="#i-search"/></svg> Buscar
+        </button>
+        {% if busqueda or modalidad %}<a class="btn btn-outline btn-sm" href="{% url 'lista_estudios' %}">Limpiar</a>{% endif %}
+    </form>
+
+    <div class="card">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items:center;">
+            <span class="text-muted text-sm">{{ pagina.paginator.count }} estudio{{ pagina.paginator.count|pluralize }}</span>
+            <a class="btn btn-primary" href="{% url 'crear_estudio' %}">
+                <svg width="14" height="14"><use href="#i-plus"/></svg>
+                Nuevo estudio
+            </a>
+        </div>
+        <div class="card-body" style="padding: 0;">
+            {% if estudios %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Nombre</th>
+                            <th>Modalidad</th>
+                            <th>Precio ref. (privado hábil)</th>
+                            <th>Duración</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for estudio in estudios %}
+                            <tr class="{% if not estudio.activo %}text-muted{% endif %}">
+                                <td>
+                                    {{ estudio.nombre }}
+                                    {% if not estudio.activo %}<span class="badge badge-muted" style="margin-left: 0.4rem;">inactivo</span>{% endif %}
+                                </td>
+                                <td><span class="badge badge-info">{{ estudio.get_modalidad_display }}</span></td>
+                                <td>Q{{ estudio.precio_referencia }}</td>
+                                <td>{{ estudio.duracion_minutos }} min</td>
+                                <td><a class="btn btn-ghost btn-sm" href="{% url 'editar_estudio' estudio_id=estudio.id %}">
+                                    <svg width="14" height="14"><use href="#i-edit"/></svg>
+                                    Editar
+                                </a></td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <p class="text-muted text-center" style="padding: 2rem 0;">
+                    {% if busqueda or modalidad %}Ningún estudio coincide con el filtro.{% else %}Todavía no hay estudios creados.{% endif %}
+                </p>
+            {% endif %}
+        </div>
+        {% if pagina.paginator.num_pages > 1 %}
+            <div class="flex-between" style="padding:0.75rem 1rem;border-top:1px solid var(--border-light);font-size:0.82rem;">
+                <span class="text-muted">{{ pagina.start_index }}–{{ pagina.end_index }} de {{ pagina.paginator.count }}</span>
+                <span class="flex gap-1" style="align-items:center;">
+                    {% if pagina.has_previous %}
+                        <a class="btn btn-outline btn-sm" href="?{% if filtros_qs %}{{ filtros_qs }}&{% endif %}page={{ pagina.previous_page_number }}">Anterior</a>
+                    {% endif %}
+                    <span class="text-muted">Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+                    {% if pagina.has_next %}
+                        <a class="btn btn-outline btn-sm" href="?{% if filtros_qs %}{{ filtros_qs }}&{% endif %}page={{ pagina.next_page_number }}">Siguiente</a>
+                    {% endif %}
+                </span>
+            </div>
+        {% endif %}
+    </div>
+{% endblock %}

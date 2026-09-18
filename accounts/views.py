@@ -1,0 +1,889 @@
+import base64
+import datetime
+import io
+from decimal import Decimal
+
+from django.contrib import messages
+from django.contrib.auth import login as auth_login
+from django.contrib.auth import update_session_auth_hash
+from django.contrib.auth.decorators import login_required, user_passes_test
+from django.core.paginator import Paginator
+from django.db.models import Count, Prefetch, Q
+from django.http import Http404
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.utils import timezone
+from django.utils.dateparse import parse_date
+from django.utils.http import urlencode
+from django.views.decorators.http import require_POST
+from django_otp.plugins.otp_totp.models import TOTPDevice
+
+import qrcode
+
+from clinica.validators import avisar_si_correo_no_existe
+
+from .correos import enviar_confirmacion_cuenta
+from .forms import (
+    CambiarContrasenaForm,
+    CrearUsuarioForm,
+    EditarUsuarioForm,
+    LoginForm,
+    PerfilForm,
+    RegistrarPagoForm,
+)
+from .models import Bitacora, HistorialComision, PagoSalario, Usuario
+from .pantallas import buscar_pantalla, pantallas_de
+
+
+def es_administrador(user):
+    return user.is_authenticated and (user.is_superuser or user.rol == Usuario.ROL_ADMINISTRADOR)
+
+
+# Roles que se administran desde la pantalla "Usuarios activos". El nombre es
+# el texto del botón/listado; el orden define el orden de los botones.
+ROLES_GESTIONABLES = {
+    Usuario.ROL_MEDICO_RADIOLOGO: 'Radiólogos',
+    Usuario.ROL_TECNICO_IMAGENES: 'Técnicos',
+    Usuario.ROL_RECEPCIONISTA: 'Secretarías',
+}
+
+_URL_LISTA_POR_ROL = {
+    Usuario.ROL_MEDICO_RADIOLOGO: 'lista_usuarios_radiologos',
+    Usuario.ROL_TECNICO_IMAGENES: 'lista_usuarios_tecnicos',
+    Usuario.ROL_RECEPCIONISTA: 'lista_usuarios_secretarias',
+}
+
+
+def _url_lista_para(usuario):
+    return _URL_LISTA_POR_ROL.get(usuario.rol, 'dashboard')
+
+
+# ---------------------------------------------------------------------------
+# Inicio de sesión con verificación en dos pasos (MFA / TOTP)
+# ---------------------------------------------------------------------------
+
+def _dispositivo_totp(user):
+    return TOTPDevice.objects.filter(user=user, confirmed=True).first()
+
+
+def login(request):
+    """Primer paso: usuario y contraseña. Si el usuario tiene MFA activado,
+    manda al segundo paso; si no, entra directo."""
+    if request.user.is_authenticated:
+        return redirect('dashboard')
+
+    form = LoginForm(request, data=request.POST or None)
+    if request.method == 'POST' and form.is_valid():
+        user = form.get_user()
+        if _dispositivo_totp(user):
+            request.session['mfa_user_id'] = user.pk
+            return redirect('login_otp')
+        auth_login(request, user)
+        return redirect(request.GET.get('next') or 'dashboard')
+
+    return render(request, 'registration/login.html', {'form': form})
+
+
+def login_otp(request):
+    """Segundo paso: código de 6 dígitos de la app de autenticación. Solo
+    llega acá quien ya pasó usuario+contraseña en `login`."""
+    if request.user.is_authenticated:
+        return redirect('dashboard')
+
+    user_id = request.session.get('mfa_user_id')
+    if not user_id:
+        messages.error(request, 'Primero ingresá tu usuario y contraseña.')
+        return redirect('login')
+
+    user = get_object_or_404(Usuario, pk=user_id)
+    if request.method == 'POST':
+        codigo = (request.POST.get('codigo') or '').strip()
+        device = _dispositivo_totp(user)
+        if device is not None and device.verify_token(codigo):
+            request.session.pop('mfa_user_id', None)
+            auth_login(request, user)
+            return redirect('dashboard')
+        messages.error(request, 'El código no es válido o ya expiró.')
+
+    return render(request, 'accounts/login_otp.html', {'usuario_login': user})
+
+
+@login_required
+def configurar_mfa(request):
+    """El usuario activa o desactiva la verificación en dos pasos. Muestra el
+    QR para vincular la app y pide un primer código para confirmar."""
+    device = TOTPDevice.objects.filter(user=request.user).first()
+
+    if request.method == 'POST':
+        accion = request.POST.get('accion')
+
+        if accion == 'desactivar' and device is not None:
+            device.delete()
+            messages.success(request, 'Verificación en dos pasos desactivada.')
+            return redirect('configurar_mfa')
+
+        if accion == 'regenerar' and device is not None:
+            device.delete()
+            device = None
+
+        if accion == 'verificar':
+            codigo = (request.POST.get('codigo') or '').strip()
+            if device is not None and device.verify_token(codigo):
+                if not device.confirmed:
+                    device.confirmed = True
+                    device.save(update_fields=['confirmed'])
+                Bitacora.registrar(
+                    request=request, usuario=request.user,
+                    accion=Bitacora.ACCION_EDITAR_USUARIO,
+                    descripcion=f'"{request.user.username}" activó la verificación en dos pasos.',
+                )
+                messages.success(
+                    request,
+                    'Verificación en dos pasos activada. Desde ahora, cada inicio de '
+                    'sesión va a pedir un código de la app.',
+                )
+                return redirect('configurar_mfa')
+            messages.error(
+                request,
+                'El código no coincide. Revisá la hora de tu teléfono e intentá de nuevo.',
+            )
+            return redirect('configurar_mfa')
+
+    if device is None:
+        device = TOTPDevice.objects.create(user=request.user, confirmed=False)
+
+    return render(request, 'accounts/configurar_mfa.html', {
+        'confirmado': device.confirmed,
+        'qr_data_uri': None if device.confirmed else _qr_data_uri(device),
+        'clave_manual': None if device.confirmed else _clave_manual(device),
+    })
+
+
+def _qr_data_uri(device):
+    """Imagen QR (data URI PNG) con el enlace otpauth:// del dispositivo."""
+    try:
+        buffer = io.BytesIO()
+        qrcode.make(device.config_url).save(buffer, format='PNG')
+        return 'data:image/png;base64,' + base64.b64encode(buffer.getvalue()).decode('ascii')
+    except Exception:
+        return None
+
+
+def _clave_manual(device):
+    """La clave base32 en grupos de 4, para escribirla a mano si no se puede
+    escanear el QR."""
+    try:
+        import re
+        clave = re.search(r'secret=([A-Z2-7]+)', device.config_url).group(1)
+        return ' '.join(clave[i:i + 4] for i in range(0, len(clave), 4))
+    except Exception:
+        return None
+
+
+@login_required
+def dashboard(request):
+    return render(request, 'accounts/dashboard.html', {'pantallas': pantallas_de(request.user)})
+
+
+@login_required
+def mi_perfil(request):
+    """Cada usuario ve y edita sus propios datos (nombres, apellidos, correo)
+    y puede cambiar su contraseña. No puede tocar su rol, comisiones ni
+    estado: eso solo lo hace un administrador desde 'Usuarios activos'."""
+    perfil_form = PerfilForm(instance=request.user)
+    password_form = CambiarContrasenaForm(user=request.user)
+
+    if request.method == 'POST' and 'guardar_perfil' in request.POST:
+        perfil_form = PerfilForm(request.POST, instance=request.user)
+        if perfil_form.is_valid():
+            perfil_form.save()
+            Bitacora.registrar(
+                request=request, usuario=request.user,
+                accion=Bitacora.ACCION_EDITAR_USUARIO,
+                descripcion=f'"{request.user.username}" editó los datos de su propio perfil.',
+            )
+            messages.success(request, 'Perfil actualizado correctamente.')
+            return redirect('mi_perfil')
+
+    elif request.method == 'POST' and 'cambiar_contrasena' in request.POST:
+        password_form = CambiarContrasenaForm(user=request.user, data=request.POST)
+        if password_form.is_valid():
+            password_form.save()
+            update_session_auth_hash(request, password_form.user)
+            Bitacora.registrar(
+                request=request, usuario=request.user,
+                accion=Bitacora.ACCION_EDITAR_USUARIO,
+                descripcion=f'"{request.user.username}" cambió su contraseña.',
+            )
+            messages.success(request, 'Contraseña actualizada correctamente.')
+            return redirect('mi_perfil')
+
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, perfil_form)
+
+    return render(request, 'accounts/mi_perfil.html', {
+        'perfil_form': perfil_form,
+        'password_form': password_form,
+        'mfa_activo': _dispositivo_totp(request.user) is not None,
+    })
+
+
+@login_required
+def pantalla_placeholder(request, clave):
+    pantalla = buscar_pantalla(pantallas_de(request.user), clave)
+    if pantalla is None:
+        raise Http404
+    if pantalla.get('submenu'):
+        return render(request, 'accounts/submenu.html', {'pantalla': pantalla})
+    return render(request, 'accounts/en_construccion.html', {'pantalla': pantalla})
+
+
+@login_required
+@user_passes_test(es_administrador)
+def crear_usuario(request):
+    if request.method == 'POST':
+        form = CrearUsuarioForm(request.POST)
+        if form.is_valid():
+            # commit=False: la cuenta queda inactiva hasta que el usuario
+            # nuevo confirme su correo (ver confirmar_correo_usuario) --
+            # save() de CrearUsuarioForm ya deja is_active en su default
+            # (True) si se guarda directo, por eso se corrige antes de
+            # persistir en vez de después.
+            nuevo_usuario = form.save(commit=False)
+            nuevo_usuario.is_active = False
+            nuevo_usuario.save()
+            token = nuevo_usuario.generar_token_confirmacion_correo()
+
+            error_envio = enviar_confirmacion_cuenta(request, nuevo_usuario, token)
+
+            Bitacora.registrar(
+                request=request,
+                usuario=request.user,
+                accion=Bitacora.ACCION_CREAR_USUARIO,
+                descripcion=(
+                    f'Creó el usuario "{nuevo_usuario.username}" con rol '
+                    f'{nuevo_usuario.get_rol_display()}. Queda inactivo hasta '
+                    'que confirme su correo.'
+                ),
+            )
+            if error_envio:
+                messages.warning(
+                    request,
+                    f'Usuario "{nuevo_usuario.username}" creado, pero no se pudo mandar el '
+                    f'correo de confirmación ({error_envio}). Queda inactivo hasta que se '
+                    'confirme -- podés activarlo a mano desde esta pantalla si hace falta.',
+                )
+            else:
+                messages.success(
+                    request,
+                    f'Usuario "{nuevo_usuario.username}" creado. Se le mandó un correo a '
+                    f'{nuevo_usuario.email} para que confirme su cuenta antes de poder ingresar.',
+                )
+            return redirect('dashboard')
+    else:
+        form = CrearUsuarioForm()
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, form)
+    return render(request, 'accounts/crear_usuario.html', {'form': form})
+
+
+def confirmar_correo_usuario(request, token):
+    """Link público (sin login) al que llega el usuario nuevo desde el
+    correo que le mandó crear_usuario. Activa la cuenta si el token es
+    válido y no venció."""
+    usuario = Usuario.objects.filter(token_confirmacion_correo=token).first()
+
+    if usuario is None:
+        contexto = {'estado': 'invalido'}
+    elif usuario.token_confirmacion_vencido():
+        contexto = {'estado': 'vencido', 'usuario': usuario}
+    else:
+        usuario.confirmar_correo()
+        Bitacora.registrar(
+            request=request,
+            usuario=usuario,
+            accion=Bitacora.ACCION_CONFIRMAR_CORREO_USUARIO,
+            descripcion=f'"{usuario.username}" confirmó su correo y quedó activo.',
+        )
+        contexto = {'estado': 'confirmado', 'usuario': usuario}
+
+    return render(request, 'accounts/confirmar_correo.html', contexto)
+
+
+@login_required
+@user_passes_test(es_administrador)
+def lista_usuarios(request, rol):
+    if rol not in ROLES_GESTIONABLES:
+        raise Http404
+    usuarios = Usuario.objects.filter(rol=rol).order_by('-is_active', 'first_name', 'last_name', 'username')
+    if rol == Usuario.ROL_MEDICO_RADIOLOGO:
+        from pacientes.models import TipoEstudio
+
+        total_estudios = TipoEstudio.objects.filter(activo=True).count()
+        usuarios = usuarios.annotate(n_estudios=Count('tipos_estudio_asignados')).prefetch_related(
+            Prefetch(
+                'tipos_estudio_asignados',
+                queryset=TipoEstudio.objects.order_by('modalidad', 'nombre'),
+            )
+        )
+    else:
+        total_estudios = 0
+    return render(request, 'accounts/lista_usuarios.html', {
+        'usuarios': usuarios,
+        'rol': rol,
+        'rol_label': ROLES_GESTIONABLES[rol],
+        'es_radiologo': rol == Usuario.ROL_MEDICO_RADIOLOGO,
+        'total_estudios': total_estudios,
+        'roles_gestionables': ROLES_GESTIONABLES,
+    })
+
+
+def _mes_de(periodo):
+    """(año, mes) del salario que corresponde al período (el mes del primer
+    día del período)."""
+    return periodo['desde'].year, periodo['desde'].month
+
+
+@login_required
+@user_passes_test(es_administrador)
+def planilla(request):
+    """Planilla: por cada empleado activo, su salario base mensual (con su
+    pago del mes) y las comisiones del período que todavía no se pagaron
+    (con la posibilidad de registrar ese pago)."""
+    from .periodos import querystring, resolver_periodo
+    from .models import etiqueta_mes as _et_mes
+    from .planilla import planilla as calcular_planilla
+
+    periodo = resolver_periodo(request)
+    anio, mes = _mes_de(periodo)
+    usuarios = list(
+        Usuario.objects.filter(is_active=True).order_by('first_name', 'last_name', 'username')
+    )
+    filas = calcular_planilla(periodo['desde'], periodo['hasta'], usuarios)
+
+    pagos_salario = {
+        p.usuario_id: p for p in PagoSalario.objects.filter(anio=anio, mes=mes)
+    }
+    for fila in filas:
+        fila['pago_salario'] = pagos_salario.get(fila['usuario'].id)
+
+    totales = {
+        'salario_base': sum((f['salario_base'] for f in filas), Decimal('0.00')),
+        'comisiones': sum((f['comisiones'] for f in filas), Decimal('0.00')),
+    }
+    return render(request, 'accounts/planilla.html', {
+        'filas': filas,
+        'totales': totales,
+        'periodo': periodo,
+        'mes_salario_etiqueta': _et_mes(anio, mes),
+        'query': querystring(periodo),
+    })
+
+
+def _meses_entre(desde, hasta_exclusivo):
+    """Lista de (año, mes) desde `desde` hasta `hasta_exclusivo`, sin incluir
+    este último — para recorrer mes a mes sin depender de calendar."""
+    anio, mes = desde.year, desde.month
+    meses = []
+    while (anio, mes) < (hasta_exclusivo.year, hasta_exclusivo.month):
+        meses.append((anio, mes))
+        mes += 1
+        if mes > 12:
+            mes = 1
+            anio += 1
+    return meses
+
+
+@login_required
+@user_passes_test(es_administrador)
+def pendiente_pago(request):
+    """Empleados con algún pago atrasado, sin importar el período que se
+    esté viendo en Planilla: meses de salario ya cerrados que nunca se
+    registraron, y comisiones ganadas en cualquier momento que sigan sin
+    pagarse. El mes en curso no cuenta como "atrasado" todavía."""
+    from .models import etiqueta_mes as _et_mes
+    from .planilla import lineas_comision, marcar_pagadas
+
+    hoy = timezone.localdate()
+    inicio_mes_actual = hoy.replace(day=1)
+
+    usuarios = list(
+        Usuario.objects.filter(is_active=True).order_by('first_name', 'last_name', 'username')
+    )
+
+    # Comisiones sin pagar de toda la historia hasta el mes en curso
+    # (exclusivo): lo ganado este mes todavía no se considera atrasado.
+    lineas = marcar_pagadas(lineas_comision(datetime.date(2000, 1, 1), inicio_mes_actual))
+    comisiones_por_persona = {}
+    for linea in lineas:
+        if linea['pagada']:
+            continue
+        acc = comisiones_por_persona.setdefault(linea['persona_id'], {
+            'monto': Decimal('0.00'), 'cantidad': 0, 'desde': linea['fecha'],
+        })
+        acc['monto'] += linea['comision']
+        acc['cantidad'] += 1
+        acc['desde'] = min(acc['desde'], linea['fecha'])
+
+    pagos_existentes = set(PagoSalario.objects.values_list('usuario_id', 'anio', 'mes'))
+
+    filas = []
+    for usuario in usuarios:
+        meses_pendientes = []
+        if usuario.salario_base > 0:
+            inicio = usuario.date_joined.date().replace(day=1)
+            for anio, mes in _meses_entre(inicio, inicio_mes_actual):
+                if (usuario.id, anio, mes) not in pagos_existentes:
+                    meses_pendientes.append({
+                        'anio': anio, 'mes': mes, 'etiqueta': _et_mes(anio, mes),
+                        'monto': usuario.salario_base,
+                    })
+
+        comision_info = comisiones_por_persona.get(usuario.id)
+        total_salario = sum((m['monto'] for m in meses_pendientes), Decimal('0.00'))
+        total_comisiones = comision_info['monto'] if comision_info else Decimal('0.00')
+
+        if not meses_pendientes and not comision_info:
+            continue
+
+        filas.append({
+            'usuario': usuario,
+            'meses_pendientes': meses_pendientes,
+            'total_salario': total_salario,
+            'comisiones_pendientes': total_comisiones,
+            'cantidad_comisiones': comision_info['cantidad'] if comision_info else 0,
+            'comisiones_desde': comision_info['desde'] if comision_info else None,
+            'total': total_salario + total_comisiones,
+        })
+
+    filas.sort(key=lambda f: f['total'], reverse=True)
+
+    return render(request, 'accounts/pendiente_pago.html', {
+        'filas': filas,
+        'total_general': sum((f['total'] for f in filas), Decimal('0.00')),
+    })
+
+
+def _proximo_mes(fecha):
+    """(año, mes) del mes siguiente a `fecha`."""
+    if fecha.month == 12:
+        return fecha.year + 1, 1
+    return fecha.year, fecha.month + 1
+
+
+@login_required
+@user_passes_test(es_administrador)
+def pago_adelantado(request):
+    """Pago por adelantado del salario base: para cuando un empleado pide
+    que se le pague un mes que todavía no ha llegado. No aplica a
+    comisiones porque esas dependen de estudios que todavía no se
+    realizaron."""
+    hoy = timezone.localdate()
+    prox_anio, prox_mes = _proximo_mes(hoy)
+    mes_minimo = f'{prox_anio:04d}-{prox_mes:02d}'
+
+    usuarios = list(
+        Usuario.objects.filter(is_active=True, salario_base__gt=0)
+        .order_by('first_name', 'last_name', 'username')
+    )
+
+    adelantos_por_usuario = {}
+    pagos = (
+        PagoSalario.objects.filter(usuario_id__in=[u.id for u in usuarios])
+        .select_related('usuario').order_by('anio', 'mes')
+    )
+    for pago in pagos:
+        if (pago.anio, pago.mes) >= (prox_anio, prox_mes):
+            adelantos_por_usuario.setdefault(pago.usuario_id, []).append(pago)
+
+    filas = [
+        {'usuario': usuario, 'adelantos': adelantos_por_usuario.get(usuario.id, [])}
+        for usuario in usuarios
+    ]
+
+    return render(request, 'accounts/pago_adelantado.html', {
+        'filas': filas,
+        'mes_minimo': mes_minimo,
+        'mes_sugerido': mes_minimo,
+    })
+
+
+def _guardar_pago(pago, form, *, empleado, concepto, periodo_etiqueta, request):
+    """Rellena y guarda un pago (salario o comisión) con los datos del form
+    y su verificación de comprobante, y lo registra en la bitácora."""
+    verificacion = form.verificacion
+    pago.monto = form.monto_esperado
+    pago.comprobante = form.cleaned_data['comprobante']
+    pago.numero_boleta = form.cleaned_data['numero_boleta']
+    pago.notas = form.cleaned_data['notas']
+    pago.verificado = bool(verificacion and verificacion.ok)
+    pago.verificacion_nota = verificacion.mensaje if verificacion else ''
+    pago.registrado_por = request.user
+    pago.save()
+    Bitacora.registrar(
+        request=request, usuario=request.user,
+        accion=Bitacora.ACCION_REGISTRAR_PAGO_PLANILLA,
+        descripcion=(
+            f'Registró el pago de {concepto} de "{empleado.username}" — '
+            f'{periodo_etiqueta} (Q{pago.monto}, '
+            f'{"verificado" if pago.verificado else "SIN verificar"}).'
+        ),
+    )
+    nombre = empleado.get_full_name() or empleado.username
+    if pago.verificado:
+        messages.success(request, f'Pago de {concepto} de {nombre} registrado y verificado.')
+    else:
+        messages.warning(
+            request,
+            f'Pago de {concepto} de {nombre} registrado, pero sin verificar: {pago.verificacion_nota}',
+        )
+    return pago
+
+
+@login_required
+@user_passes_test(es_administrador)
+def registrar_pago_salario(request, usuario_id):
+    """Pago del salario base de un empleado por el mes del período elegido."""
+    from .periodos import querystring, resolver_periodo
+    from .models import etiqueta_mes as _et_mes
+
+    empleado = get_object_or_404(Usuario, id=usuario_id)
+    periodo = resolver_periodo(request)
+    anio, mes = _mes_de(periodo)
+    volver = f"{reverse('planilla')}?{querystring(periodo)}"
+
+    if empleado.salario_base <= 0:
+        messages.error(request, f'{empleado.username} no tiene salario base configurado.')
+        return redirect(volver)
+
+    etiqueta = _et_mes(anio, mes)
+    pago = PagoSalario.objects.filter(usuario=empleado, anio=anio, mes=mes).first()
+
+    if request.method == 'POST':
+        form = RegistrarPagoForm(request.POST, request.FILES, monto_esperado=empleado.salario_base)
+        if form.is_valid():
+            _guardar_pago(
+                pago or PagoSalario(usuario=empleado, anio=anio, mes=mes), form,
+                empleado=empleado, concepto='salario base',
+                periodo_etiqueta=etiqueta, request=request,
+            )
+            return redirect(volver)
+    else:
+        form = RegistrarPagoForm(monto_esperado=empleado.salario_base)
+
+    return render(request, 'accounts/registrar_pago.html', {
+        'empleado': empleado, 'form': form, 'pago': pago,
+        'concepto': 'salario base', 'periodo_etiqueta': etiqueta,
+        'monto': empleado.salario_base, 'query': querystring(periodo),
+        'detalle': None,
+    })
+
+
+@login_required
+@user_passes_test(es_administrador)
+def registrar_pago_comision(request, usuario_id):
+    """Pago de las comisiones pendientes de un empleado en el período."""
+    from .periodos import querystring, resolver_periodo
+    from .planilla import lineas_pendientes_de
+    from .models import PagoComision, PagoComisionLinea
+
+    empleado = get_object_or_404(Usuario, id=usuario_id)
+    periodo = resolver_periodo(request)
+    volver = f"{reverse('planilla')}?{querystring(periodo)}"
+
+    pendientes = lineas_pendientes_de(empleado, periodo['desde'], periodo['hasta'])
+    monto = sum((l['comision'] for l in pendientes), Decimal('0.00'))
+
+    if not pendientes:
+        messages.info(request, f'{empleado.username} no tiene comisiones sin pagar en este período.')
+        return redirect(volver)
+
+    if request.method == 'POST':
+        form = RegistrarPagoForm(request.POST, request.FILES, monto_esperado=monto)
+        if form.is_valid():
+            pago = PagoComision(
+                usuario=empleado, desde=periodo['desde'], hasta=periodo['hasta'],
+            )
+            _guardar_pago(
+                pago, form, empleado=empleado, concepto='comisiones',
+                periodo_etiqueta=periodo['etiqueta'], request=request,
+            )
+            PagoComisionLinea.objects.bulk_create([
+                PagoComisionLinea(
+                    pago=pago, cita_id=l['cita_id'],
+                    rol_en_cita=l['rol_en_cita'], monto=l['comision'],
+                )
+                for l in pendientes
+            ])
+            return redirect(volver)
+    else:
+        form = RegistrarPagoForm(monto_esperado=monto)
+
+    return render(request, 'accounts/registrar_pago.html', {
+        'empleado': empleado, 'form': form, 'pago': None,
+        'concepto': 'comisiones', 'periodo_etiqueta': periodo['etiqueta'],
+        'monto': monto, 'query': querystring(periodo),
+        'detalle': pendientes,
+    })
+
+
+@login_required
+@user_passes_test(es_administrador)
+def historial_pagos(request):
+    """Todos los pagos de planilla (salario y comisiones): a quién, de qué
+    fecha a qué fecha, tipo y comprobante."""
+    from .models import PagoComision, PagoSalario
+
+    salarios = [
+        {
+            'tipo': 'Salario base', 'empleado': p.usuario, 'desde': p.desde, 'hasta': p.hasta,
+            'monto': p.monto, 'comprobante': p.comprobante, 'verificado': p.verificado,
+            'registrado_por': p.registrado_por, 'creado_en': p.creado_en, 'notas': p.notas,
+        }
+        for p in PagoSalario.objects.select_related('usuario', 'registrado_por')
+    ]
+    comisiones = [
+        {
+            'tipo': 'Comisiones', 'empleado': p.usuario, 'desde': p.desde, 'hasta': p.hasta,
+            'monto': p.monto, 'comprobante': p.comprobante, 'verificado': p.verificado,
+            'registrado_por': p.registrado_por, 'creado_en': p.creado_en, 'notas': p.notas,
+        }
+        for p in PagoComision.objects.select_related('usuario', 'registrado_por')
+    ]
+    pagos = sorted(salarios + comisiones, key=lambda x: x['creado_en'], reverse=True)
+
+    busqueda = (request.GET.get('q') or '').strip()
+    if busqueda:
+        b = busqueda.lower()
+        pagos = [
+            x for x in pagos
+            if b in (x['empleado'].get_full_name() or x['empleado'].username).lower()
+        ]
+
+    return render(request, 'accounts/historial_pagos.html', {
+        'pagos': pagos,
+        'busqueda': busqueda,
+        'total': sum((x['monto'] for x in pagos), Decimal('0.00')),
+    })
+
+
+@login_required
+@user_passes_test(es_administrador)
+def planilla_empleado(request, usuario_id):
+    """Detalle de las comisiones de un empleado en el período: resumen
+    agrupado de lo pendiente y detalle línea por línea (marcando lo que ya
+    se pagó)."""
+    from .periodos import querystring, resolver_periodo
+    from .planilla import detalle_empleado
+
+    usuario = get_object_or_404(Usuario, id=usuario_id)
+    periodo = resolver_periodo(request)
+    datos = detalle_empleado(periodo['desde'], periodo['hasta'], usuario)
+    return render(request, 'accounts/planilla_empleado.html', {
+        'empleado': usuario,
+        'periodo': periodo,
+        'query': querystring(periodo),
+        **datos,
+    })
+
+
+@login_required
+@user_passes_test(es_administrador)
+def editar_usuario(request, usuario_id):
+    usuario = get_object_or_404(Usuario, id=usuario_id)
+    if request.method == 'POST':
+        # Se leen los % de comisión ANTES de validar: form.is_valid() muta la
+        # instancia con los datos nuevos.
+        comisiones_antes = {
+            campo: getattr(usuario, campo) for campo in HistorialComision.CAMPOS_COMISION
+        }
+        form = EditarUsuarioForm(request.POST, instance=usuario)
+        if form.is_valid():
+            editado = form.save()
+            Bitacora.registrar(
+                request=request,
+                usuario=request.user,
+                accion=Bitacora.ACCION_EDITAR_USUARIO,
+                descripcion=(
+                    f'Editó el usuario "{editado.username}" '
+                    f'(rol: {editado.get_rol_display()}).'
+                ),
+            )
+            _auditar_cambios_comision(request, editado, comisiones_antes)
+            messages.success(request, f'Usuario "{editado.username}" actualizado correctamente.')
+            return redirect(_url_lista_para(editado))
+    else:
+        form = EditarUsuarioForm(instance=usuario)
+
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, form)
+
+    contexto = {
+        'form': form,
+        'usuario_editado': usuario,
+        'volver_url': _url_lista_para(usuario),
+    }
+    if usuario.rol == Usuario.ROL_MEDICO_RADIOLOGO:
+        contexto['grupos_estudios'] = _grupos_estudios_para(request, usuario)
+    contexto['historial_comisiones'] = usuario.historial_comisiones.select_related(
+        'modificado_por'
+    )[:10]
+    return render(request, 'accounts/editar_usuario.html', contexto)
+
+
+def _auditar_cambios_comision(request, usuario, comisiones_antes):
+    """Registra en HistorialComision + bitácora cada % de comisión que cambió."""
+    cambiados = []
+    for campo in HistorialComision.CAMPOS_COMISION:
+        antes, ahora = comisiones_antes[campo], getattr(usuario, campo)
+        if antes != ahora:
+            HistorialComision.objects.create(
+                usuario=usuario, campo=campo,
+                valor_anterior=antes, valor_nuevo=ahora,
+                modificado_por=request.user,
+            )
+            cambiados.append(campo)
+    if cambiados:
+        detalle = ', '.join(
+            f'{HistorialComision.ETIQUETAS_CAMPOS[c]}: '
+            f'{comisiones_antes[c]}% → {getattr(usuario, c)}%'
+            for c in cambiados
+        )
+        Bitacora.registrar(
+            request=request, usuario=request.user,
+            accion=Bitacora.ACCION_EDITAR_COMISION,
+            descripcion=f'Cambió comisiones de "{usuario.username}": {detalle}',
+        )
+
+
+@login_required
+@user_passes_test(es_administrador)
+def historial_comisiones(request):
+    """Auditoría de los cambios de % de comisión: fecha, de cuánto a cuánto,
+    y qué administrador lo hizo. Filtro por usuario."""
+    busqueda = (request.GET.get('q') or '').strip()
+    registros = (
+        HistorialComision.objects.select_related('usuario', 'modificado_por')
+        .order_by('-creado_en')
+    )
+    if busqueda:
+        registros = registros.filter(
+            Q(usuario__username__icontains=busqueda)
+            | Q(usuario__first_name__icontains=busqueda)
+            | Q(usuario__last_name__icontains=busqueda)
+        )
+    pagina = Paginator(registros, 25).get_page(request.GET.get('page'))
+    return render(request, 'accounts/historial_comisiones.html', {
+        'pagina': pagina,
+        'registros': pagina,
+        'busqueda': busqueda,
+    })
+
+
+def _grupos_estudios_para(request, usuario):
+    """Tipos de estudio agrupados por modalidad, marcando cuáles tiene
+    asignados el radiólogo, para pintar los checkboxes agrupados con
+    'seleccionar todo' por grupo en editar_usuario.html."""
+    from pacientes.models import TipoEstudio
+
+    if request.method == 'POST':
+        seleccionados = set(request.POST.getlist('tipos_estudio'))
+    else:
+        seleccionados = {str(pk) for pk in usuario.tipos_estudio_asignados.values_list('pk', flat=True)}
+
+    grupos = []
+    for slug, etiqueta in TipoEstudio.MODALIDAD_CHOICES:
+        estudios = [
+            {'id': te.pk, 'nombre': te.nombre, 'marcado': str(te.pk) in seleccionados}
+            for te in TipoEstudio.objects.filter(activo=True, modalidad=slug).order_by('nombre')
+        ]
+        if estudios:
+            grupos.append({
+                'slug': slug,
+                'etiqueta': etiqueta,
+                'estudios': estudios,
+                'total': len(estudios),
+                'marcados': sum(1 for e in estudios if e['marcado']),
+            })
+    return grupos
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def cambiar_estado_usuario(request, usuario_id):
+    usuario = get_object_or_404(Usuario, id=usuario_id)
+    if usuario == request.user:
+        messages.error(request, 'No podés cambiar el estado de tu propia cuenta.')
+    elif usuario.is_superuser:
+        messages.error(request, 'No se puede suspender a un superusuario desde esta pantalla.')
+    else:
+        usuario.is_active = not usuario.is_active
+        usuario.save(update_fields=['is_active'])
+        verbo = 'reactivó' if usuario.is_active else 'suspendió'
+        Bitacora.registrar(
+            request=request,
+            usuario=request.user,
+            accion=Bitacora.ACCION_CAMBIAR_ESTADO_USUARIO,
+            descripcion=f'Se {verbo} al usuario "{usuario.username}".',
+        )
+        messages.success(request, f'Se {verbo} al usuario "{usuario.username}".')
+    return redirect(_url_lista_para(usuario))
+
+
+@login_required
+@user_passes_test(es_administrador)
+def bitacora(request):
+    hoy = datetime.date.today()
+    fecha = parse_date(request.GET.get('fecha', '')) or hoy
+    if fecha > hoy:
+        fecha = hoy
+
+    # No usamos `creado_en__date=fecha`: ese lookup depende de que MySQL
+    # tenga cargadas las tablas de zonas horarias con nombre (CONVERT_TZ),
+    # y en este servidor no están cargadas, así que Django siempre devolvía
+    # 0 filas. Calculamos el rango del día directamente en Python en vez de
+    # depender de esa conversión en la base de datos.
+    inicio = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.min))
+    fin = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.max))
+    eventos_qs = (
+        Bitacora.objects.filter(creado_en__range=(inicio, fin))
+        .select_related('usuario')
+        .order_by('-creado_en')
+    )
+
+    filtro_accion = (request.GET.get('accion') or '').strip()
+    filtro_usuario = (request.GET.get('usuario') or '').strip()
+    busqueda = (request.GET.get('q') or '').strip()
+    if filtro_accion in dict(Bitacora.ACCION_CHOICES):
+        eventos_qs = eventos_qs.filter(accion=filtro_accion)
+    if filtro_usuario.isdigit():
+        eventos_qs = eventos_qs.filter(usuario_id=filtro_usuario)
+    if busqueda:
+        eventos_qs = eventos_qs.filter(descripcion__icontains=busqueda)
+
+    pagina = Paginator(eventos_qs, 25).get_page(request.GET.get('page'))
+
+    # Solo se mantienen en los links de paginación los filtros no vacíos.
+    filtros_activos = {
+        clave: valor for clave, valor in (
+            ('accion', filtro_accion), ('usuario', filtro_usuario), ('q', busqueda),
+        ) if valor
+    }
+    querystring_filtros = urlencode(filtros_activos)
+
+    return render(request, 'accounts/bitacora.html', {
+        'eventos': pagina,
+        'pagina': pagina,
+        'fecha': fecha,
+        'hoy': hoy,
+        'dia_anterior': fecha - datetime.timedelta(days=1),
+        'dia_siguiente': fecha + datetime.timedelta(days=1),
+        'puede_avanzar': fecha < hoy,
+        'acciones': Bitacora.ACCION_CHOICES,
+        'usuarios': Usuario.objects.order_by('username'),
+        'filtro_accion': filtro_accion,
+        'filtro_usuario': filtro_usuario,
+        'busqueda': busqueda,
+        'querystring_filtros': querystring_filtros,
+    })

@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+
+{% block title %}Citas procesadas - Clínica de Imágenes{% endblock %}
+{% block page_title %}Citas procesadas{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .orden { margin-bottom: 1rem; }
+        .orden .titulo { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.5rem; }
+        .orden .titulo strong { color: var(--text); font-size: 1rem; }
+        .orden .datos { font-size: 0.85rem; color: var(--text); margin-bottom: 0.5rem; }
+        .orden .motivo { font-size: 0.85rem; color: var(--text); background: #f8fafc; border-left: 3px solid var(--primary); padding: 0.5rem 0.75rem; margin-bottom: 0.75rem; border-radius: 0 var(--radius) var(--radius) 0; }
+        .filtros-radiologia label { display:flex; flex-direction:column; gap:.3rem; font-size:.76rem; color:var(--text-muted); font-weight:600; }
+        @media (max-width: 800px) { .filtros-radiologia { grid-template-columns:1fr !important; } }
+    </style>
+{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg> Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <form method="get" class="card mb-2 filtros-radiologia" style="padding:1rem;display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:.7rem;align-items:end;">
+        <label>Paciente, DPI o teléfono
+            <input type="search" name="q" value="{{ busqueda }}" placeholder="Buscar mientras escribe...">
+        </label>
+        <label>Convenio
+            <select name="convenio">
+                <option value="">Todos</option>
+                {% for valor, etiqueta in convenios %}
+                    <option value="{{ valor }}" {% if convenio == valor %}selected{% endif %}>{{ etiqueta }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>Tipo de cobro
+            <select name="agrupacion">
+                <option value="">Todos</option>
+                <option value="agrupado" {% if agrupacion == 'agrupado' %}selected{% endif %}>Combo / agrupada</option>
+                <option value="individual" {% if agrupacion == 'individual' %}selected{% endif %}>Individual</option>
+            </select>
+        </label>
+        <button class="btn btn-primary btn-sm" type="submit">Filtrar</button>
+        <a class="btn btn-outline btn-sm" href="{% url 'citas_procesadas' %}">Limpiar</a>
+    </form>
+    {% if ordenes %}
+        {% for orden in ordenes %}
+            <div class="card orden">
+                <div class="card-body">
+                    <div class="titulo">
+                        <strong>{{ orden.cita.paciente.nombre }} {{ orden.cita.paciente.apellido }}</strong>
+                        <span class="badge badge-info">{{ orden.cita.get_convenio_display }}</span>
+                    </div>
+                    <div class="datos">
+                        {% if orden.edad_paciente is not None %}{{ orden.edad_paciente }} años{% else %}Edad no registrada{% endif %} —
+                        {{ orden.cita.paciente.get_sexo_display }} —
+                        Estudio: {{ orden.cita.tipo_estudio.nombre }} —
+                        Cita: {{ orden.cita.fecha }} {{ orden.cita.hora|time:'H:i' }}
+                    </div>
+                    {% if orden.es_agrupada %}
+                        <span class="badge badge-info">Incluido en orden agrupada{% for detalle in orden.cita.detalles_orden_pago.all %}{% if detalle.orden_pago.combo %} · {{ detalle.orden_pago.combo.nombre }}{% endif %}{% endfor %}</span>
+                    {% else %}
+                        <span class="badge badge-success">Estudio individual</span>
+                    {% endif %}
+                    <div class="motivo">{{ orden.motivo }}</div>
+                    <a class="btn btn-primary btn-sm" href="{% url 'adjuntar_informe' cita_id=orden.cita.id %}">
+                        <svg width="14" height="14"><use href="#i-edit"/></svg> Adjuntar informe
+                    </a>
+                </div>
+            </div>
+        {% endfor %}
+    {% else %}
+        <div class="empty-state">
+            <div class="icono"><svg width="32" height="32"><use href="#i-clipboard"/></svg></div>
+            No hay citas pendientes de informe por el momento.
+        </div>
+    {% endif %}
+    <script>
+        (function () {
+            var formulario = document.querySelector('.filtros-radiologia');
+            var buscador = formulario && formulario.querySelector('input[name="q"]');
+            var temporizador;
+            if (!buscador) return;
+            function enviar() {
+                clearTimeout(temporizador);
+                temporizador = setTimeout(function () { formulario.submit(); }, 250);
+            }
+            buscador.addEventListener('input', enviar);
+            formulario.querySelectorAll('select').forEach(function (select) {
+                select.addEventListener('change', enviar);
+            });
+        })();
+    </script>
+{% endblock %}

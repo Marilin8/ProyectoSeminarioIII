@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+
+{% block title %}Ingresar correo - Clínica de Imágenes{% endblock %}
+{% block page_title %}Ingresar correo del paciente{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'historial_paciente' paciente_id=cita.paciente_id %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver a estudios realizados
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="card" style="max-width:500px;">
+        <div class="card-body">
+            <div class="alert alert-warning">
+                <svg width="14" height="14"><use href="#i-alert-triangle"/></svg>
+                {{ cita.paciente }} todavía no tiene correo registrado. Ingresalo para
+                poder enviarle el estudio de <strong>{{ cita.tipo_estudio.nombre }}</strong>
+                ({{ cita.fecha }}).
+            </div>
+
+            <form method="post">
+                {% csrf_token %}
+                {{ form.non_field_errors }}
+
+                <label for="{{ form.correo.id_for_label }}">{{ form.correo.label }}</label>
+                {{ form.correo }}
+                {{ form.correo.errors }}
+
+                <button type="submit" class="btn btn-primary btn-block mt-2">
+                    <svg width="14" height="14"><use href="#i-send"/></svg>
+                    Guardar y enviar estudio
+                </button>
+            </form>
+        </div>
+    </div>
+{% endblock %}
