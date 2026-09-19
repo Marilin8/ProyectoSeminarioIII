@@ -684,9 +684,12 @@ class AgregarEstudioExtraForm(forms.Form):
     """El radiólogo avisa que le realizó al paciente un estudio extra al
     agendado. Caja lo cobra directamente o lo agrupa según el convenio."""
 
+    # Opcional: en adjuntar_informe casi nunca hay estudio extra, y un
+    # <select required> impide guardar el informe sin elegir uno.
     tipo_estudio = forms.ModelChoiceField(
         queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
         label='Estudio extra realizado',
+        required=False,
     )
     notas = forms.CharField(
         label='Notas (opcional)', max_length=255, required=False,
@@ -700,6 +703,65 @@ class GenerarOrdenForm(forms.Form):
         widget=forms.Textarea(attrs={'rows': 4}),
         help_text='Ej: Paciente presenta lesiones graves en el brazo izquierdo.',
     )
+
+
+class SolicitarModificacionEstudioForm(forms.Form):
+    """El técnico le explica a recepción qué hay que cambiar del estudio
+    (ver validar_estudio)."""
+
+    nota = forms.CharField(
+        label='¿Qué hay que modificar?',
+        max_length=500,
+        widget=forms.Textarea(attrs={
+            'rows': 4,
+            'placeholder': 'Ej.: El paciente vino por una radiografía de hombro, no de clavícula.',
+        }),
+        error_messages={'required': 'Indicá qué hay que modificar del estudio.'},
+    )
+
+    def clean_nota(self):
+        nota = (self.cleaned_data.get('nota') or '').strip()
+        if not nota:
+            raise forms.ValidationError('Indicá qué hay que modificar del estudio.')
+        return nota
+
+
+class CorregirEstudioForm(forms.Form):
+    """Recepción actualiza el estudio (y, si hace falta, el radiólogo y la
+    indicación clínica) que el técnico pidió modificar."""
+
+    tipo_estudio = forms.ModelChoiceField(
+        label='Estudio correcto',
+        queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
+    )
+    radiologo = forms.ModelChoiceField(
+        label='Radiólogo asignado',
+        required=False,
+        queryset=_radiologos_disponibles(),
+        help_text='Solo aparecen los radiólogos que realizan el estudio elegido.',
+    )
+    motivo = forms.CharField(
+        label='Motivo / indicación clínica',
+        widget=forms.Textarea(attrs={'rows': 3}),
+    )
+    comentario = forms.CharField(
+        label='Comentario para el técnico (opcional)',
+        max_length=150,
+        required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'Ej.: Ya se cambió a hombro.'}),
+    )
+
+    def __init__(self, *args, cita, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cita = cita
+
+    def clean(self):
+        cleaned = super().clean()
+        # Las citas de emergencia sin radiólogo asignado se quedan así; si la
+        # cita ya tenía uno (o se elige uno ahora), tiene que hacer el estudio.
+        if self.cita.radiologo_id or cleaned.get('radiologo'):
+            resolver_radiologo_para_estudio(self, cleaned)
+        return cleaned
 
 
 EXTENSIONES_IMAGEN_DIRECTA = ('.jpg', '.jpeg', '.png')

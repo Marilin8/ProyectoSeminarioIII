@@ -402,6 +402,18 @@ class Cita(models.Model):
     def __str__(self):
         return f'{self.paciente} - {self.fecha} {self.hora}'
 
+    # Citas que todavía no entraron al flujo de trabajo (sin orden ni cobro):
+    # son las únicas que recepción puede eliminar del calendario.
+    ESTADOS_ELIMINABLES = (ESTADO_PENDIENTE, ESTADO_AGENDADA, ESTADO_EN_ESPERA)
+
+    @property
+    def se_puede_eliminar(self):
+        return (
+            self.estado in self.ESTADOS_ELIMINABLES
+            and not hasattr(self, 'orden_trabajo')
+            and not hasattr(self, 'cobro')
+        )
+
     @property
     def esta_tarde(self):
         if self.estado != self.ESTADO_AGENDADA or self.hora_llegada:
@@ -564,6 +576,17 @@ class Cobro(models.Model):
     def pagado(self):
         return self.estado == self.ESTADO_PAGADO
 
+    @property
+    def orden(self):
+        return getattr(self.cita, 'orden_trabajo', None)
+
+    @property
+    def listo_para_cobrar(self):
+        """Caja solo puede cobrar cuando el técnico confirmó que el estudio
+        es el correcto (ver OrdenTrabajo.validacion_estado)."""
+        orden = self.orden
+        return orden is not None and orden.esta_verificada
+
     def marcar_pagado(self, usuario, notas=''):
         """Marca el cobro como pagado y guarda quién y cuándo."""
         self.estado = self.ESTADO_PAGADO
@@ -688,8 +711,43 @@ class ReporteDiario(models.Model):
 
 
 class OrdenTrabajo(models.Model):
+    # Verificación del técnico antes de cargar las imágenes y de que Caja
+    # pueda cobrar: confirma que el estudio agendado es el correcto o le
+    # pide a recepción que lo modifique (ver validar_estudio).
+    VALIDACION_PENDIENTE = 'pendiente'
+    VALIDACION_CORRECTO = 'correcto'
+    VALIDACION_MODIFICACION = 'modificacion'
+    VALIDACION_CORREGIDO = 'corregido'
+    VALIDACION_CHOICES = [
+        (VALIDACION_PENDIENTE, 'Pendiente de verificación del técnico'),
+        (VALIDACION_CORRECTO, 'Estudio correcto'),
+        (VALIDACION_MODIFICACION, 'Modificación solicitada a recepción'),
+        (VALIDACION_CORREGIDO, 'Actualizado por recepción, falta confirmar'),
+    ]
+
     cita = models.OneToOneField(Cita, on_delete=models.PROTECT, related_name='orden_trabajo')
     motivo = models.TextField(verbose_name='motivo / indicación clínica')
+    validacion_estado = models.CharField(
+        max_length=15, choices=VALIDACION_CHOICES, default=VALIDACION_PENDIENTE,
+        verbose_name='verificación del técnico',
+    )
+    validacion_nota = models.TextField(
+        blank=True, verbose_name='qué hay que modificar',
+        help_text='Lo que el técnico le pidió cambiar a recepción.',
+    )
+    validacion_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='ordenes_validadas',
+    )
+    validacion_en = models.DateTimeField(null=True, blank=True)
+    correccion_detalle = models.CharField(
+        max_length=255, blank=True, verbose_name='qué cambió recepción',
+    )
+    correccion_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='ordenes_corregidas',
+    )
+    correccion_en = models.DateTimeField(null=True, blank=True)
     creada_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='ordenes_trabajo_creadas'
     )
@@ -730,6 +788,10 @@ class OrdenTrabajo(models.Model):
     @property
     def tiene_imagenes(self):
         return self.imagenes.exists()
+
+    @property
+    def esta_verificada(self):
+        return self.validacion_estado == self.VALIDACION_CORRECTO
 
     class Meta:
         db_table = 'ordenes_trabajo'
@@ -944,6 +1006,10 @@ class Notificacion(models.Model):
     TIPO_DATOS_PACIENTE_PENDIENTES = 'datos_paciente_pendientes'
     TIPO_REPORTE_ENVIADO = 'reporte_enviado'
     TIPO_ESTUDIO_EXTRA_AGREGADO = 'estudio_extra_agregado'
+    TIPO_ESTUDIO_VALIDADO = 'estudio_validado'
+    TIPO_MODIFICACION_SOLICITADA = 'modificacion_solicitada'
+    TIPO_ESTUDIO_ACTUALIZADO = 'estudio_actualizado'
+    TIPO_CITA_CANCELADA = 'cita_cancelada'
 
     TIPO_CHOICES = [
         (TIPO_CITA_ASIGNADA, 'Nueva cita asignada'),
@@ -955,6 +1021,10 @@ class Notificacion(models.Model):
         (TIPO_DATOS_PACIENTE_PENDIENTES, 'Datos de paciente pendientes de llenar'),
         (TIPO_REPORTE_ENVIADO, 'Reporte diario enviado'),
         (TIPO_ESTUDIO_EXTRA_AGREGADO, 'Estudio extra agregado'),
+        (TIPO_ESTUDIO_VALIDADO, 'Estudio verificado, listo para cobrar'),
+        (TIPO_MODIFICACION_SOLICITADA, 'Modificación de estudio solicitada'),
+        (TIPO_ESTUDIO_ACTUALIZADO, 'Estudio actualizado por recepción'),
+        (TIPO_CITA_CANCELADA, 'Cita cancelada por recepción'),
     ]
 
     destinatario = models.ForeignKey(

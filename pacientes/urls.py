@@ -169,6 +169,10 @@ urlpatterns = [
         views.adjuntar_imagenes_finalizar,
         name='adjuntar_imagenes_finalizar',
     ),
+    path('ordenes/pendientes/<int:orden_id>/validar/', views.validar_estudio, name='validar_estudio'),
+    path('estudios/por-corregir/', views.estudios_por_corregir, name='estudios_por_corregir'),
+    path('citas/<int:cita_id>/corregir-estudio/', views.corregir_estudio_cita, name='corregir_estudio_cita'),
+    path('citas/<int:cita_id>/eliminar/', views.eliminar_cita, name='eliminar_cita'),
     path('citas/procesadas/', views.citas_procesadas, name='citas_procesadas'),
     path('citas/procesadas/<int:cita_id>/informe/', views.adjuntar_informe, name='adjuntar_informe'),
     path(
@@ -199,6 +203,7 @@ urlpatterns = [
     path('turnos/<int:ticket_id>/siguiente/', views.avanzar_turno, name='avanzar_turno'),
     path('turnos/<int:ticket_id>/mover/', views.mover_turno, name='mover_turno'),
     path('turnos/<int:ticket_id>/procesar/', views.procesar_turno, name='procesar_turno'),
+    path('turnos/<int:ticket_id>/eliminar/', views.eliminar_turno, name='eliminar_turno'),
     path('notificaciones/pendientes/', views.notificaciones_pendientes, name='notificaciones_pendientes'),
     path(
         'notificaciones/<int:notificacion_id>/marcar-leida/',

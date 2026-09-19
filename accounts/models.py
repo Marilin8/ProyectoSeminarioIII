@@ -175,6 +175,11 @@ class Bitacora(models.Model):
     ACCION_EDITAR_COMBO = 'editar_combo'
     ACCION_MARCAR_COBRADO = 'marcar_cobrado'
     ACCION_AGREGAR_ESTUDIO_EXTRA = 'agregar_estudio_extra'
+    ACCION_VALIDAR_ESTUDIO = 'validar_estudio'
+    ACCION_SOLICITAR_MODIFICACION = 'solicitar_modificacion'
+    ACCION_CORREGIR_ESTUDIO = 'corregir_estudio'
+    ACCION_ELIMINAR_CITA = 'eliminar_cita'
+    ACCION_ELIMINAR_TURNO = 'eliminar_turno'
 
     ACCION_CHOICES = [
         (ACCION_LOGIN_EXITOSO, 'Inicio de sesión'),
@@ -208,6 +213,11 @@ class Bitacora(models.Model):
         (ACCION_EDITAR_COMBO, 'Edición de combo de estudios'),
         (ACCION_MARCAR_COBRADO, 'Marcar estudio como cobrado'),
         (ACCION_AGREGAR_ESTUDIO_EXTRA, 'Agregó un estudio extra a una cita'),
+        (ACCION_VALIDAR_ESTUDIO, 'El técnico confirmó que el estudio es correcto'),
+        (ACCION_SOLICITAR_MODIFICACION, 'El técnico pidió modificar el estudio'),
+        (ACCION_CORREGIR_ESTUDIO, 'Recepción modificó el estudio de una cita'),
+        (ACCION_ELIMINAR_CITA, 'Eliminación de una cita del calendario'),
+        (ACCION_ELIMINAR_TURNO, 'Eliminación de un turno de la fila de espera'),
     ]
 
     usuario = models.ForeignKey(
