@@ -46,17 +46,19 @@
                 <option value="" {% if not estado %}selected{% endif %}>Todos</option>
             </select>
         </div>
-        <div style="display:flex;flex-direction:column;gap:0.2rem;">
-            <label for="convenio" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Convenio</label>
-            <select name="convenio" id="convenio">
-                <option value="">Todos</option>
-                {% for valor, etiqueta in convenios %}
-                    {% if valor != 'privado' %}
-                        <option value="{{ valor }}" {% if convenio == valor %}selected{% endif %}>{{ etiqueta }}</option>
-                    {% endif %}
-                {% endfor %}
-            </select>
-        </div>
+        {% if convenio == 'emergencia_igss' %}
+            <div style="display:flex;flex-direction:column;gap:0.2rem;">
+                <label for="convenio" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Convenio</label>
+                <select name="convenio" id="convenio">
+                    <option value="">Todos</option>
+                    {% for valor, etiqueta in convenios %}
+                        {% if valor != 'privado' %}
+                            <option value="{{ valor }}" {% if convenio == valor %}selected{% endif %}>{{ etiqueta }}</option>
+                        {% endif %}
+                    {% endfor %}
+                </select>
+            </div>
+        {% endif %}
         <div style="display:flex;flex-direction:column;gap:0.2rem;">
             <label for="tipo_estudio" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Estudio</label>
             <select name="tipo_estudio" id="tipo_estudio">
