@@ -69,6 +69,7 @@ from .models import (
     HistorialModalidad,
     HistorialPrecioEstudio,
     ImagenEstudio,
+    InformeEstudio,
     Modalidad,
     Notificacion,
     OrdenPago,
@@ -1378,6 +1379,7 @@ def ver_estudio_historial(request, cita_id):
         'cita': cita,
         'orden': orden,
         'imagenes': imagenes,
+        'informes': orden.informes.select_related('tipo_estudio').all(),
         'edad': orden.edad_paciente,
         'volver_url': reverse('historial_paciente', args=[cita.paciente_id]),
     })
@@ -1706,6 +1708,21 @@ def lista_combos(request):
     return render(request, 'pacientes/lista_combos.html', {'combos': combos})
 
 
+def _avisar_si_combo_sin_radiologo_en_comun(request, combo, tipo_estudio):
+    """El espejo del combo (ver Combo.sincronizar_tipo_estudio) solo queda
+    con radiólogo para elegir al agendar si hay al menos uno que haga TODOS
+    sus estudios. Si la intersección quedó vacía, se avisa -- el combo se
+    crea/edita igual, solo que no se va a poder asignar radiólogo al
+    agendarlo hasta que se corrija."""
+    if combo.estudios.exists() and not tipo_estudio.radiologos.exists():
+        messages.warning(
+            request,
+            f'Ningún radiólogo hace todos los estudios de "{combo.nombre}": no vas a poder '
+            'asignarle uno al agendarlo. Revisá los radiólogos asignados a cada estudio '
+            'del combo (Estudios) para que al menos uno cubra todos.',
+        )
+
+
 @login_required
 @user_passes_test(es_administrador)
 def crear_combo(request):
@@ -1713,6 +1730,7 @@ def crear_combo(request):
         form = ComboForm(request.POST)
         if form.is_valid():
             combo = form.save()
+            tipo_estudio = combo.sincronizar_tipo_estudio()
             Bitacora.registrar(
                 request=request,
                 usuario=request.user,
@@ -1720,6 +1738,7 @@ def crear_combo(request):
                 descripcion=f'Creó el combo "{combo.nombre}" con {combo.estudios.count()} estudios.',
             )
             messages.success(request, f'Combo "{combo.nombre}" creado correctamente.')
+            _avisar_si_combo_sin_radiologo_en_comun(request, combo, tipo_estudio)
             return redirect('lista_combos')
     else:
         form = ComboForm()
@@ -1734,6 +1753,7 @@ def editar_combo(request, combo_id):
         form = ComboForm(request.POST, instance=combo)
         if form.is_valid():
             combo = form.save()
+            tipo_estudio = combo.sincronizar_tipo_estudio()
             Bitacora.registrar(
                 request=request,
                 usuario=request.user,
@@ -1741,6 +1761,7 @@ def editar_combo(request, combo_id):
                 descripcion=f'Editó el combo "{combo.nombre}".',
             )
             messages.success(request, f'Combo "{combo.nombre}" actualizado correctamente.')
+            _avisar_si_combo_sin_radiologo_en_comun(request, combo, tipo_estudio)
             return redirect('lista_combos')
     else:
         form = ComboForm(instance=combo)
@@ -2332,9 +2353,19 @@ def ordenes_pendientes(request):
     filtro_fecha = (request.GET.get('fecha') or '').strip()
     filtro_tipo_estudio = (request.GET.get('tipo_estudio') or '').strip()
 
-    ordenes = (
+    # "Pendiente" ahora depende de si YA hay imagen para cada estudio de la
+    # cita (uno solo si no es combo, ver Cita.estudios) -- no es una columna,
+    # así que se calcula en Python sobre los candidatos y se vuelve a
+    # consultar por id para poder seguir filtrando/paginando a nivel SQL.
+    candidatas = (
         OrdenTrabajo.objects.filter(cita__estado=Cita.ESTADO_EN_PROCESO)
-        .exclude(imagenes__isnull=False)
+        .select_related('cita', 'cita__tipo_estudio')
+        .prefetch_related('imagenes', 'cita__tipo_estudio__combo_origen__estudios')
+    )
+    ids_pendientes = [o.id for o in candidatas if not o.imagenes_completas]
+
+    ordenes = (
+        OrdenTrabajo.objects.filter(id__in=ids_pendientes)
         .select_related('cita', 'cita__paciente', 'cita__tipo_estudio')
         .distinct()
     )
@@ -2360,9 +2391,7 @@ def ordenes_pendientes(request):
         'filtro_fecha': filtro_fecha,
         'filtro_tipo_estudio': filtro_tipo_estudio,
         'tipos_estudio': TipoEstudio.objects.filter(
-            id__in=OrdenTrabajo.objects.filter(cita__estado=Cita.ESTADO_EN_PROCESO)
-            .exclude(imagenes__isnull=False)
-            .values('cita__tipo_estudio_id')
+            id__in=OrdenTrabajo.objects.filter(id__in=ids_pendientes).values('cita__tipo_estudio_id')
         ).order_by('nombre'),
     }
 
@@ -2375,15 +2404,18 @@ def ordenes_pendientes(request):
     return render(request, 'pacientes/ordenes_pendientes.html', contexto)
 
 
-def _guardar_imagen_o_convertir_dicom(archivo, orden, usuario):
-    """Guarda un archivo como ImagenEstudio: si ya es JPG/PNG lo guarda tal
-    cual, si no (.dcm o sin extensión, como viene de la carpeta que exporta
-    el equipo) intenta convertirlo de DICOM a JPG y conserva además el
-    archivo DICOM original (para que la radióloga lo pueda descargar).
-    Devuelve True si quedó guardada, False si se omitió (no era un DICOM
-    válido)."""
+def _guardar_imagen_o_convertir_dicom(archivo, orden, usuario, tipo_estudio):
+    """Guarda un archivo como ImagenEstudio (ligada a `tipo_estudio`, el
+    estudio de la cita al que pertenece -- ver Cita.estudios): si ya es
+    JPG/PNG lo guarda tal cual, si no (.dcm o sin extensión, como viene de
+    la carpeta que exporta el equipo) intenta convertirlo de DICOM a JPG y
+    conserva además el archivo DICOM original (para que la radióloga lo
+    pueda descargar). Devuelve True si quedó guardada, False si se omitió
+    (no era un DICOM válido)."""
     if archivo.name.lower().endswith(EXTENSIONES_IMAGEN_DIRECTA):
-        ImagenEstudio.objects.create(orden=orden, archivo=archivo, subida_por=usuario)
+        ImagenEstudio.objects.create(
+            orden=orden, tipo_estudio=tipo_estudio, archivo=archivo, subida_por=usuario,
+        )
         return True
 
     # dicom_a_jpg_memoria consume el stream del archivo al leerlo con
@@ -2394,7 +2426,7 @@ def _guardar_imagen_o_convertir_dicom(archivo, orden, usuario):
 
     jpg_convertido = dicom_a_jpg_memoria(archivo)
     if jpg_convertido:
-        nueva_imagen = ImagenEstudio(orden=orden, subida_por=usuario)
+        nueva_imagen = ImagenEstudio(orden=orden, tipo_estudio=tipo_estudio, subida_por=usuario)
         nueva_imagen.archivo.save(jpg_convertido.name, jpg_convertido, save=False)
         nombre_original = archivo.name if '.' in archivo.name else f'{archivo.name}.dcm'
         nueva_imagen.archivo_original.save(
@@ -2407,15 +2439,26 @@ def _guardar_imagen_o_convertir_dicom(archivo, orden, usuario):
     return False
 
 
+def _tipo_estudio_del_combo(orden, tipo_estudio_id):
+    """Valida que `tipo_estudio_id` sea uno de los estudios de esta cita
+    (ver Cita.estudios) y lo devuelve, o None si no corresponde."""
+    for estudio in orden.cita.estudios:
+        if str(estudio.id) == str(tipo_estudio_id):
+            return estudio
+    return None
+
+
 @login_required
 @user_passes_test(es_tecnico)
 def adjuntar_imagenes(request, orden_id):
-    """Pantalla de carga. El envío real (y la barra de progreso) los maneja
-    el JS del template llamando a adjuntar_imagenes_lote/_finalizar en
-    tandas; este POST solo queda como respaldo por si el navegador no
-    ejecuta JavaScript."""
+    """Pantalla de carga: un bloque por cada estudio de la cita (uno solo si
+    no es un combo, ver Cita.estudios). El envío real (y la barra de
+    progreso) los maneja el JS del template llamando a
+    adjuntar_imagenes_lote/_finalizar en tandas, por bloque; este POST solo
+    queda como respaldo por si el navegador no ejecuta JavaScript."""
     orden = get_object_or_404(OrdenTrabajo, id=orden_id, cita__estado=Cita.ESTADO_EN_PROCESO)
     volver_url = reverse('ordenes_pendientes')
+    estudios = orden.cita.estudios
 
     if request.method == 'POST':
         if not orden.esta_verificada:
@@ -2423,9 +2466,13 @@ def adjuntar_imagenes(request, orden_id):
             return redirect('adjuntar_imagenes', orden_id=orden.id)
         form = AdjuntarImagenesForm(request.POST, request.FILES)
         if form.is_valid():
+            tipo_estudio = form.cleaned_data['tipo_estudio']
+            if tipo_estudio not in estudios:
+                messages.error(request, 'Ese estudio no corresponde a esta orden.')
+                return redirect('adjuntar_imagenes', orden_id=orden.id)
             archivos = form.cleaned_data['imagenes']
             adjuntadas = sum(
-                _guardar_imagen_o_convertir_dicom(archivo, orden, request.user)
+                _guardar_imagen_o_convertir_dicom(archivo, orden, request.user, tipo_estudio)
                 for archivo in archivos
             )
 
@@ -2442,24 +2489,38 @@ def adjuntar_imagenes(request, orden_id):
                 usuario=request.user,
                 accion=Bitacora.ACCION_ADJUNTAR_IMAGENES,
                 descripcion=(
-                    f'Adjuntó {adjuntadas} imagen(es) a la orden de {orden.cita.paciente} '
-                    f'(orden #{orden.id}).'
+                    f'Adjuntó {adjuntadas} imagen(es) de {tipo_estudio.nombre} a la orden de '
+                    f'{orden.cita.paciente} (orden #{orden.id}).'
                 ),
             )
+            if orden.imagenes_completas:
+                messages.success(
+                    request,
+                    f'Imágenes adjuntadas para {orden.cita.paciente}. Ya está lista para la radióloga.',
+                )
+                return redirect(volver_url)
             messages.success(
-                request, f'Imágenes adjuntadas para {orden.cita.paciente}. Ya está lista para la radióloga.'
+                request,
+                f'Imágenes de {tipo_estudio.nombre} adjuntadas. Todavía falta cargar el resto del combo.',
             )
-            return redirect(volver_url)
-    else:
-        form = AdjuntarImagenesForm()
+            return redirect('adjuntar_imagenes', orden_id=orden.id)
+
+    bloques = [
+        {
+            'tipo_estudio': estudio,
+            'imagenes': orden.imagenes.filter(tipo_estudio=estudio),
+            'form': AdjuntarImagenesForm(initial={'tipo_estudio': estudio.id}),
+        }
+        for estudio in estudios
+    ]
 
     return render(request, 'pacientes/adjuntar_imagenes.html', {
-        'form': form,
         'form_modificacion': SolicitarModificacionEstudioForm(),
         'cita': orden.cita,
         'orden': orden,
         'edad': orden.edad_paciente,
         'volver_url': volver_url,
+        'bloques': bloques,
     })
 
 
@@ -2468,19 +2529,23 @@ def adjuntar_imagenes(request, orden_id):
 @require_POST
 def adjuntar_imagenes_lote(request, orden_id):
     """Guarda una tanda de archivos de la carpeta que está subiendo el
-    técnico. El JS de adjuntar_imagenes.html llama a esta vista una vez por
-    tanda (en vez de mandar la carpeta entera en un solo POST) para poder
-    mostrar una barra de progreso real mientras se procesan los DICOM."""
+    técnico, para un estudio puntual de la cita (`tipo_estudio` en el POST).
+    El JS de adjuntar_imagenes.html llama a esta vista una vez por tanda (en
+    vez de mandar la carpeta entera en un solo POST) para poder mostrar una
+    barra de progreso real mientras se procesan los DICOM."""
     orden = get_object_or_404(OrdenTrabajo, id=orden_id, cita__estado=Cita.ESTADO_EN_PROCESO)
     if not orden.esta_verificada:
         return JsonResponse({'ok': False, 'error': MENSAJE_VERIFICAR_ESTUDIO}, status=403)
+    tipo_estudio = _tipo_estudio_del_combo(orden, request.POST.get('tipo_estudio'))
+    if tipo_estudio is None:
+        return JsonResponse({'ok': False, 'error': 'Estudio no válido para esta orden.'}, status=400)
     archivos = request.FILES.getlist('imagenes')
     guardadas = 0
     for archivo in archivos:
         nombre = archivo.name.lower()
         if nombre.startswith('.') or nombre.endswith(NOMBRES_IGNORADOS_EN_CARPETA):
             continue
-        if _guardar_imagen_o_convertir_dicom(archivo, orden, request.user):
+        if _guardar_imagen_o_convertir_dicom(archivo, orden, request.user, tipo_estudio):
             guardadas += 1
     return JsonResponse({'guardadas': guardadas, 'recibidas': len(archivos)})
 
@@ -2489,13 +2554,19 @@ def adjuntar_imagenes_lote(request, orden_id):
 @user_passes_test(es_tecnico)
 @require_POST
 def adjuntar_imagenes_finalizar(request, orden_id):
-    """Cierra la carga después de que el JS terminó de mandar todas las
-    tandas: notifica a la radióloga y registra la bitácora, igual que hacía
-    el envío síncrono de un solo POST."""
+    """Cierra la carga de un estudio puntual de la cita después de que el JS
+    terminó de mandar todas las tandas: notifica a la radióloga y registra
+    la bitácora. Solo manda de vuelta a "Órdenes pendientes" cuando YA
+    quedaron cargados todos los estudios de la cita (ver
+    OrdenTrabajo.imagenes_completas); si es un combo y todavía falta otro
+    estudio, se queda en la misma pantalla para seguir cargando."""
     orden = get_object_or_404(OrdenTrabajo, id=orden_id, cita__estado=Cita.ESTADO_EN_PROCESO)
     if not orden.esta_verificada:
         return JsonResponse({'ok': False, 'error': MENSAJE_VERIFICAR_ESTUDIO}, status=403)
-    adjuntadas = orden.imagenes.count()
+    tipo_estudio = _tipo_estudio_del_combo(orden, request.POST.get('tipo_estudio'))
+    if tipo_estudio is None:
+        return JsonResponse({'ok': False, 'error': 'Estudio no válido para esta orden.'}, status=400)
+    adjuntadas = orden.imagenes.filter(tipo_estudio=tipo_estudio).count()
 
     if adjuntadas == 0:
         return JsonResponse(
@@ -2509,14 +2580,20 @@ def adjuntar_imagenes_finalizar(request, orden_id):
         usuario=request.user,
         accion=Bitacora.ACCION_ADJUNTAR_IMAGENES,
         descripcion=(
-            f'Adjuntó {adjuntadas} imagen(es) a la orden de {orden.cita.paciente} '
-            f'(orden #{orden.id}).'
+            f'Adjuntó {adjuntadas} imagen(es) de {tipo_estudio.nombre} a la orden de '
+            f'{orden.cita.paciente} (orden #{orden.id}).'
         ),
     )
-    messages.success(
-        request, f'Imágenes adjuntadas para {orden.cita.paciente}. Ya está lista para la radióloga.'
-    )
-    return JsonResponse({'ok': True, 'redirect_url': reverse('ordenes_pendientes')})
+    completo = orden.imagenes_completas
+    if completo:
+        messages.success(
+            request, f'Imágenes adjuntadas para {orden.cita.paciente}. Ya está lista para la radióloga.'
+        )
+    return JsonResponse({
+        'ok': True,
+        'completo': completo,
+        'redirect_url': reverse('ordenes_pendientes') if completo else None,
+    })
 
 
 @login_required
@@ -2752,8 +2829,11 @@ def adjuntar_informe(request, cita_id):
         Cita.CONVENIO_EMERGENCIA_IGSS,
     )
 
+    estudios = cita.estudios
+    informes_por_estudio = {i.tipo_estudio_id: i for i in orden.informes.all()}
+
     if request.method == 'POST':
-        form = AdjuntarInformeForm(request.POST, request.FILES)
+        form = AdjuntarInformeForm(request.POST, request.FILES, estudios=estudios)
         # El estudio extra se agrega en el mismo envío que el informe (no
         # tiene su propio botón): solo se valida/crea si de verdad se eligió
         # uno, para no exigirlo cuando el radiólogo solo quiere guardar el
@@ -2763,32 +2843,63 @@ def adjuntar_informe(request, cita_id):
             form_estudio_extra = AgregarEstudioExtraForm(request.POST)
 
         if form.is_valid() and (form_estudio_extra is None or form_estudio_extra.is_valid()):
-            orden.informe_texto = form.cleaned_data['informe_texto']
-            if form.cleaned_data['informe_archivo']:
-                orden.informe_archivo = form.cleaned_data['informe_archivo']
-            orden.informe_creado_por = request.user
-            orden.informe_creado_en = timezone.now()
-            orden.save(update_fields=[
-                'informe_texto', 'informe_archivo', 'informe_creado_por', 'informe_creado_en',
-            ])
-            cita.estado = Cita.ESTADO_PROCESADA
-            cita.save(update_fields=['estado'])
+            guardados = []
+            for estudio in estudios:
+                texto, archivo = form.valores_para(estudio)
+                if not texto and not archivo:
+                    continue
+                defaults = {'creado_por': request.user, 'creado_en': timezone.now()}
+                if texto:
+                    defaults['texto'] = texto
+                if archivo:
+                    defaults['archivo'] = archivo
+                InformeEstudio.objects.update_or_create(orden=orden, tipo_estudio=estudio, defaults=defaults)
+                guardados.append(estudio.nombre)
 
             if form_estudio_extra is not None:
                 _registrar_estudio_extra(request, cita, form_estudio_extra)
 
-            _notificar_estudio_completado(cita)
+            completos_ids = {i.tipo_estudio_id for i in orden.informes.all() if i.texto or i.archivo}
+            faltan = [e.nombre for e in estudios if e.id not in completos_ids]
             Bitacora.registrar(
                 request=request,
                 usuario=request.user,
                 accion=Bitacora.ACCION_ADJUNTAR_INFORME,
-                descripcion=f'Adjuntó el informe de {cita.paciente} (cita #{cita.id}).',
+                descripcion=(
+                    f'Adjuntó el informe de {", ".join(guardados)} para {cita.paciente} (cita #{cita.id})'
+                    + ('.' if not faltan else f'; todavía falta: {", ".join(faltan)}.')
+                ),
             )
-            messages.success(request, f'Informe adjuntado para {cita.paciente}.')
+            if not faltan:
+                cita.estado = Cita.ESTADO_PROCESADA
+                cita.save(update_fields=['estado'])
+                _notificar_estudio_completado(cita)
+                messages.success(request, f'Informe completo para {cita.paciente}. Ya se puede enviar al paciente.')
+            else:
+                messages.success(
+                    request,
+                    f'Informe guardado para {cita.paciente}. Todavía falta: {", ".join(faltan)}.',
+                )
             return redirect(volver_url)
     else:
-        form = AdjuntarInformeForm()
+        initial = {
+            f'texto_{estudio.id}': informes_por_estudio[estudio.id].texto
+            for estudio in estudios
+            if estudio.id in informes_por_estudio and informes_por_estudio[estudio.id].texto
+        }
+        form = AdjuntarInformeForm(estudios=estudios, initial=initial)
         form_estudio_extra = AgregarEstudioExtraForm() if puede_agregar_extra else None
+
+    bloques = [
+        {
+            'tipo_estudio': estudio,
+            'tiene_imagenes': orden.imagenes.filter(tipo_estudio=estudio).exists(),
+            'informe': informes_por_estudio.get(estudio.id),
+            'campo_texto': form[f'texto_{estudio.id}'],
+            'campo_archivo': form[f'archivo_{estudio.id}'],
+        }
+        for estudio in estudios
+    ]
 
     return render(request, 'pacientes/adjuntar_informe.html', {
         'form': form,
@@ -2796,6 +2907,7 @@ def adjuntar_informe(request, cita_id):
         'orden': orden,
         'edad': cita.paciente.edad_en(cita.fecha),
         'volver_url': volver_url,
+        'bloques': bloques,
         'tiene_dicom_original': any(img.archivo_original for img in orden.imagenes.all()),
         'form_estudio_extra': form_estudio_extra,
         'estudios_extra': cita.estudios_extra.select_related('tipo_estudio', 'agregado_por').all(),
@@ -2896,6 +3008,12 @@ def ver_imagenes_jpg(request, orden_id):
     que el navegador la deje incrustar ahí."""
     orden = get_object_or_404(OrdenTrabajo, id=orden_id)
     imagenes = orden.imagenes.filter(seleccionada=True).exclude(archivo='')
+    # Si viene de un bloque puntual de adjuntar_informe (un estudio del
+    # combo), filtra la galería a ese estudio; sin el parámetro muestra
+    # todas, como antes.
+    tipo_estudio_id = request.GET.get('tipo_estudio')
+    if tipo_estudio_id:
+        imagenes = imagenes.filter(tipo_estudio_id=tipo_estudio_id)
     return render(request, 'pacientes/ver_imagenes_jpg.html', {
         'orden': orden,
         'cita': orden.cita,
@@ -4201,13 +4319,15 @@ def visor_estudio(request):
     imagenes = list(
         orden.imagenes.filter(seleccionada=True).exclude(archivo='').order_by('subida_en')
     )
+    informes = list(orden.informes.select_related('tipo_estudio').all())
     return render(request, 'pacientes/visor_estudio.html', {
         'orden': orden,
         'cita': orden.cita,
         'paciente': paciente,
         'imagenes': imagenes,
         'tab': 'report' if request.GET.get('tab') == 'report' else 'images',
-        'tiene_pdf': bool(orden.informe_archivo),
+        'informes': informes,
+        'tiene_pdf': any(i.archivo for i in informes),
         'tiene_dicom': any(img.archivo_original for img in imagenes),
         'edad': paciente.edad_en(orden.cita.fecha),
     })
@@ -4259,16 +4379,17 @@ def visor_jpg(request, orden_id):
 
 
 @xframe_options_sameorigin
-def visor_informe_pdf(request, orden_id):
+def visor_informe_pdf(request, orden_id, informe_id):
     orden = _visor_orden_autorizada(request, orden_id)
-    if not orden.informe_archivo:
+    informe = get_object_or_404(InformeEstudio, id=informe_id, orden=orden)
+    if not informe.archivo:
         raise Http404
     descargar = request.GET.get('descargar') == '1'
     return FileResponse(
-        orden.informe_archivo.open('rb'),
+        informe.archivo.open('rb'),
         as_attachment=descargar,
         content_type='application/pdf',
-        filename=f'informe_{orden.cita.paciente.apellido}_{orden.cita.fecha}.pdf',
+        filename=f'informe_{informe.tipo_estudio.nombre}_{orden.cita.paciente.apellido}_{orden.cita.fecha}.pdf',
     )
 
 

@@ -840,6 +840,10 @@ class AdjuntarImagenesForm(forms.Form):
         ),
         widget=MultipleFileInput(attrs={'webkitdirectory': True, 'directory': True}),
     )
+    # A cuál estudio de la cita corresponde esta carga (uno solo si no es
+    # combo, ver Cita.estudios) -- oculto en el template cuando hay uno
+    # solo, visible por bloque cuando hay varios.
+    tipo_estudio = forms.ModelChoiceField(queryset=TipoEstudio.objects.all(), widget=forms.HiddenInput)
 
     def clean_imagenes(self):
         archivos = self.cleaned_data['imagenes']
@@ -854,23 +858,37 @@ class AdjuntarImagenesForm(forms.Form):
 
 
 class AdjuntarInformeForm(forms.Form):
-    informe_texto = forms.CharField(
-        label='Informe (texto)',
-        widget=forms.Textarea(attrs={'rows': 8}),
-        required=False,
-    )
-    informe_archivo = forms.FileField(
-        label='Informe (PDF)',
-        required=False,
-    )
+    """Un textarea + un archivo PDF por cada estudio de la cita (uno solo
+    si no es un combo, ver Cita.estudios) -- campos `texto_<tipo_estudio.id>`
+    / `archivo_<tipo_estudio.id>`. Se puede guardar el informe de un solo
+    estudio a la vez: no hace falta completar los demás en el mismo envío
+    (la orden solo se puede enviar al paciente cuando están todos, ver
+    OrdenTrabajo.tiene_informe)."""
+
+    def __init__(self, *args, estudios, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.estudios = list(estudios)
+        for estudio in self.estudios:
+            self.fields[f'texto_{estudio.id}'] = forms.CharField(
+                label='Informe (texto)', widget=forms.Textarea(attrs={'rows': 8}), required=False,
+            )
+            self.fields[f'archivo_{estudio.id}'] = forms.FileField(label='Informe (PDF)', required=False)
+
+    def valores_para(self, estudio):
+        return self.cleaned_data.get(f'texto_{estudio.id}'), self.cleaned_data.get(f'archivo_{estudio.id}')
 
     def clean(self):
         cleaned = super().clean()
-        if not cleaned.get('informe_texto') and not cleaned.get('informe_archivo'):
+        algo_completo = False
+        for estudio in self.estudios:
+            texto = cleaned.get(f'texto_{estudio.id}')
+            archivo = cleaned.get(f'archivo_{estudio.id}')
+            if texto or archivo:
+                algo_completo = True
+            if archivo and not archivo.name.lower().endswith('.pdf'):
+                self.add_error(f'archivo_{estudio.id}', 'El archivo adjunto debe ser un PDF.')
+        if not algo_completo:
             raise forms.ValidationError(
-                'Escribe el informe, adjunta un archivo, o ambos.'
+                'Escribe el informe de al menos un estudio, adjunta un archivo, o ambos.'
             )
-        archivo = cleaned.get('informe_archivo')
-        if archivo and not archivo.name.lower().endswith('.pdf'):
-            raise forms.ValidationError('El archivo adjunto debe ser un PDF.')
         return cleaned
