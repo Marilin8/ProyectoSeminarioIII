@@ -209,10 +209,10 @@ class AgendarCitaForm(forms.Form):
         widget=TipoEstudioSelect(),
     )
     modalidad = forms.ChoiceField(
-        label='Grupo de estudio',
-        choices=[('', 'Todos los grupos')] + list(TipoEstudio.MODALIDAD_CHOICES),
+        label='Modalidad',
+        choices=[],
         required=False,
-        help_text='Elegí el grupo para ver solo los estudios de ese tipo.',
+        help_text='Elegí la modalidad para ver solo los estudios de ese tipo.',
     )
     radiologo = forms.ModelChoiceField(
         label='Radiólogo asignado',
@@ -235,9 +235,19 @@ class AgendarCitaForm(forms.Form):
 
     def __init__(self, *args, convenio=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields['modalidad'].choices = [
+            ('', 'Todas las modalidades')
+        ] + [
+            (m.codigo, m.nombre)
+            for m in Modalidad.objects.filter(
+                activo=True,
+                codigo__isnull=False
+            ).exclude(codigo='').order_by('nombre')
+        ]
+
         self.fields['fecha_nacimiento'].widget.attrs['max'] = timezone.localdate().isoformat()
         self.fields['tipo_estudio'].queryset = (
-            self.fields['tipo_estudio'].queryset.prefetch_related('precios', 'radiologos')
+        self.fields['tipo_estudio'].queryset.prefetch_related('precios', 'radiologos')
         )
         self.fields['tipo_estudio'].widget.detalles = _detalles_tipo_estudio(
             self.fields['tipo_estudio'].queryset, convenio,
@@ -341,10 +351,10 @@ class AgendarCitaPrivadoForm(forms.Form):
         widget=TipoEstudioSelect(),
     )
     modalidad = forms.ChoiceField(
-        label='Grupo de estudio',
-        choices=[('', 'Todos los grupos')] + list(TipoEstudio.MODALIDAD_CHOICES),
+        label='Modalidad',
+        choices=[],
         required=False,
-        help_text='Elegí el grupo para ver solo los estudios de ese tipo.',
+        help_text='Elegí la modalidad para ver solo los estudios de ese tipo.',
     )
     radiologo = forms.ModelChoiceField(
         label='Radiólogo asignado',
@@ -362,6 +372,15 @@ class AgendarCitaPrivadoForm(forms.Form):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields['modalidad'].choices = [
+            ('', 'Todas las modalidades')
+        ] + [
+            (m.codigo, m.nombre)
+            for m in Modalidad.objects.filter(
+                activo=True,
+                codigo__isnull=False
+            ).exclude(codigo='').order_by('nombre')
+        ]
         self.fields['fecha_nacimiento'].widget.attrs['max'] = timezone.localdate().isoformat()
         queryset = self.fields['tipo_estudio'].queryset.prefetch_related('precios')
         self.fields['tipo_estudio'].queryset = queryset
