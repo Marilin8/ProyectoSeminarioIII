@@ -82,45 +82,47 @@
         <a class="btn btn-outline btn-sm" href="{% url 'pagos_pendientes' %}">Limpiar</a>
     </form>
 
-    <form method="post" action="{% url 'crear_orden_pago' %}" class="card mb-2 orden-agrupada">
-        {% csrf_token %}
-        <input type="hidden" name="combo" id="combo-seleccionado" value="">
-        <div class="orden-agrupada-cabecera">
-            <div>
-                <span class="eyebrow">Cobro por convenio</span>
-                <h3>Crear orden agrupada</h3>
-                <p class="text-muted text-sm">Agrupe estudios del mismo paciente y convenio para adjuntar una sola boleta global.</p>
+    {% if convenio == 'emergencia_igss' %}
+        <form method="post" action="{% url 'crear_orden_pago' %}" class="card mb-2 orden-agrupada">
+            {% csrf_token %}
+            <input type="hidden" name="combo" id="combo-seleccionado" value="">
+            <div class="orden-agrupada-cabecera">
+                <div>
+                    <span class="eyebrow">Cobro por convenio</span>
+                    <h3>Crear orden agrupada</h3>
+                    <p class="text-muted text-sm">Agrupe estudios del mismo paciente para adjuntar una sola boleta global.</p>
+                </div>
+                <span class="badge badge-info">Emergencia IGSS</span>
             </div>
-            <span class="badge badge-info">COEX · Emergencia IGSS</span>
-        </div>
-        <div class="orden-agrupada-lista">
-            {% for cobro in cobros_para_orden %}
-                    <label class="estudio-seleccionable"
-                           data-tipo-estudio="{{ cobro.cita.tipo_estudio_id }}"
-                           data-precio="{{ cobro.cita.precio }}"
-                           data-convenio="{{ cobro.cita.convenio }}">
-                        <input type="checkbox" name="cita_ids" value="{{ cobro.cita_id }}">
-                        <span>
-                            <strong>{{ cobro.cita.paciente.nombre }} {{ cobro.cita.paciente.apellido }}</strong>
-                            <small>{{ cobro.cita.tipo_estudio.nombre }} · {{ cobro.cita.get_convenio_display }} · Q{{ cobro.cita.precio|floatformat:2 }}</small>
-                        </span>
-                    </label>
-            {% empty %}
-                <span class="text-muted">No hay estudios pendientes para agrupar.</span>
-            {% endfor %}
-        </div>
-        <div id="resumen-orden" class="orden-resumen" hidden>
-            <strong>Resumen de la orden</strong>
-            <div id="resumen-estudios"></div>
-            <div id="resumen-totales"></div>
-        </div>
-        <div class="orden-agrupada-opciones">
-            <label>Notas
-                <input type="text" name="notas" placeholder="Ej.: pago global de convenio">
-            </label>
-            <button type="submit" class="btn btn-primary" id="crear-orden">Crear orden de pago</button>
-        </div>
-    </form>
+            <div class="orden-agrupada-lista">
+                {% for cobro in cobros_para_orden %}
+                        <label class="estudio-seleccionable"
+                               data-tipo-estudio="{{ cobro.cita.tipo_estudio_id }}"
+                               data-precio="{{ cobro.cita.precio }}"
+                               data-convenio="{{ cobro.cita.convenio }}">
+                            <input type="checkbox" name="cita_ids" value="{{ cobro.cita_id }}">
+                            <span>
+                                <strong>{{ cobro.cita.paciente.nombre }} {{ cobro.cita.paciente.apellido }}</strong>
+                                <small>{{ cobro.cita.tipo_estudio.nombre }} · {{ cobro.cita.get_convenio_display }} · Q{{ cobro.cita.precio|floatformat:2 }}</small>
+                            </span>
+                        </label>
+                {% empty %}
+                    <span class="text-muted">No hay estudios pendientes para agrupar.</span>
+                {% endfor %}
+            </div>
+            <div id="resumen-orden" class="orden-resumen" hidden>
+                <strong>Resumen de la orden</strong>
+                <div id="resumen-estudios"></div>
+                <div id="resumen-totales"></div>
+            </div>
+            <div class="orden-agrupada-opciones">
+                <label>Notas
+                    <input type="text" name="notas" placeholder="Ej.: pago global de convenio">
+                </label>
+                <button type="submit" class="btn btn-primary" id="crear-orden">Crear orden de pago</button>
+            </div>
+        </form>
+    {% endif %}
 
     {% if ordenes_pago %}
         <div class="card mb-2" style="padding:1rem;">
