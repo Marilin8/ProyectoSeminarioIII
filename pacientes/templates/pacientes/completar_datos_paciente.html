@@ -31,10 +31,6 @@
                 {% csrf_token %}
                 {{ form.non_field_errors }}
 
-                <label for="{{ form.sexo.id_for_label }}">Sexo</label>
-                {{ form.sexo }}
-                {{ form.sexo.errors }}
-
                 <label for="{{ form.telefono.id_for_label }}">Telefono</label>
                 {{ form.telefono }}
                 {{ form.telefono.errors }}
@@ -52,6 +48,7 @@
     </div>
 </div>
 
+{% include 'includes/telefono_pais.html' %}
 <script>
     (function () {
         var dpiInput = document.querySelector('input[name="dpi"]');
@@ -60,5 +57,6 @@
             this.value = this.value.replace(/\D/g, '').substring(0, 13);
         });
     })();
+    activarSelectorTelefono('telefono');
 </script>
 {% endblock %}

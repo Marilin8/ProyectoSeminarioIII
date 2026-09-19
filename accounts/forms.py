@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm, UserCreationForm
 from django.utils import timezone
 
-from clinica.validators import validar_dominio_correo
+from clinica.validators import validar_correo_existente, validar_dominio_correo
 from pacientes.models import TipoEstudio
 
 from .models import Usuario
@@ -41,6 +41,10 @@ class LoginForm(AuthenticationForm):
     error_messages = {
         **AuthenticationForm.error_messages,
         'inactive': 'Tu usuario está inactivo. Pedile al administrador que lo reactive.',
+        'correo_sin_confirmar': (
+            'Todavía no confirmaste tu correo. Revisá tu bandeja de entrada (y spam) '
+            'y entrá al link que te mandamos para poder ingresar.'
+        ),
     }
 
     def clean(self):
@@ -53,6 +57,14 @@ class LoginForm(AuthenticationForm):
             except Modelo.DoesNotExist:
                 usuario = None
             if usuario is not None and not usuario.is_active:
+                # Cuenta recién creada esperando que confirme su correo (ver
+                # accounts.views.crear_usuario) vs. suspendida a mano por un
+                # administrador (cambiar_estado_usuario): son dos motivos
+                # distintos de estar inactivo, con mensajes distintos.
+                if usuario.token_confirmacion_correo:
+                    raise forms.ValidationError(
+                        self.error_messages['correo_sin_confirmar'], code='correo_sin_confirmar',
+                    )
                 raise forms.ValidationError(self.error_messages['inactive'], code='inactive')
         return super().clean()
 
@@ -74,7 +86,7 @@ def _campo_email():
     return forms.EmailField(
         label='Correo',
         required=True,
-        validators=[validar_dominio_correo],
+        validators=[validar_dominio_correo, validar_correo_existente],
         error_messages={
             'required': 'El correo es obligatorio.',
             'invalid': 'Ingresá un correo electrónico válido (ejemplo: nombre@dominio.com).',

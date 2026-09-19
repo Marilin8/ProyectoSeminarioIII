@@ -1,6 +1,11 @@
+import datetime
+import uuid
+
 from django.contrib.auth import get_user_model
+from django.core import mail
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
+from django.utils import timezone
 from django_otp.oath import totp
 from django_otp.plugins.otp_totp.models import TOTPDevice
 
@@ -95,6 +100,98 @@ class FechaIngresoTests(TestCase):
         self.assertEqual(respuesta.status_code, 302)
         empleado.refresh_from_db()
         self.assertEqual(empleado.date_joined.date().isoformat(), '2023-01-10')
+
+
+class ConfirmacionCorreoUsuarioTests(TestCase):
+    """Un usuario recién creado queda inactivo hasta que confirma, por un
+    link mandado a su correo, que esa casilla es real y suya."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_confirma', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.client.force_login(self.admin)
+
+    def _crear(self, username='pendiente', email='pendiente@gmail.com'):
+        return self.client.post(reverse('crear_usuario'), {
+            'username': username, 'first_name': 'Nuevo', 'last_name': 'Empleado',
+            'email': email, 'rol': Usuario.ROL_RECEPCIONISTA, 'salario_base': '0',
+            'fecha_ingreso': '2026-01-01',
+            'porcentaje_coex': '0', 'porcentaje_privado': '0', 'porcentaje_emergencia_igss': '0',
+            'password1': 'Zx7#kLmn9q', 'password2': 'Zx7#kLmn9q',
+        })
+
+    def test_usuario_nuevo_queda_inactivo_y_se_le_manda_un_correo(self):
+        self._crear()
+
+        usuario = Usuario.objects.get(username='pendiente')
+        self.assertFalse(usuario.is_active)
+        self.assertIsNotNone(usuario.token_confirmacion_correo)
+
+        self.assertEqual(len(mail.outbox), 1)
+        correo = mail.outbox[0]
+        self.assertEqual(correo.to, ['pendiente@gmail.com'])
+        self.assertIn(str(usuario.token_confirmacion_correo), correo.body)
+
+    def test_confirmar_con_token_valido_activa_la_cuenta(self):
+        self._crear()
+        usuario = Usuario.objects.get(username='pendiente')
+
+        respuesta = self.client.get(
+            reverse('confirmar_correo_usuario', args=[usuario.token_confirmacion_correo]),
+        )
+
+        self.assertContains(respuesta, 'Correo confirmado')
+        usuario.refresh_from_db()
+        self.assertTrue(usuario.is_active)
+        self.assertIsNone(usuario.token_confirmacion_correo)
+        self.assertTrue(
+            Bitacora.objects.filter(
+                usuario=usuario, accion=Bitacora.ACCION_CONFIRMAR_CORREO_USUARIO,
+            ).exists()
+        )
+
+    def test_confirmar_con_token_que_no_existe_no_activa_nada(self):
+        respuesta = self.client.get(
+            reverse('confirmar_correo_usuario', args=[uuid.uuid4()]),
+        )
+
+        self.assertContains(respuesta, 'Enlace inválido')
+
+    def test_confirmar_con_token_vencido_no_activa_y_avisa(self):
+        self._crear()
+        usuario = Usuario.objects.get(username='pendiente')
+        usuario.token_confirmacion_generado_en = (
+            timezone.now() - usuario.VIGENCIA_TOKEN_CONFIRMACION - datetime.timedelta(days=1)
+        )
+        usuario.save(update_fields=['token_confirmacion_generado_en'])
+
+        respuesta = self.client.get(
+            reverse('confirmar_correo_usuario', args=[usuario.token_confirmacion_correo]),
+        )
+
+        self.assertContains(respuesta, 'ya venció')
+        usuario.refresh_from_db()
+        self.assertFalse(usuario.is_active)
+
+    def test_login_con_correo_sin_confirmar_muestra_mensaje_especifico(self):
+        self._crear()
+        self.client.logout()
+
+        respuesta = self.client.post(reverse('login'), {
+            'username': 'pendiente', 'password': 'Zx7#kLmn9q',
+        })
+
+        self.assertContains(respuesta, 'Todavía no confirmaste tu correo')
+
+    def test_login_de_cuenta_suspendida_a_mano_muestra_mensaje_generico(self):
+        crear_usuario('suspendido', is_active=False)
+        self.client.logout()
+
+        respuesta = self.client.post(reverse('login'), {
+            'username': 'suspendido', 'password': 'clave-segura-123',
+        })
+
+        self.assertContains(respuesta, 'Tu usuario está inactivo')
+        self.assertNotContains(respuesta, 'Todavía no confirmaste')
 
 
 class HistorialComisionTests(TestCase):

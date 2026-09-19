@@ -83,4 +83,30 @@
             </form>
         </div>
     </div>
+
+    {% if editando and historial_precios %}
+        <div class="card" style="max-width:640px;margin-top:1.25rem;">
+            <div class="card-header">
+                Últimos cambios de precio
+                <a href="{% url 'historial_precios_estudio' %}?q={{ editando.nombre|urlencode }}"
+                   class="btn-texto" style="float:right;font-weight:500;">Ver historial completo</a>
+            </div>
+            <div class="card-body" style="padding:0;overflow-x:auto;">
+                <table>
+                    <thead><tr><th>Fecha</th><th>Convenio · horario</th><th>Antes</th><th>Después</th><th>Por</th></tr></thead>
+                    <tbody>
+                        {% for r in historial_precios %}
+                            <tr>
+                                <td>{{ r.creado_en|date:'d/m/y H:i' }}</td>
+                                <td>{{ r.get_convenio_display }} · {% if r.horario_habil %}hábil{% else %}inhábil{% endif %}</td>
+                                <td>Q{{ r.valor_anterior }}</td>
+                                <td class="text-bold">Q{{ r.valor_nuevo }}</td>
+                                <td>{{ r.modificado_por.username }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endif %}
 {% endblock %}

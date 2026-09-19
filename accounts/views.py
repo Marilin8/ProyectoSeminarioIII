@@ -20,6 +20,9 @@ from django_otp.plugins.otp_totp.models import TOTPDevice
 
 import qrcode
 
+from clinica.validators import avisar_si_correo_no_existe
+
+from .correos import enviar_confirmacion_cuenta
 from .forms import (
     CambiarContrasenaForm,
     CrearUsuarioForm,
@@ -215,6 +218,9 @@ def mi_perfil(request):
             messages.success(request, 'Contraseña actualizada correctamente.')
             return redirect('mi_perfil')
 
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, perfil_form)
+
     return render(request, 'accounts/mi_perfil.html', {
         'perfil_form': perfil_form,
         'password_form': password_form,
@@ -238,21 +244,70 @@ def crear_usuario(request):
     if request.method == 'POST':
         form = CrearUsuarioForm(request.POST)
         if form.is_valid():
-            nuevo_usuario = form.save()
+            # commit=False: la cuenta queda inactiva hasta que el usuario
+            # nuevo confirme su correo (ver confirmar_correo_usuario) --
+            # save() de CrearUsuarioForm ya deja is_active en su default
+            # (True) si se guarda directo, por eso se corrige antes de
+            # persistir en vez de después.
+            nuevo_usuario = form.save(commit=False)
+            nuevo_usuario.is_active = False
+            nuevo_usuario.save()
+            token = nuevo_usuario.generar_token_confirmacion_correo()
+
+            error_envio = enviar_confirmacion_cuenta(request, nuevo_usuario, token)
+
             Bitacora.registrar(
                 request=request,
                 usuario=request.user,
                 accion=Bitacora.ACCION_CREAR_USUARIO,
                 descripcion=(
                     f'Creó el usuario "{nuevo_usuario.username}" con rol '
-                    f'{nuevo_usuario.get_rol_display()}.'
+                    f'{nuevo_usuario.get_rol_display()}. Queda inactivo hasta '
+                    'que confirme su correo.'
                 ),
             )
-            messages.success(request, f'Usuario "{nuevo_usuario.username}" creado correctamente.')
+            if error_envio:
+                messages.warning(
+                    request,
+                    f'Usuario "{nuevo_usuario.username}" creado, pero no se pudo mandar el '
+                    f'correo de confirmación ({error_envio}). Queda inactivo hasta que se '
+                    'confirme -- podés activarlo a mano desde esta pantalla si hace falta.',
+                )
+            else:
+                messages.success(
+                    request,
+                    f'Usuario "{nuevo_usuario.username}" creado. Se le mandó un correo a '
+                    f'{nuevo_usuario.email} para que confirme su cuenta antes de poder ingresar.',
+                )
             return redirect('dashboard')
     else:
         form = CrearUsuarioForm()
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, form)
     return render(request, 'accounts/crear_usuario.html', {'form': form})
+
+
+def confirmar_correo_usuario(request, token):
+    """Link público (sin login) al que llega el usuario nuevo desde el
+    correo que le mandó crear_usuario. Activa la cuenta si el token es
+    válido y no venció."""
+    usuario = Usuario.objects.filter(token_confirmacion_correo=token).first()
+
+    if usuario is None:
+        contexto = {'estado': 'invalido'}
+    elif usuario.token_confirmacion_vencido():
+        contexto = {'estado': 'vencido', 'usuario': usuario}
+    else:
+        usuario.confirmar_correo()
+        Bitacora.registrar(
+            request=request,
+            usuario=usuario,
+            accion=Bitacora.ACCION_CONFIRMAR_CORREO_USUARIO,
+            descripcion=f'"{usuario.username}" confirmó su correo y quedó activo.',
+        )
+        contexto = {'estado': 'confirmado', 'usuario': usuario}
+
+    return render(request, 'accounts/confirmar_correo.html', contexto)
 
 
 @login_required
@@ -659,6 +714,9 @@ def editar_usuario(request, usuario_id):
             return redirect(_url_lista_para(editado))
     else:
         form = EditarUsuarioForm(instance=usuario)
+
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, form)
 
     contexto = {
         'form': form,

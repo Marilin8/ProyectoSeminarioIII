@@ -1,10 +1,21 @@
-{% extends 'base.html' %}
-
-{% block title %}Imágenes del estudio - Clínica de Imágenes{% endblock %}
-{% block page_title %}Imágenes del estudio{% endblock %}
-
-{% block extra_css %}
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Imágenes del estudio - Clínica de Imágenes</title>
+    <link rel="stylesheet" href="{% static 'css/theme.css' %}">
     <style>
+        /* Esta pantalla solo se usa embebida en el <iframe> del modal "Ver
+        JPG" de adjuntar_informe.html — sin sidebar ni topbar de la app,
+        para no duplicar el chrome que ya pone el modal por afuera. */
+        body.standalone { padding: 0; }
+        body.standalone .main { margin-left: 0; }
+        .topbar-embebido {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0 0 1rem; flex-wrap: wrap; gap: 0.75rem;
+        }
         .ayuda-seleccion { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem; }
         .ayuda-seleccion p { font-size: 0.8rem; color: var(--text-muted); margin: 0; }
         .botones-seleccion { display: flex; gap: 1rem; }
@@ -24,15 +35,18 @@
         .barra-acciones span { font-size: 0.85rem; color: var(--text); }
         .barra-acciones button { width: auto; margin-top: 0; }
     </style>
-{% endblock %}
+</head>
+<body class="standalone">
+    {% include 'includes/icons.html' %}
+    <div class="main">
+        <div class="content">
+    <div class="topbar-embebido">
+        <h2 style="margin:0;">Imágenes del estudio</h2>
+        <a class="btn btn-ghost" href="{% url 'adjuntar_informe' cita_id=cita.id %}" id="link-volver-informe">
+            <svg width="14" height="14"><use href="#i-arrow-left"/></svg> Volver al informe
+        </a>
+    </div>
 
-{% block topbar_actions %}
-    <a class="btn btn-ghost" href="{% url 'adjuntar_informe' cita_id=cita.id %}">
-        <svg width="14" height="14"><use href="#i-arrow-left"/></svg> Volver al informe
-    </a>
-{% endblock %}
-
-{% block content %}
     <div class="resumen">
         <strong>{{ cita.paciente.nombre }} {{ cita.paciente.apellido }}</strong> ({{ cita.paciente.dpi }})<br>
         Estudio: {{ cita.tipo_estudio.nombre }} — {{ cita.fecha }} {{ cita.hora|time:'H:i' }}
@@ -169,6 +183,60 @@
             });
 
             actualizarEstado();
+
+            // "Volver al informe" no debe navegar el <iframe>: la página de
+            // arriba (adjuntar_informe.html) nunca se fue, solo hay que
+            // cerrar el modal "Ver JPG" para volver a verla — navegar acá
+            // cargaría esa página completa (con sidebar y todo) adentro del
+            // iframe. Si por algún motivo esto se abre fuera del modal
+            // (pestaña nueva, sin parent), el link se deja funcionar normal.
+            var linkVolver = document.getElementById('link-volver-informe');
+            if (linkVolver && window.parent !== window) {
+                linkVolver.addEventListener('click', function (evento) {
+                    try {
+                        var modal = window.parent.document.getElementById('modal-ver-jpg');
+                        if (modal) {
+                            evento.preventDefault();
+                            modal.classList.remove('abierto');
+                        }
+                    } catch (e) {
+                        // Cross-origin o similar: dejar que navegue normal.
+                    }
+                });
+            }
         });
     </script>
-{% endblock %}
+        </div>
+    </div>
+
+    {% if messages %}
+        <div class="toast-container" id="toast-container">
+            {% for msg in messages %}
+                <div class="toast alert alert-{{ msg.tags }}">
+                    <span>{{ msg }}</span>
+                    <button type="button" class="toast-cerrar" aria-label="Cerrar">&times;</button>
+                </div>
+            {% endfor %}
+        </div>
+        <script>
+            (function () {
+                var contenedor = document.getElementById('toast-container');
+                if (!contenedor) return;
+
+                function cerrarToast(toast) {
+                    toast.classList.add('saliendo');
+                    setTimeout(function () { toast.remove(); }, 200);
+                }
+
+                Array.prototype.slice.call(contenedor.querySelectorAll('.toast')).forEach(function (toast) {
+                    var boton = toast.querySelector('.toast-cerrar');
+                    if (boton) {
+                        boton.addEventListener('click', function () { cerrarToast(toast); });
+                    }
+                    setTimeout(function () { cerrarToast(toast); }, 5000);
+                });
+            })();
+        </script>
+    {% endif %}
+</body>
+</html>
