@@ -112,6 +112,74 @@ class Paciente(models.Model):
             años -= 1
         return años
 
+class Modalidad(models.Model):
+    codigo = models.CharField(
+        max_length=30,
+        unique=True,
+        null=True,
+        blank=True,
+        verbose_name='código'
+    )
+    nombre = models.CharField(
+        max_length=120,
+        unique=True,
+        verbose_name='nombre'
+    )
+    activo = models.BooleanField(
+        default=True,
+        verbose_name='activo'
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'modalidades'
+        verbose_name = 'modalidad'
+        verbose_name_plural = 'modalidades'
+        ordering = ['nombre']
+
+    def __str__(self):
+        return self.nombre
+
+
+class HistorialModalidad(models.Model):
+    ACCION_CREAR = 'crear'
+    ACCION_EDITAR = 'editar'
+    ACCION_ELIMINAR = 'eliminar'
+
+    ACCION_CHOICES = [
+        (ACCION_CREAR, 'Creada'),
+        (ACCION_EDITAR, 'Editada'),
+        (ACCION_ELIMINAR, 'Desactivada'),
+    ]
+
+    modalidad = models.ForeignKey(
+        Modalidad,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='historial'
+    )
+    nombre = models.CharField(max_length=120)
+    nombre_anterior = models.CharField(max_length=120, blank=True)
+    accion = models.CharField(max_length=20, choices=ACCION_CHOICES)
+    realizado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='cambios_modalidades_realizados'
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'historial_modalidades'
+        verbose_name = 'historial de modalidad'
+        verbose_name_plural = 'historial de modalidades'
+        ordering = ['-creado_en']
+
+    def __str__(self):
+        return f'{self.nombre} - {self.get_accion_display()}'
+
+
 
 class TipoEstudio(models.Model):
     MODALIDAD_RX = 'rx'
@@ -130,7 +198,8 @@ class TipoEstudio(models.Model):
 
     nombre = models.CharField(max_length=120, unique=True)
     modalidad = models.CharField(
-        max_length=20, choices=MODALIDAD_CHOICES, default=MODALIDAD_RX,
+        max_length=30,
+        default=MODALIDAD_RX,
         help_text='Agrupa el estudio por equipo/sala y define qué técnico y radiólogo pueden atenderlo.',
     )
     duracion_minutos = models.PositiveIntegerField(

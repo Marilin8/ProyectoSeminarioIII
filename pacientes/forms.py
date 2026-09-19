@@ -6,7 +6,7 @@ from django.utils import timezone
 from accounts.models import Usuario
 from clinica.validators import validar_correo_existente, validar_dominio_correo
 
-from .models import Cita, Cobro, Combo, Paciente, TipoEstudio
+from .models import Cita, Cobro, Combo, Modalidad, Paciente, TipoEstudio
 
 CONVENIOS_QUE_REQUIEREN_CARNET_IGSS = (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS)
 
@@ -572,21 +572,39 @@ PRECIOS_ESTUDIO = [
 
 
 class CrearTipoEstudioForm(forms.ModelForm):
+    modalidad = forms.ChoiceField(
+        label='Modalidad',
+        choices=[],
+    )
+
     class Meta:
         model = TipoEstudio
         fields = ('nombre', 'modalidad', 'duracion_minutos')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        self.fields['modalidad'].choices = [
+            (m.codigo, m.nombre)
+            for m in Modalidad.objects.filter(
+                activo=True,
+                codigo__isnull=False
+            ).exclude(codigo='').order_by('nombre')
+        ]
+
         actuales = {}
         if self.instance and self.instance.pk:
             actuales = {
                 (p.convenio, p.horario_habil): p.precio
                 for p in self.instance.precios.all()
             }
+
         for campo, convenio, habil, etiqueta in PRECIOS_ESTUDIO:
             self.fields[campo] = forms.DecimalField(
-                label=f'Precio {etiqueta}', max_digits=8, decimal_places=2, min_value=0,
+                label=f'Precio {etiqueta}',
+                max_digits=8,
+                decimal_places=2,
+                min_value=0,
                 initial=actuales.get((convenio, habil), 0),
             )
 

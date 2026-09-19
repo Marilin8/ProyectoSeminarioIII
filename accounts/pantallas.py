@@ -20,6 +20,7 @@ PANTALLAS_POR_ROL = {
             ],
         },
         {'nombre': 'Estudios', 'url_name': 'lista_estudios'},
+        {'nombre': 'Modalidades', 'url_name': 'lista_modalidades'},
         {'nombre': 'Combos', 'url_name': 'lista_combos'},
         {'nombre': 'Bitácora del sistema', 'url_name': 'bitacora'},
         {

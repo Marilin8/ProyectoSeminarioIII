@@ -11,6 +11,13 @@ urlpatterns = [
     path('combos/nuevo/', views.crear_combo, name='crear_combo'),
     path('combos/', views.lista_combos, name='lista_combos'),
     path('combos/<int:combo_id>/editar/', views.editar_combo, name='editar_combo'),
+    path('modalidades/', views.lista_modalidades, name='lista_modalidades'),
+    path('modalidades/nueva/', views.crear_modalidad, name='crear_modalidad'),
+    path('modalidades/<int:modalidad_id>/editar/', views.editar_modalidad, name='editar_modalidad'),
+    path('modalidades/<int:modalidad_id>/eliminar/', views.eliminar_modalidad, name='eliminar_modalidad'),
+    path('modalidades/historial/', views.historial_modalidades, name='historial_modalidades'),
+    path('modalidades/<int:modalidad_id>/activar/', views.activar_modalidad, name='activar_modalidad'),
+
     # Visor web público del estudio (link estilo PACS que se manda por correo:
     # /visor/?studyId=<id>&tab=images&ac=<token base64>).
     path('visor/', views.visor_estudio, name='visor_estudio'),

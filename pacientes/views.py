@@ -24,7 +24,7 @@ from django.views.decorators.http import require_POST
 from accounts.models import MESES_ES, Bitacora, Usuario
 from accounts.views import es_administrador
 from clinica.validators import avisar_si_correo_no_existe
-
+from django.utils.text import slugify
 from .correos import enviar_resultados
 from .dicom_utils import dicom_a_jpg_memoria
 from .forms import (
@@ -61,8 +61,10 @@ from .models import (
     Cobro,
     Combo,
     EstudioExtra,
+    HistorialModalidad,
     HistorialPrecioEstudio,
     ImagenEstudio,
+    Modalidad,
     Notificacion,
     OrdenTrabajo,
     Paciente,
@@ -1063,8 +1065,183 @@ def crear_estudio(request):
         form = CrearTipoEstudioForm()
     return render(request, 'pacientes/crear_estudio.html', {'form': form, 'editando': None})
 
+@login_required
+@user_passes_test(es_administrador)
+def lista_modalidades(request):
+    busqueda = (request.GET.get('q') or '').strip()
+
+    modalidades = Modalidad.objects.all().order_by('nombre')
+
+    if busqueda:
+        modalidades = modalidades.filter(nombre__icontains=busqueda)
+
+    return render(request, 'pacientes/lista_modalidades.html', {
+        'modalidades': modalidades,
+        'busqueda': busqueda,
+    })
+
+@login_required
+@user_passes_test(es_administrador)
+def crear_modalidad(request):
+    if request.method == 'POST':
+        nombre = (request.POST.get('nombre') or '').strip()
+
+        if not nombre:
+            messages.error(request, 'Escriba el nombre de la modalidad.')
+        elif Modalidad.objects.filter(nombre__iexact=nombre).exists():
+            messages.error(request, 'Ya existe una modalidad con ese nombre.')
+        else:
+            base_codigo = slugify(nombre).replace('-', '_')[:30] or 'modalidad'
+            codigo = base_codigo
+            contador = 2
+
+            while Modalidad.objects.filter(codigo=codigo).exists():
+                sufijo = f'_{contador}'
+                codigo = f'{base_codigo[:30-len(sufijo)]}{sufijo}'
+                contador += 1
+
+            modalidad = Modalidad.objects.create(
+                nombre=nombre,
+                codigo=codigo
+)
+
+            HistorialModalidad.objects.create(
+                modalidad=modalidad,
+                nombre=modalidad.nombre,
+                nombre_anterior='',
+                accion=HistorialModalidad.ACCION_CREAR,
+                realizado_por=request.user,
+            )
+
+            messages.success(
+                request,
+                f'Modalidad "{modalidad.nombre}" creada correctamente.'
+            )
+            return redirect('lista_modalidades')
+
+    return render(request, 'pacientes/crear_modalidad.html', {
+        'editando': None,
+    })
+
+@login_required
+@user_passes_test(es_administrador)
+def editar_modalidad(request, modalidad_id):
+    modalidad = get_object_or_404(Modalidad, id=modalidad_id)
+
+    if request.method == 'POST':
+        nombre_nuevo = (request.POST.get('nombre') or '').strip()
+
+        if not nombre_nuevo:
+            messages.error(request, 'Escriba el nombre de la modalidad.')
+
+        elif (
+            Modalidad.objects
+            .filter(nombre__iexact=nombre_nuevo)
+            .exclude(id=modalidad.id)
+            .exists()
+        ):
+            messages.error(request, 'Ya existe otra modalidad con ese nombre.')
+
+        elif nombre_nuevo != modalidad.nombre:
+            nombre_anterior = modalidad.nombre
+
+            modalidad.nombre = nombre_nuevo
+            modalidad.save(update_fields=['nombre', 'actualizado_en'])
+
+            HistorialModalidad.objects.create(
+                modalidad=modalidad,
+                nombre=modalidad.nombre,
+                nombre_anterior=nombre_anterior,
+                accion=HistorialModalidad.ACCION_EDITAR,
+                realizado_por=request.user,
+            )
+
+            messages.success(
+                request,
+                f'Modalidad "{modalidad.nombre}" actualizada correctamente.'
+            )
+            return redirect('lista_modalidades')
+
+        else:
+            messages.info(request, 'No se realizaron cambios.')
+            return redirect('lista_modalidades')
+
+    return render(request, 'pacientes/crear_modalidad.html', {
+        'editando': modalidad,
+        'modalidad': modalidad,
+    })
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def eliminar_modalidad(request, modalidad_id):
+    modalidad = get_object_or_404(Modalidad, id=modalidad_id)
+    nombre = modalidad.nombre
+
+    HistorialModalidad.objects.create(
+        modalidad=modalidad,
+        nombre=nombre,
+        nombre_anterior=nombre,
+        accion=HistorialModalidad.ACCION_ELIMINAR,
+        realizado_por=request.user,
+    )
+
+    modalidad.activo = False
+    modalidad.save(update_fields=['activo', 'actualizado_en'])
+
+    messages.success(
+        request,
+        f'Modalidad "{nombre}" desactivada correctamente.'
+    )
+
+    return redirect('lista_modalidades')
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def activar_modalidad(request, modalidad_id):
+    modalidad = get_object_or_404(Modalidad, id=modalidad_id)
+
+    modalidad.activo = True
+    modalidad.save(update_fields=['activo', 'actualizado_en'])
+
+    messages.success(
+        request,
+        f'Modalidad "{modalidad.nombre}" activada correctamente.'
+    )
+
+    return redirect('lista_modalidades')
+
+@login_required
+@user_passes_test(es_administrador)
+def historial_modalidades(request):
+    busqueda = (request.GET.get('q') or '').strip()
+
+    registros = (
+        HistorialModalidad.objects
+        .select_related('realizado_por')
+        .order_by('-creado_en')
+    )
+
+    if busqueda:
+        registros = registros.filter(
+            Q(nombre__icontains=busqueda)
+            | Q(nombre_anterior__icontains=busqueda)
+        )
+
+    pagina = Paginator(registros, 25).get_page(request.GET.get('page'))
+
+    return render(request, 'pacientes/historial_modalidades.html', {
+        'pagina': pagina,
+        'registros': pagina,
+        'busqueda': busqueda,
+    })
+
 
 ESTUDIOS_POR_PAGINA = 20
+
+
 
 
 @login_required
