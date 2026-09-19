@@ -207,6 +207,20 @@ class TipoEstudio(models.Model):
         verbose_name='duración (minutos)',
         help_text='Cuánto tiempo ocupa este estudio en el calendario de citas.',
     )
+
+    def get_modalidad_display(self):
+        modalidad = Modalidad.objects.filter(
+            codigo=self.modalidad
+        ).first()
+
+        if modalidad:
+            return modalidad.nombre
+
+        return dict(self.MODALIDAD_CHOICES).get(
+            self.modalidad,
+            self.modalidad
+        )
+
     activo = models.BooleanField(default=True)
     radiologos = models.ManyToManyField(
         settings.AUTH_USER_MODEL, blank=True, related_name='tipos_estudio_asignados',
