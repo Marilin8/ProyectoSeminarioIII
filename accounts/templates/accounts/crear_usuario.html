@@ -63,10 +63,12 @@
                 <p class="form-help">{{ form.puede_operar_caja.help_text }}</p>
                 {{ form.puede_operar_caja.errors }}
 
-                <label for="{{ form.sala.id_for_label }}">Sala / consultorio</label>
-                {{ form.sala }}
-                <p class="form-help">{{ form.sala.help_text }}</p>
-                {{ form.sala.errors }}
+                <div id="campo-sala">
+                    <label for="{{ form.sala.id_for_label }}">Sala / consultorio</label>
+                    {{ form.sala }}
+                    <p class="form-help">{{ form.sala.help_text }}</p>
+                    {{ form.sala.errors }}
+                </div>
 
                 <label for="{{ form.salario_base.id_for_label }}">Salario base mensual (Q)</label>
                 {{ form.salario_base }}
@@ -123,6 +125,20 @@
     </div>
 
     <script>
+        (function () {
+            // La sala/consultorio solo aplica a radiólogos: se oculta para
+            // cualquier otro rol elegido en el select.
+            var rol = document.getElementById('id_rol');
+            var campoSala = document.getElementById('campo-sala');
+            if (rol && campoSala) {
+                var actualizarCampoSala = function () {
+                    campoSala.hidden = rol.value !== 'medico_radiologo';
+                };
+                rol.addEventListener('change', actualizarCampoSala);
+                actualizarCampoSala();
+            }
+        })();
+
         (function () {
             var form = document.getElementById('form-crear-usuario');
             var modal = document.getElementById('modal-confirmar');
