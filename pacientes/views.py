@@ -797,8 +797,18 @@ def pagos_pendientes(request):
         )
     if estado in (Cobro.ESTADO_PENDIENTE, Cobro.ESTADO_PAGADO):
         qs = qs.filter(estado=estado)
-    if convenio in dict(Cita.CONVENIO_CHOICES):
+    if convenio == Cita.CONVENIO_EMERGENCIA_IGSS:
+        # "Pagos IGSS" es el único lugar donde se cobran COEX y Emergencia
+        # IGSS: ambos se pagan por orden agrupada (nunca por estudio suelto),
+        # así que se muestran juntos acá.
+        qs = qs.filter(cita__convenio__in=(Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS))
+    elif convenio in dict(Cita.CONVENIO_CHOICES):
         qs = qs.filter(cita__convenio=convenio)
+    else:
+        # Vista general sin filtro de convenio: COEX y Emergencia IGSS no se
+        # cobran estudio por estudio desde acá (no tienen botón de "Marcar
+        # pagado", ver template), solo desde "Pagos IGSS".
+        qs = qs.exclude(cita__convenio__in=(Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS))
     if tipo_estudio.isdigit():
         qs = qs.filter(cita__tipo_estudio_id=int(tipo_estudio))
     if desde:
@@ -811,13 +821,17 @@ def pagos_pendientes(request):
         ).distinct()
 
     # Solo entran a una orden agrupada los estudios que el técnico ya
-    # confirmó como correctos (ver OrdenTrabajo.validacion_estado). El
-    # formulario para crearla solo se muestra en Pagos IGSS (ver template).
-    cobros_para_orden = qs.filter(
+    # confirmó como correctos (ver OrdenTrabajo.validacion_estado). Se arma
+    # aparte de `qs` (no filtrando sobre ella) para que siempre traiga TODOS
+    # los pendientes de COEX y Emergencia IGSS sin importar qué convenio
+    # haya elegido la recepcionista en el filtro de la pantalla -- el
+    # formulario para crearla solo se muestra en Pagos IGSS (ver template),
+    # pero agrupa estudios de ambos convenios.
+    cobros_para_orden = Cobro.objects.filter(
         estado=Cobro.ESTADO_PENDIENTE,
         cita__convenio__in=(Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS),
         cita__orden_trabajo__validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO,
-    ).select_related('cita__paciente', 'cita__tipo_estudio')
+    ).select_related('cita__paciente', 'cita__tipo_estudio').order_by('-creado_en')
     pagina = Paginator(qs, 20).get_page(request.GET.get('page'))
 
     filtros = request.GET.copy()
@@ -827,7 +841,11 @@ def pagos_pendientes(request):
     ).prefetch_related('detalles__tipo_estudio').filter(
         estado=OrdenPago.ESTADO_PENDIENTE,
     )
-    if convenio in (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS):
+    if convenio == Cita.CONVENIO_EMERGENCIA_IGSS:
+        ordenes_pago = ordenes_pago.filter(
+            convenio__in=(Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS),
+        )
+    elif convenio == Cita.CONVENIO_COEX:
         ordenes_pago = ordenes_pago.filter(convenio=convenio)
     if combo_id.isdigit():
         ordenes_pago = ordenes_pago.filter(combo_id=int(combo_id))
