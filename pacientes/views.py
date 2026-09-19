@@ -811,7 +811,8 @@ def pagos_pendientes(request):
         ).distinct()
 
     # Solo entran a una orden agrupada los estudios que el técnico ya
-    # confirmó como correctos (ver OrdenTrabajo.validacion_estado).
+    # confirmó como correctos (ver OrdenTrabajo.validacion_estado). El
+    # formulario para crearla solo se muestra en Pagos IGSS (ver template).
     cobros_para_orden = qs.filter(
         estado=Cobro.ESTADO_PENDIENTE,
         cita__convenio__in=(Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS),
