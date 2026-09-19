@@ -150,6 +150,11 @@
             margin-right: 0.3rem;
             vertical-align: middle;
         }
+        .cal-modal .fila-eliminar { margin-top: 0.5rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; font-size: 0.8rem; }
+        .cal-modal .btn-eliminar { color: #b91c1c; border-color: #fca5a5; }
+        .cal-modal .btn-eliminar:hover { background: #fef2f2; }
+        .cal-modal .confirmar-eliminar { color: #991b1b; font-weight: 600; }
+        .cal-modal .no-eliminable { margin-top: 0.4rem; font-size: 0.72rem; color: var(--text-muted); }
     </style>
 {% endblock %}
 
@@ -255,6 +260,11 @@
 
     {{ slots_detalle|json_script:"slots-detalle" }}
 
+    <form method="post" id="cal-eliminar-form" hidden>
+        {% csrf_token %}
+        <input type="hidden" name="volver" value="">
+    </form>
+
     <div class="cal-modal-overlay" id="cal-modal-overlay">
         <div class="cal-modal" role="dialog" aria-modal="true">
             <h3 id="cal-modal-titulo">Citas a esta hora</h3>
@@ -282,7 +292,46 @@
         var lista = document.getElementById('cal-modal-lista');
         var btnAgendar = document.getElementById('cal-modal-agendar');
         var AGENDAR_URL = "{% url agendar_url_name %}";
+        var ELIMINAR_URL = "{% url 'eliminar_cita' cita_id=0 %}";
+        var formEliminar = document.getElementById('cal-eliminar-form');
         var RADIOLOGO = "{% if radiologo_seleccionado %}{{ radiologo_seleccionado.id }}{% endif %}";
+
+        // Eliminar una cita agendada (el paciente ya no se va a hacer el
+        // estudio): pide confirmación en el mismo cuadro antes de enviar.
+        function filaEliminar(c) {
+            var fila = document.createElement('div');
+            fila.className = 'fila-eliminar';
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-outline btn-sm btn-eliminar';
+            btn.textContent = 'Eliminar cita';
+            btn.addEventListener('click', function () {
+                fila.innerHTML = '';
+                var pregunta = document.createElement('span');
+                pregunta.className = 'confirmar-eliminar';
+                pregunta.textContent = '¿Eliminar la cita de ' + c.paciente + '?';
+                var si = document.createElement('button');
+                si.type = 'button';
+                si.className = 'btn btn-danger btn-sm';
+                si.textContent = 'Sí, eliminar';
+                si.addEventListener('click', function () {
+                    formEliminar.action = ELIMINAR_URL.replace('/0/', '/' + c.id + '/');
+                    formEliminar.elements['volver'].value = window.location.pathname + window.location.search;
+                    formEliminar.submit();
+                });
+                var no = document.createElement('button');
+                no.type = 'button';
+                no.className = 'btn btn-outline btn-sm';
+                no.textContent = 'No';
+                no.addEventListener('click', function () {
+                    fila.innerHTML = '';
+                    fila.appendChild(btn);
+                });
+                fila.appendChild(pregunta); fila.appendChild(si); fila.appendChild(no);
+            });
+            fila.appendChild(btn);
+            return fila;
+        }
 
         function abrir(fecha, hora) {
             var citas = detalle[fecha + '|' + hora] || [];
@@ -301,6 +350,7 @@
                 e.className = 'estado ' + (c.estado === 'Pendiente' ? 'pendiente' : 'confirmada');
                 e.textContent = c.estado;
                 li.appendChild(p); li.appendChild(m); li.appendChild(e);
+                if (c.eliminable) { li.appendChild(filaEliminar(c)); }
                 lista.appendChild(li);
             });
             var url = AGENDAR_URL + '?fecha=' + encodeURIComponent(fecha) + '&hora=' + encodeURIComponent(hora);

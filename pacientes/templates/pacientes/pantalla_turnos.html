@@ -37,6 +37,8 @@
             font-size: 1rem; font-weight: 700;
         }
         .btn-mover[disabled] { opacity: 0.35; cursor: default; }
+        .btn-eliminar-turno { color: #b91c1c; border-color: #fca5a5; }
+        .btn-eliminar-turno:hover { background: #fef2f2; }
     </style>
 {% endblock %}
 
@@ -141,6 +143,14 @@
                                                     Procesar
                                                 </button>
                                             </form>
+                                            <form method="post" action="{% url 'eliminar_turno' ticket.id %}"
+                                                  data-confirmar="¿Eliminar el turno {{ ticket.turno }} de {{ ticket.paciente.nombre }} {{ ticket.paciente.apellido }}? Ya no aparecerá en la fila de espera.">
+                                                {% csrf_token %}
+                                                <button type="submit" class="btn btn-outline btn-sm btn-eliminar-turno" title="El paciente ya no va a pasar">
+                                                    <svg width="14" height="14"><use href="#i-x-circle"/></svg>
+                                                    Eliminar
+                                                </button>
+                                            </form>
                                         </div>
                                     {% else %}
                                         —
@@ -157,4 +167,12 @@
             {% if es_hoy %}No hay turnos en espera en este momento.{% else %}No hubo turnos registrados este día.{% endif %}
         </p>
     {% endif %}
+
+    <script>
+        document.querySelectorAll('form[data-confirmar]').forEach(function (f) {
+            f.addEventListener('submit', function (e) {
+                if (!window.confirm(f.getAttribute('data-confirmar'))) { e.preventDefault(); }
+            });
+        });
+    </script>
 {% endblock %}
