@@ -30,6 +30,8 @@
         .verificacion-acciones .btn { min-width: 11rem; }
         .bloqueado { opacity: 0.45; pointer-events: none; }
         .modal-modificar textarea { width: 100%; }
+        .bloque-estudio { border: 1px solid var(--border-light); border-radius: var(--radius); padding: 1rem; margin-top: 1.25rem; }
+        .bloque-estudio-titulo { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.5rem; font-size: 1rem; }
     </style>
 {% endblock %}
 
@@ -108,46 +110,61 @@
             </p>
         {% endif %}
 
-        {% if orden.imagenes.all %}
-            <ul class="imagenes-previas">
-                {% for img in orden.imagenes.all %}
-                    <li>Ya subida: <a href="{{ img.archivo.url }}" target="_blank">{{ img.archivo.name }}</a></li>
-                {% endfor %}
-            </ul>
-        {% endif %}
+        {% for bloque in bloques %}
+            <div class="bloque-estudio">
+                {% if bloques|length > 1 %}
+                    <h3 class="bloque-estudio-titulo">
+                        {{ bloque.tipo_estudio.nombre }}
+                        {% if bloque.imagenes %}<span class="badge badge-success">Cargado</span>{% endif %}
+                    </h3>
+                {% endif %}
 
-        <form method="post" enctype="multipart/form-data" id="form-imagenes"{% if not orden.esta_verificada %} class="bloqueado" aria-disabled="true"{% endif %}>
-            {% csrf_token %}
-            {{ form.non_field_errors }}
-            <label for="id_imagenes">{{ form.imagenes.label }}</label>
-            <div class="upload-zone" id="upload-zone">
-                <div class="icon">&#128193;</div>
-                <p><strong>Haz clic aquí</strong> o seleccioná la carpeta del estudio</p>
-                <p>{{ form.imagenes.help_text }}</p>
-                <input type="file" id="id_imagenes" name="imagenes" webkitdirectory directory multiple>
-                <button type="button" class="btn btn-primary" id="btn-seleccionar">
-                    <svg width="14" height="14"><use href="#i-folder"/></svg> Seleccionar carpeta
-                </button>
-                <span id="file-count-badge"></span>
+                {% if bloque.imagenes %}
+                    <ul class="imagenes-previas">
+                        {% for img in bloque.imagenes %}
+                            <li>Ya subida: <a href="{{ img.archivo.url }}" target="_blank">{{ img.archivo.name }}</a></li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+
+                <form method="post" enctype="multipart/form-data"
+                      class="form-imagenes{% if not orden.esta_verificada %} bloqueado{% endif %}"
+                      data-tipo-estudio="{{ bloque.tipo_estudio.id }}"
+                      {% if not orden.esta_verificada %}aria-disabled="true"{% endif %}>
+                    {% csrf_token %}
+                    {{ bloque.form.non_field_errors }}
+                    {{ bloque.form.tipo_estudio }}
+                    <label>{{ bloque.form.imagenes.label }}</label>
+                    <div class="upload-zone">
+                        <div class="icon">&#128193;</div>
+                        <p><strong>Haz clic aquí</strong> o seleccioná la carpeta del estudio</p>
+                        <p>{{ bloque.form.imagenes.help_text }}</p>
+                        <input type="file" class="input-imagenes" name="imagenes" webkitdirectory directory multiple>
+                        <button type="button" class="btn btn-primary btn-seleccionar">
+                            <svg width="14" height="14"><use href="#i-folder"/></svg> Seleccionar carpeta
+                        </button>
+                        <span class="file-count-badge"></span>
+                    </div>
+                    {{ bloque.form.imagenes.errors }}
+
+                    <div class="progreso">
+                        <div class="progreso-texto">
+                            <span class="progreso-etiqueta">Procesando archivos…</span>
+                            <span class="progreso-porcentaje">0%</span>
+                        </div>
+                        <div class="progreso-barra-fondo">
+                            <div class="progreso-barra-relleno"></div>
+                        </div>
+                        <div class="progreso-detalle"></div>
+                        <div class="progreso-error" style="display:none;"></div>
+                    </div>
+
+                    <button type="submit" class="btn btn-success btn-block btn-lg mt-2 btn-adjuntar" disabled>
+                        <svg width="14" height="14"><use href="#i-upload"/></svg> Adjuntar y enviar a radióloga
+                    </button>
+                </form>
             </div>
-            {{ form.imagenes.errors }}
-
-            <div class="progreso" id="progreso">
-                <div class="progreso-texto">
-                    <span id="progreso-etiqueta">Procesando archivos…</span>
-                    <span id="progreso-porcentaje">0%</span>
-                </div>
-                <div class="progreso-barra-fondo">
-                    <div class="progreso-barra-relleno" id="progreso-relleno"></div>
-                </div>
-                <div class="progreso-detalle" id="progreso-detalle"></div>
-                <div class="progreso-error" id="progreso-error" style="display:none;"></div>
-            </div>
-
-            <button type="submit" class="btn btn-success btn-block btn-lg mt-2" id="btn-adjuntar" disabled>
-                <svg width="14" height="14"><use href="#i-upload"/></svg> Adjuntar y enviar a radióloga
-            </button>
-        </form>
+        {% endfor %}
 
         <div class="flex gap-1 mt-2">
             <a href="{{ volver_url }}" class="btn btn-outline" style="flex:1;text-align:center;">Cancelar</a>
@@ -195,47 +212,13 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', function () {
-            var zone = document.getElementById('upload-zone');
-            var input = document.getElementById('id_imagenes');
-            var btnSeleccionar = document.getElementById('btn-seleccionar');
-            var badge = document.getElementById('file-count-badge');
-            var form = document.getElementById('form-imagenes');
-            var boton = document.getElementById('btn-adjuntar');
-            var progreso = document.getElementById('progreso');
-            var relleno = document.getElementById('progreso-relleno');
-            var porcentajeTexto = document.getElementById('progreso-porcentaje');
-            var etiquetaTexto = document.getElementById('progreso-etiqueta');
-            var detalleTexto = document.getElementById('progreso-detalle');
-            var errorTexto = document.getElementById('progreso-error');
-
-            if (!form || !input || !boton || !progreso) {
-                return;
-            }
-
-            btnSeleccionar.addEventListener('click', function (e) {
-                e.stopPropagation();
-                input.click();
-            });
-            zone.addEventListener('click', function () { input.click(); });
-
-            input.addEventListener('change', function () {
-                var count = input.files.length;
-                if (count > 0) {
-                    badge.innerHTML = '<span class="file-count">' + count + ' archivos</span>';
-                    boton.disabled = false;
-                } else {
-                    badge.innerHTML = '';
-                    boton.disabled = true;
-                }
-            });
+            var urlLote = '{% url "adjuntar_imagenes_lote" orden.id %}';
+            var urlFinalizar = '{% url "adjuntar_imagenes_finalizar" orden.id %}';
 
             // Nombres de archivo que no son parte del estudio (los suele
             // agregar el propio sistema operativo al exportar la carpeta).
             var IGNORADOS = ['.ds_store', 'thumbs.db', 'desktop.ini'];
             var TAMANO_TANDA = 15;
-            var urlLote = '{% url "adjuntar_imagenes_lote" orden.id %}';
-            var urlFinalizar = '{% url "adjuntar_imagenes_finalizar" orden.id %}';
-            var csrfToken = form.querySelector('[name=csrfmiddlewaretoken]').value;
 
             function esArchivoUtil(archivo) {
                 var nombre = archivo.name.toLowerCase();
@@ -245,87 +228,138 @@
                 return IGNORADOS.indexOf(nombre) === -1;
             }
 
-            function actualizarBarra(procesados, total) {
-                var porcentaje = total > 0 ? Math.round((procesados / total) * 100) : 0;
-                relleno.style.width = porcentaje + '%';
-                porcentajeTexto.textContent = porcentaje + '%';
-                detalleTexto.textContent = procesados + ' de ' + total + ' archivos procesados';
-            }
+            // Un bloque por estudio (uno solo si la cita no es un combo, ver
+            // Cita.estudios): cada uno sube y cierra su propia carga de
+            // forma independiente, identificándose con `tipoEstudioId`.
+            function inicializarBloque(form) {
+                var tipoEstudioId = form.dataset.tipoEstudio;
+                var zone = form.querySelector('.upload-zone');
+                var input = form.querySelector('.input-imagenes');
+                var btnSeleccionar = form.querySelector('.btn-seleccionar');
+                var badge = form.querySelector('.file-count-badge');
+                var boton = form.querySelector('.btn-adjuntar');
+                var progreso = form.querySelector('.progreso');
+                var relleno = form.querySelector('.progreso-barra-relleno');
+                var porcentajeTexto = form.querySelector('.progreso-porcentaje');
+                var etiquetaTexto = form.querySelector('.progreso-etiqueta');
+                var detalleTexto = form.querySelector('.progreso-detalle');
+                var errorTexto = form.querySelector('.progreso-error');
+                var csrfToken = form.querySelector('[name=csrfmiddlewaretoken]').value;
 
-            function subirTanda(archivos) {
-                var datos = new FormData();
-                datos.append('csrfmiddlewaretoken', csrfToken);
-                archivos.forEach(function (archivo) {
-                    datos.append('imagenes', archivo, archivo.name);
-                });
-                return fetch(urlLote, { method: 'POST', body: datos, credentials: 'same-origin' })
-                    .then(function (respuesta) {
-                        if (!respuesta.ok) {
-                            throw new Error('Fallo al subir un grupo de archivos (HTTP ' + respuesta.status + ').');
-                        }
-                        return respuesta.json();
-                    });
-            }
-
-            function finalizar() {
-                var datos = new FormData();
-                datos.append('csrfmiddlewaretoken', csrfToken);
-                return fetch(urlFinalizar, { method: 'POST', body: datos, credentials: 'same-origin' })
-                    .then(function (respuesta) { return respuesta.json().then(function (json) {
-                        return { status: respuesta.status, json: json };
-                    }); });
-            }
-
-            async function procesarCarga(archivos) {
-                var total = archivos.length;
-                var procesados = 0;
-                var guardadas = 0;
-                actualizarBarra(0, total);
-
-                for (var i = 0; i < archivos.length; i += TAMANO_TANDA) {
-                    var tanda = archivos.slice(i, i + TAMANO_TANDA);
-                    var resultado = await subirTanda(tanda);
-                    guardadas += resultado.guardadas || 0;
-                    procesados += tanda.length;
-                    actualizarBarra(procesados, total);
-                }
-
-                etiquetaTexto.textContent = 'Finalizando…';
-                var respuestaFinal = await finalizar();
-                if (!respuestaFinal.json.ok) {
-                    throw new Error(respuestaFinal.json.error || 'No se pudo completar la carga.');
-                }
-                etiquetaTexto.textContent = 'Listo — ' + guardadas + ' imagen(es) guardada(s)';
-                window.location.href = respuestaFinal.json.redirect_url;
-            }
-
-            form.addEventListener('submit', function (evento) {
-                evento.preventDefault();
-
-                var todosLosArchivos = Array.prototype.slice.call(input.files);
-                var archivosUtiles = todosLosArchivos.filter(esArchivoUtil);
-
-                if (archivosUtiles.length === 0) {
-                    errorTexto.textContent = 'No se seleccionó ningún archivo válido.';
-                    errorTexto.style.display = 'block';
+                if (!input || !boton || !progreso) {
                     return;
                 }
 
-                errorTexto.style.display = 'none';
-                boton.disabled = true;
-                boton.innerHTML = '<svg width="14" height="14"><use href="#i-upload"/></svg> Procesando…';
-                input.disabled = true;
-                progreso.style.display = 'block';
-
-                procesarCarga(archivosUtiles).catch(function (error) {
-                    errorTexto.textContent = error.message || 'Ocurrió un error al subir los archivos.';
-                    errorTexto.style.display = 'block';
-                    etiquetaTexto.textContent = 'Se detuvo por un error';
-                    boton.disabled = false;
-                    boton.innerHTML = '<svg width="14" height="14"><use href="#i-upload"/></svg> Reintentar';
-                    input.disabled = false;
+                btnSeleccionar.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    input.click();
                 });
-            });
+                zone.addEventListener('click', function () { input.click(); });
+
+                input.addEventListener('change', function () {
+                    var count = input.files.length;
+                    if (count > 0) {
+                        badge.innerHTML = '<span class="file-count">' + count + ' archivos</span>';
+                        boton.disabled = false;
+                    } else {
+                        badge.innerHTML = '';
+                        boton.disabled = true;
+                    }
+                });
+
+                function actualizarBarra(procesados, total) {
+                    var porcentaje = total > 0 ? Math.round((procesados / total) * 100) : 0;
+                    relleno.style.width = porcentaje + '%';
+                    porcentajeTexto.textContent = porcentaje + '%';
+                    detalleTexto.textContent = procesados + ' de ' + total + ' archivos procesados';
+                }
+
+                function subirTanda(archivos) {
+                    var datos = new FormData();
+                    datos.append('csrfmiddlewaretoken', csrfToken);
+                    datos.append('tipo_estudio', tipoEstudioId);
+                    archivos.forEach(function (archivo) {
+                        datos.append('imagenes', archivo, archivo.name);
+                    });
+                    return fetch(urlLote, { method: 'POST', body: datos, credentials: 'same-origin' })
+                        .then(function (respuesta) {
+                            if (!respuesta.ok) {
+                                throw new Error('Fallo al subir un grupo de archivos (HTTP ' + respuesta.status + ').');
+                            }
+                            return respuesta.json();
+                        });
+                }
+
+                function finalizar() {
+                    var datos = new FormData();
+                    datos.append('csrfmiddlewaretoken', csrfToken);
+                    datos.append('tipo_estudio', tipoEstudioId);
+                    return fetch(urlFinalizar, { method: 'POST', body: datos, credentials: 'same-origin' })
+                        .then(function (respuesta) { return respuesta.json().then(function (json) {
+                            return { status: respuesta.status, json: json };
+                        }); });
+                }
+
+                async function procesarCarga(archivos) {
+                    var total = archivos.length;
+                    var procesados = 0;
+                    var guardadas = 0;
+                    actualizarBarra(0, total);
+
+                    for (var i = 0; i < archivos.length; i += TAMANO_TANDA) {
+                        var tanda = archivos.slice(i, i + TAMANO_TANDA);
+                        var resultado = await subirTanda(tanda);
+                        guardadas += resultado.guardadas || 0;
+                        procesados += tanda.length;
+                        actualizarBarra(procesados, total);
+                    }
+
+                    etiquetaTexto.textContent = 'Finalizando…';
+                    var respuestaFinal = await finalizar();
+                    if (!respuestaFinal.json.ok) {
+                        throw new Error(respuestaFinal.json.error || 'No se pudo completar la carga.');
+                    }
+                    etiquetaTexto.textContent = 'Listo — ' + guardadas + ' imagen(es) guardada(s)';
+                    if (respuestaFinal.json.redirect_url) {
+                        // Ya quedaron cargados todos los estudios de la cita.
+                        window.location.href = respuestaFinal.json.redirect_url;
+                    } else {
+                        // Es un combo y todavía falta otro estudio: se recarga
+                        // esta misma pantalla para seguir con el que sigue.
+                        window.location.reload();
+                    }
+                }
+
+                form.addEventListener('submit', function (evento) {
+                    evento.preventDefault();
+
+                    var todosLosArchivos = Array.prototype.slice.call(input.files);
+                    var archivosUtiles = todosLosArchivos.filter(esArchivoUtil);
+
+                    if (archivosUtiles.length === 0) {
+                        errorTexto.textContent = 'No se seleccionó ningún archivo válido.';
+                        errorTexto.style.display = 'block';
+                        return;
+                    }
+
+                    errorTexto.style.display = 'none';
+                    boton.disabled = true;
+                    boton.innerHTML = '<svg width="14" height="14"><use href="#i-upload"/></svg> Procesando…';
+                    input.disabled = true;
+                    progreso.style.display = 'block';
+
+                    procesarCarga(archivosUtiles).catch(function (error) {
+                        errorTexto.textContent = error.message || 'Ocurrió un error al subir los archivos.';
+                        errorTexto.style.display = 'block';
+                        etiquetaTexto.textContent = 'Se detuvo por un error';
+                        boton.disabled = false;
+                        boton.innerHTML = '<svg width="14" height="14"><use href="#i-upload"/></svg> Reintentar';
+                        input.disabled = false;
+                    });
+                });
+            }
+
+            document.querySelectorAll('.form-imagenes').forEach(inicializarBloque);
         });
     </script>
 {% endblock %}

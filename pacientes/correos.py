@@ -38,6 +38,15 @@ def enviar_resultados(orden):
         + '?' + urlencode({'studyId': orden.id, 'tab': 'images', 'ac': ac})
     )
 
+    # Un combo (ver Cita.estudios) tiene un informe por cada estudio que lo
+    # compone; un estudio normal tiene exactamente uno.
+    informes_con_pdf = [i for i in orden.informes.all() if i.archivo]
+    en_singular = len(informes_con_pdf) <= 1
+    linea_informe = (
+        'El informe médico va adjunto a este correo en formato PDF.' if en_singular
+        else f'Los {len(informes_con_pdf)} informes médicos van adjuntos a este correo en formato PDF.'
+    )
+
     asunto = 'Resultados de su estudio - Clínica de Imágenes'
     mensaje = f"""Estimado(a) {paciente.nombre} {paciente.apellido}:
 
@@ -52,7 +61,7 @@ Para ver las imágenes de su estudio, ingrese a este enlace:
 
 Se le pedirán los últimos 4 dígitos de su DPI para acceder.
 
-El informe médico va adjunto a este correo en formato PDF.
+{linea_informe}
 
 Gracias por confiar en nosotros.
 
@@ -62,10 +71,10 @@ Clínica de Imágenes
 
     correo = EmailMessage(subject=asunto, body=mensaje, to=[paciente.correo])
 
-    # Solo se adjunta el informe PDF. Las imágenes ya no se adjuntan: se ven
-    # en el visor web a través del link.
-    if orden.informe_archivo:
-        correo.attach_file(orden.informe_archivo.path)
+    # Solo se adjuntan los informes en PDF. Las imágenes ya no se adjuntan:
+    # se ven en el visor web a través del link.
+    for informe in informes_con_pdf:
+        correo.attach_file(informe.archivo.path)
 
     try:
         correo.send()

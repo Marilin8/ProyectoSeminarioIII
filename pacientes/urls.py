@@ -26,7 +26,11 @@ urlpatterns = [
         views.visor_imagen,
         name='visor_imagen',
     ),
-    path('visor/<int:orden_id>/informe.pdf', views.visor_informe_pdf, name='visor_informe_pdf'),
+    path(
+        'visor/<int:orden_id>/informe/<int:informe_id>.pdf',
+        views.visor_informe_pdf,
+        name='visor_informe_pdf',
+    ),
     path('visor/<int:orden_id>/dicom.zip', views.visor_dicom, name='visor_dicom'),
     path('visor/<int:orden_id>/imagenes.zip', views.visor_jpg, name='visor_jpg'),
 

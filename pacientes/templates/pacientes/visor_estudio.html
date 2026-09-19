@@ -188,23 +188,32 @@
         </div>
 
         <div class="tab-panel reporte {% if tab == 'report' %}on{% endif %}" id="panel-report">
-            <div class="reporte-caja">
-                {% if tiene_pdf %}
-                    <a class="btn-pdf" href="{% url 'visor_informe_pdf' orden_id=orden.id %}?descargar=1">
-                        <svg width="15" height="15"><use href="#i-file-text"/></svg> Descargar informe (PDF)
-                    </a>
-                    <div class="pdf-visor">
-                        <iframe src="{% url 'visor_informe_pdf' orden_id=orden.id %}#toolbar=1&navpanes=0"
-                                title="Informe en PDF" loading="lazy"></iframe>
+            {% if informes %}
+                {% for informe in informes %}
+                    <div class="reporte-caja">
+                        {% if informes|length > 1 %}<h2>{{ informe.tipo_estudio.nombre }}</h2>{% endif %}
+                        {% if informe.archivo %}
+                            <a class="btn-pdf" href="{% url 'visor_informe_pdf' orden_id=orden.id informe_id=informe.id %}?descargar=1">
+                                <svg width="15" height="15"><use href="#i-file-text"/></svg> Descargar informe (PDF)
+                            </a>
+                            <div class="pdf-visor">
+                                <iframe src="{% url 'visor_informe_pdf' orden_id=orden.id informe_id=informe.id %}#toolbar=1&navpanes=0"
+                                        title="Informe en PDF" loading="lazy"></iframe>
+                            </div>
+                        {% endif %}
+                        {% if informe.texto %}
+                            {% if informes|length == 1 %}<h2>Informe</h2>{% endif %}
+                            <div class="reporte-texto">{{ informe.texto }}</div>
+                        {% elif not informe.archivo %}
+                            <p class="vacio">El informe todavía no está disponible.</p>
+                        {% endif %}
                     </div>
-                {% endif %}
-                {% if orden.informe_texto %}
-                    <h2>Informe</h2>
-                    <div class="reporte-texto">{{ orden.informe_texto }}</div>
-                {% elif not tiene_pdf %}
+                {% endfor %}
+            {% else %}
+                <div class="reporte-caja">
                     <p class="vacio">El informe todavía no está disponible.</p>
-                {% endif %}
-            </div>
+                </div>
+            {% endif %}
         </div>
     </div>
 

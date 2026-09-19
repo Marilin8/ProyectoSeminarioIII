@@ -5,6 +5,8 @@
 
 {% block extra_css %}
     <style>
+        .bloque-informe { border: 1px solid var(--border-light); border-radius: var(--radius); padding: 1rem; margin-bottom: 1.25rem; }
+        .bloque-titulo { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.75rem; font-size: 1rem; }
         .acciones-imagenes { display: flex; gap: 0.75rem; margin-bottom: 1.25rem; }
         .acciones-imagenes a { flex: 1; }
         .modal-icono {
@@ -46,24 +48,48 @@
             Motivo: {{ orden.motivo }}
         </div>
 
-        {% if orden.imagenes.all %}
-            <div class="acciones-imagenes">
-                <button type="button" class="btn btn-outline" id="btn-ver-jpg" data-url="{% url 'ver_imagenes_jpg' orden_id=orden.id %}">
-                    <svg width="14" height="14"><use href="#i-image"/></svg> Ver JPG
-                </button>
-                {% if tiene_dicom_original %}
-                    <a class="btn btn-outline" href="{% url 'descargar_dicom_orden' orden_id=orden.id %}" target="_blank" rel="noopener noreferrer">
-                        <svg width="14" height="14"><use href="#i-download"/></svg> Descargar DICOM
-                    </a>
-                {% endif %}
-            </div>
-        {% else %}
-            <div class="alert alert-info">Este estudio no tiene imágenes adjuntas.</div>
-        {% endif %}
-
         <form method="post" enctype="multipart/form-data" id="form-informe">
             {% csrf_token %}
             {{ form.non_field_errors }}
+
+            {% for bloque in bloques %}
+                <div class="bloque-informe">
+                    {% if bloques|length > 1 %}
+                        <h3 class="bloque-titulo">
+                            {{ bloque.tipo_estudio.nombre }}
+                            {% if bloque.informe.tiene_contenido %}
+                                <span class="badge badge-success">Completo</span>
+                            {% elif not bloque.tiene_imagenes %}
+                                <span class="badge badge-muted">Esperando imágenes del técnico</span>
+                            {% else %}
+                                <span class="badge badge-warning">Pendiente</span>
+                            {% endif %}
+                        </h3>
+                    {% endif %}
+
+                    {% if bloque.tiene_imagenes %}
+                        <div class="acciones-imagenes">
+                            <button type="button" class="btn btn-outline btn-ver-jpg"
+                                    data-url="{% url 'ver_imagenes_jpg' orden_id=orden.id %}?tipo_estudio={{ bloque.tipo_estudio.id }}">
+                                <svg width="14" height="14"><use href="#i-image"/></svg> Ver JPG
+                            </button>
+                            {% if tiene_dicom_original %}
+                                <a class="btn btn-outline" href="{% url 'descargar_dicom_orden' orden_id=orden.id %}" target="_blank" rel="noopener noreferrer">
+                                    <svg width="14" height="14"><use href="#i-download"/></svg> Descargar DICOM
+                                </a>
+                            {% endif %}
+                        </div>
+
+                        <label for="{{ bloque.campo_archivo.id_for_label }}">{{ bloque.campo_archivo.label }}</label>
+                        {{ bloque.campo_archivo }}
+                        <p class="ayuda">Adjuntá el informe en PDF.</p>
+                        {{ bloque.campo_archivo.errors }}
+                        {{ bloque.campo_texto.errors }}
+                    {% else %}
+                        <div class="alert alert-info">Este estudio todavía no tiene imágenes adjuntas.</div>
+                    {% endif %}
+                </div>
+            {% endfor %}
 
             {% if cita.convenio == 'privado' %}
                 <div class="card" style="padding:1rem;margin-bottom:1.25rem;background:#f8fafc;">
@@ -91,11 +117,6 @@
                     {% endif %}
                 </div>
             {% endif %}
-
-            <label for="{{ form.informe_archivo.id_for_label }}">{{ form.informe_archivo.label }}</label>
-            {{ form.informe_archivo }}
-            <p class="ayuda">Adjuntá el informe en PDF.</p>
-            {{ form.informe_archivo.errors }}
 
             <button type="submit" class="btn btn-primary btn-block btn-lg mt-2" id="btn-guardar-informe">
                 <svg width="14" height="14"><use href="#i-save"/></svg> Guardar informe
@@ -164,11 +185,14 @@
         // el radiólogo confirma el envío de verdad (ver botonConfirmar más
         // abajo), no con el primer clic en "Guardar informe" (ese solo abre
         // el modal de confirmación).
-        var informeInput = document.getElementById('id_informe_archivo');
+        var informeInputs = document.querySelectorAll('#form-informe input[type="file"]');
         var enviandoInforme = false;
-        if (informeInput) {
+        if (informeInputs.length) {
             window.addEventListener('beforeunload', function (evento) {
-                if (!enviandoInforme && informeInput.files && informeInput.files.length > 0) {
+                var hayAlgunoElegido = Array.prototype.some.call(informeInputs, function (input) {
+                    return input.files && input.files.length > 0;
+                });
+                if (!enviandoInforme && hayAlgunoElegido) {
                     evento.preventDefault();
                     evento.returnValue = '';
                 }
@@ -185,18 +209,19 @@
             // recarga; ningún JS puede recuperar eso una vez que ya pasó).
             // Con el iframe, la página de "arriba" nunca navega, así que el
             // archivo elegido queda intacto pase lo que pase adentro.
-            var botonVerJpg = document.getElementById('btn-ver-jpg');
+            var botonesVerJpg = document.querySelectorAll('.btn-ver-jpg');
             var modalVerJpg = document.getElementById('modal-ver-jpg');
             var iframeVerJpg = document.getElementById('iframe-ver-jpg');
             var botonCerrarVerJpg = document.getElementById('btn-cerrar-ver-jpg');
-            if (botonVerJpg && modalVerJpg && iframeVerJpg && botonCerrarVerJpg) {
-                botonVerJpg.addEventListener('click', function () {
-                    // Carga perezosa: recién pone el src la primera vez que
-                    // se abre, no en cada carga de la página.
-                    if (!iframeVerJpg.src) {
-                        iframeVerJpg.src = botonVerJpg.dataset.url;
-                    }
-                    modalVerJpg.classList.add('abierto');
+            if (botonesVerJpg.length && modalVerJpg && iframeVerJpg && botonCerrarVerJpg) {
+                botonesVerJpg.forEach(function (boton) {
+                    boton.addEventListener('click', function () {
+                        // Un combo tiene un botón por estudio, cada uno con su
+                        // propia galería filtrada -- siempre se refresca el
+                        // src al abrir (no hay carga perezosa única).
+                        iframeVerJpg.src = boton.dataset.url;
+                        modalVerJpg.classList.add('abierto');
+                    });
                 });
                 botonCerrarVerJpg.addEventListener('click', function () {
                     modalVerJpg.classList.remove('abierto');

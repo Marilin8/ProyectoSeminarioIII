@@ -4,6 +4,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -11,6 +12,7 @@ from django.utils import timezone
 
 from accounts.models import Bitacora, RolAdicional
 from pacientes import horarios
+from pacientes.correos import enviar_resultados
 from pacientes.forms import AgendarCitaForm, RegistrarTicketForm, validar_telefono_pais
 from pacientes.models import (
     Cita,
@@ -19,6 +21,8 @@ from pacientes.models import (
     EstudioExtra,
     HistorialPrecioEstudio,
     ImagenEstudio,
+    InformeEstudio,
+    Modalidad,
     Notificacion,
     OrdenPago,
     OrdenTrabajo,
@@ -300,10 +304,13 @@ class VisorEstudioTests(TestCase):
         )
         self.orden = OrdenTrabajo.objects.create(
             cita=self.cita, motivo='x', creada_por=self.recepcionista,
-            informe_texto='Sin hallazgos.', resultados_enviados_en=timezone.now(),
+            resultados_enviados_en=timezone.now(),
+        )
+        self.informe = InformeEstudio.objects.create(
+            orden=self.orden, tipo_estudio=self.estudio, texto='Sin hallazgos.',
         )
         self.imagen = ImagenEstudio.objects.create(
-            orden=self.orden, subida_por=self.tecnico, seleccionada=True,
+            orden=self.orden, tipo_estudio=self.estudio, subida_por=self.tecnico, seleccionada=True,
             archivo=SimpleUploadedFile('img.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
         )
         token = self.orden.asegurar_token_publico()
@@ -467,8 +474,9 @@ class OrdenTrabajoModelTests(TestCase):
 
     def test_tiene_informe_es_verdadero_con_texto(self):
         orden = OrdenTrabajo.objects.create(
-            cita=self.cita, motivo='Dolor torácico', creada_por=self.usuario, informe_texto='Sin hallazgos.',
+            cita=self.cita, motivo='Dolor torácico', creada_por=self.usuario,
         )
+        InformeEstudio.objects.create(orden=orden, tipo_estudio=self.cita.tipo_estudio, texto='Sin hallazgos.')
         self.assertTrue(orden.tiene_informe)
 
     def test_tiene_imagenes_refleja_las_imagenes_asociadas(self):
@@ -1766,7 +1774,10 @@ class NotificacionesTests(TestCase):
 
         self.client.post(
             reverse('adjuntar_imagenes', args=[orden.id]),
-            {'imagenes': [SimpleUploadedFile('foto.jpg', b'contenido', content_type='image/jpeg')]},
+            {
+                'tipo_estudio': cita.tipo_estudio_id,
+                'imagenes': [SimpleUploadedFile('foto.jpg', b'contenido', content_type='image/jpeg')],
+            },
         )
 
         notificacion = Notificacion.objects.get(destinatario=self.radiologo, cita=cita)
@@ -1780,7 +1791,10 @@ class NotificacionesTests(TestCase):
 
         self.client.post(
             reverse('adjuntar_imagenes', args=[orden.id]),
-            {'imagenes': [SimpleUploadedFile('foto.jpg', b'contenido', content_type='image/jpeg')]},
+            {
+                'tipo_estudio': cita.tipo_estudio_id,
+                'imagenes': [SimpleUploadedFile('foto.jpg', b'contenido', content_type='image/jpeg')],
+            },
         )
 
         for radiologo in (self.radiologo, otro_radiologo):
@@ -1795,7 +1809,7 @@ class NotificacionesTests(TestCase):
         cita = crear_cita(self.recepcionista, radiologo=self.radiologo, estado=Cita.ESTADO_EN_PROCESO)
         orden = OrdenTrabajo.objects.create(cita=cita, motivo='Control.', creada_por=self.recepcionista, validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO)
         ImagenEstudio.objects.create(
-            orden=orden,
+            orden=orden, tipo_estudio=cita.tipo_estudio,
             archivo=SimpleUploadedFile('foto.jpg', b'contenido', content_type='image/jpeg'),
             subida_por=self.tecnico,
         )
@@ -1803,7 +1817,7 @@ class NotificacionesTests(TestCase):
 
         self.client.post(
             reverse('adjuntar_informe', args=[cita.id]),
-            {'informe_texto': 'Sin hallazgos patológicos.'},
+            {f'texto_{cita.tipo_estudio_id}': 'Sin hallazgos patológicos.'},
         )
 
         for recepcionista in (self.recepcionista, otro_recepcionista):
@@ -1935,6 +1949,63 @@ class ComboModelTests(TestCase):
         combo.estudios.set([self.e1])
         self.assertEqual(combo.precio_referencia, Decimal('200.00'))
 
+    def test_sincronizar_tipo_estudio_crea_modalidad_y_tipo_estudio_espejo(self):
+        combo = Combo.objects.create(nombre='Combo espejo')
+        combo.estudios.set([self.e1, self.e2])
+
+        tipo_estudio = combo.sincronizar_tipo_estudio()
+
+        modalidad = Modalidad.objects.get(codigo='combo')
+        self.assertEqual(modalidad.nombre, 'Combo')
+        self.assertEqual(tipo_estudio.nombre, 'Combo espejo')
+        self.assertEqual(tipo_estudio.modalidad, 'combo')
+        self.assertEqual(
+            tipo_estudio.precio_para(Cita.CONVENIO_PRIVADO, True), Decimal('500.00'),
+        )
+        combo.refresh_from_db()
+        self.assertEqual(combo.tipo_estudio_generado_id, tipo_estudio.id)
+
+    def test_sincronizar_tipo_estudio_es_idempotente_y_recalcula_el_precio(self):
+        combo = Combo.objects.create(
+            nombre='Combo recalculo', aplica_descuento=True, porcentaje_descuento=Decimal('10'),
+        )
+        combo.estudios.set([self.e1, self.e2])
+        primero = combo.sincronizar_tipo_estudio()
+
+        combo.porcentaje_descuento = Decimal('20')
+        combo.save()
+        segundo = combo.sincronizar_tipo_estudio()
+
+        self.assertEqual(primero.id, segundo.id)
+        self.assertEqual(TipoEstudio.objects.filter(nombre='Combo recalculo').count(), 1)
+        self.assertEqual(
+            segundo.precio_para(Cita.CONVENIO_PRIVADO, True), Decimal('400.00'),
+        )
+
+    def test_sincronizar_tipo_estudio_asigna_la_interseccion_de_radiologos(self):
+        dra_ambos = crear_usuario('dra_ambos_combo', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        dra_solo_e1 = crear_usuario('dra_solo_e1_combo', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.e1.radiologos.set([dra_ambos, dra_solo_e1])
+        self.e2.radiologos.set([dra_ambos])
+
+        combo = Combo.objects.create(nombre='Combo radiólogos')
+        combo.estudios.set([self.e1, self.e2])
+        tipo_estudio = combo.sincronizar_tipo_estudio()
+
+        self.assertEqual(list(tipo_estudio.radiologos.all()), [dra_ambos])
+
+    def test_sincronizar_tipo_estudio_sin_radiologo_en_comun_deja_la_lista_vacia(self):
+        dra_solo_e1 = crear_usuario('dra_solo_e1_vacio', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        dra_solo_e2 = crear_usuario('dra_solo_e2_vacio', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.e1.radiologos.set([dra_solo_e1])
+        self.e2.radiologos.set([dra_solo_e2])
+
+        combo = Combo.objects.create(nombre='Combo sin radiólogo en común')
+        combo.estudios.set([self.e1, self.e2])
+        tipo_estudio = combo.sincronizar_tipo_estudio()
+
+        self.assertEqual(list(tipo_estudio.radiologos.all()), [])
+
 
 class ComboViewTests(TestCase):
     """Los combos (catálogo) se administran íntegro por un administrador,
@@ -1962,12 +2033,178 @@ class ComboViewTests(TestCase):
             'activo': 'on', 'aplica_descuento': '', 'porcentaje_descuento': '0',
         })
         self.assertRedirects(respuesta, reverse('lista_combos'))
-        self.assertTrue(Combo.objects.filter(nombre='Combo nuevo').exists())
+        combo = Combo.objects.get(nombre='Combo nuevo')
+        self.assertTrue(combo.tipo_estudio_generado_id)
+        self.assertEqual(combo.tipo_estudio_generado.modalidad, 'combo')
+
+    def test_crear_combo_avisa_si_no_hay_radiologo_que_haga_todos_los_estudios(self):
+        otro_estudio = TipoEstudio.objects.create(nombre='RX combo view 2')
+        dra1 = crear_usuario('dra_combo_view_1', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        dra2 = crear_usuario('dra_combo_view_2', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.estudio.radiologos.set([dra1])
+        otro_estudio.radiologos.set([dra2])
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.post(reverse('crear_combo'), {
+            'nombre': 'Combo sin radiólogo en común',
+            'estudios': [self.estudio.id, otro_estudio.id],
+            'activo': 'on', 'aplica_descuento': '', 'porcentaje_descuento': '0',
+        }, follow=True)
+
+        self.assertContains(respuesta, 'Ningún radiólogo hace todos los estudios')
+
+    def test_crear_combo_no_avisa_si_hay_radiologo_en_comun(self):
+        dra = crear_usuario('dra_combo_view_comun', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.estudio.radiologos.set([dra])
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.post(reverse('crear_combo'), {
+            'nombre': 'Combo con radiólogo en común', 'estudios': [self.estudio.id],
+            'activo': 'on', 'aplica_descuento': '', 'porcentaje_descuento': '0',
+        }, follow=True)
+
+        self.assertNotContains(respuesta, 'Ningún radiólogo hace todos los estudios')
 
     def test_recepcionista_no_puede_crear_combo(self):
         self.client.force_login(self.recep)
         respuesta = self.client.get(reverse('crear_combo'))
         self.assertNotEqual(respuesta.status_code, 200)
+
+
+class ComboFlujoCompletoTests(TestCase):
+    """Una cita de un combo (ver Combo.sincronizar_tipo_estudio) trae
+    imágenes e informe por separado para cada estudio que lo compone: el
+    técnico sube y la radióloga informa uno por uno, y el estudio solo se
+    puede enviar al paciente cuando están completos todos (ver
+    OrdenTrabajo.tiene_informe/imagenes_completas)."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_combo_flujo', rol=Usuario.ROL_RECEPCIONISTA)
+        self.tecnico = crear_usuario('tec_combo_flujo', rol=Usuario.ROL_TECNICO_IMAGENES)
+        self.radiologo = crear_usuario('rad_combo_flujo', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.torax = TipoEstudio.objects.create(nombre='Tórax combo flujo')
+        self.columna = TipoEstudio.objects.create(nombre='Columna combo flujo')
+        for estudio, precio in ((self.torax, 100), (self.columna, 150)):
+            estudio.radiologos.add(self.radiologo)
+            PrecioEstudio.objects.create(
+                tipo_estudio=estudio, convenio=Cita.CONVENIO_PRIVADO,
+                horario_habil=True, precio=Decimal(precio),
+            )
+        self.combo = Combo.objects.create(nombre='Combo tórax-columna flujo')
+        self.combo.estudios.set([self.torax, self.columna])
+        self.tipo_estudio_combo = self.combo.sincronizar_tipo_estudio()
+
+        self.paciente = crear_paciente(dpi='7778889990001', correo='paciente-combo@correo.com')
+        self.cita = crear_cita(
+            self.recepcion, paciente=self.paciente, tipo_estudio=self.tipo_estudio_combo,
+            estado=Cita.ESTADO_EN_PROCESO, radiologo=self.radiologo,
+        )
+        self.orden = OrdenTrabajo.objects.create(
+            cita=self.cita, motivo='Control combo', creada_por=self.recepcion,
+            validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO,
+        )
+
+    def _subir(self, tipo_estudio):
+        self.client.force_login(self.tecnico)
+        return self.client.post(
+            reverse('adjuntar_imagenes_lote', args=[self.orden.id]),
+            {
+                'tipo_estudio': tipo_estudio.id,
+                'imagenes': SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+            },
+        )
+
+    def test_el_combo_trae_los_dos_estudios(self):
+        self.assertEqual(set(self.cita.estudios), {self.torax, self.columna})
+
+    def test_la_orden_sigue_pendiente_hasta_subir_las_imagenes_de_los_dos_estudios(self):
+        self._subir(self.torax)
+        respuesta = self.client.get(reverse('ordenes_pendientes'))
+        self.assertIn(self.orden, respuesta.context['ordenes'])
+        self.assertFalse(self.orden.imagenes_completas)
+
+        self._subir(self.columna)
+        self.orden.refresh_from_db()
+        self.assertTrue(self.orden.imagenes_completas)
+        respuesta = self.client.get(reverse('ordenes_pendientes'))
+        self.assertNotIn(self.orden, respuesta.context['ordenes'])
+
+    def test_finalizar_solo_redirige_cuando_estan_las_imagenes_de_todo_el_combo(self):
+        self._subir(self.torax)
+        respuesta = self.client.post(
+            reverse('adjuntar_imagenes_finalizar', args=[self.orden.id]), {'tipo_estudio': self.torax.id},
+        )
+        self.assertEqual(respuesta.json()['completo'], False)
+        self.assertIsNone(respuesta.json()['redirect_url'])
+
+        self._subir(self.columna)
+        respuesta = self.client.post(
+            reverse('adjuntar_imagenes_finalizar', args=[self.orden.id]), {'tipo_estudio': self.columna.id},
+        )
+        self.assertEqual(respuesta.json()['completo'], True)
+        self.assertEqual(respuesta.json()['redirect_url'], reverse('ordenes_pendientes'))
+
+    def test_el_informe_se_guarda_por_estudio_y_la_cita_no_avanza_hasta_completarlos(self):
+        self._subir(self.torax)
+        self._subir(self.columna)
+        self.client.force_login(self.radiologo)
+
+        self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
+            f'texto_{self.torax.id}': 'Tórax sin hallazgos.',
+        })
+        self.cita.refresh_from_db()
+        self.assertEqual(self.cita.estado, Cita.ESTADO_EN_PROCESO)
+        self.assertTrue(InformeEstudio.objects.filter(orden=self.orden, tipo_estudio=self.torax).exists())
+
+        self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
+            f'texto_{self.columna.id}': 'Columna sin hallazgos.',
+        })
+        self.cita.refresh_from_db()
+        self.assertEqual(self.cita.estado, Cita.ESTADO_PROCESADA)
+        self.orden.refresh_from_db()
+        self.assertTrue(self.orden.tiene_informe)
+
+    def test_enviar_estudio_bloqueado_hasta_completar_el_informe_del_combo(self):
+        self._subir(self.torax)
+        self._subir(self.columna)
+        self.client.force_login(self.radiologo)
+        self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
+            f'texto_{self.torax.id}': 'Tórax sin hallazgos.',
+        })
+
+        # La cita sigue EN_PROCESO (no PROCESADA): enviar_estudio, que exige
+        # ESTADO_PROCESADA, ni siquiera encuentra la cita.
+        self.client.force_login(self.recepcion)
+        respuesta = self.client.post(reverse('enviar_estudio', args=[self.cita.id]))
+        self.assertEqual(respuesta.status_code, 404)
+
+        self.client.force_login(self.radiologo)
+        self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
+            f'texto_{self.columna.id}': 'Columna sin hallazgos.',
+        })
+        self.client.force_login(self.recepcion)
+        with override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend'):
+            respuesta = self.client.post(reverse('enviar_estudio', args=[self.cita.id]))
+        self.assertEqual(respuesta.status_code, 302)
+        self.orden.refresh_from_db()
+        self.assertIsNotNone(self.orden.resultados_enviados_en)
+
+    def test_el_correo_adjunta_un_pdf_por_cada_estudio_del_combo(self):
+        InformeEstudio.objects.create(
+            orden=self.orden, tipo_estudio=self.torax, texto='x',
+            archivo=SimpleUploadedFile('torax.pdf', b'%PDF-1.4 fake', content_type='application/pdf'),
+        )
+        InformeEstudio.objects.create(
+            orden=self.orden, tipo_estudio=self.columna, texto='x',
+            archivo=SimpleUploadedFile('columna.pdf', b'%PDF-1.4 fake', content_type='application/pdf'),
+        )
+
+        with override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend'):
+            error = enviar_resultados(self.orden)
+
+        self.assertEqual(error, '')
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(len(mail.outbox[0].attachments), 2)
 
 
 class CajaTests(TestCase):
@@ -2330,13 +2567,13 @@ class EstudioExtraTests(TestCase):
         """El estudio extra ya no tiene su propio botón: se agrega al mismo
         tiempo que se guarda el informe, en un solo envío."""
         ImagenEstudio.objects.create(
-            orden=self.cita.orden_trabajo, subida_por=self.radiologo,
+            orden=self.cita.orden_trabajo, tipo_estudio=self.cita.tipo_estudio, subida_por=self.radiologo,
             archivo=SimpleUploadedFile('img.jpg', b'fake'),
         )
         self.client.force_login(self.radiologo)
 
         respuesta = self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
-            'informe_texto': 'Hallazgos sin complicaciones.',
+            f'texto_{self.cita.tipo_estudio_id}': 'Hallazgos sin complicaciones.',
             'tipo_estudio': self.estudio_extra.id,
             'notas': 'agregado junto con el informe',
         })
@@ -2357,13 +2594,13 @@ class EstudioExtraTests(TestCase):
         """Elegir un estudio extra es opcional: guardar el informe sin
         tocar ese campo no debe exigirlo ni crear nada."""
         ImagenEstudio.objects.create(
-            orden=self.cita.orden_trabajo, subida_por=self.radiologo,
+            orden=self.cita.orden_trabajo, tipo_estudio=self.cita.tipo_estudio, subida_por=self.radiologo,
             archivo=SimpleUploadedFile('img.jpg', b'fake'),
         )
         self.client.force_login(self.radiologo)
 
         respuesta = self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
-            'informe_texto': 'Hallazgos sin complicaciones.',
+            f'texto_{self.cita.tipo_estudio_id}': 'Hallazgos sin complicaciones.',
         })
 
         self.assertRedirects(respuesta, reverse('citas_procesadas'))
@@ -2491,7 +2728,10 @@ class VerificacionDelTecnicoTests(TestCase):
     def _subir_imagen(self):
         return self.client.post(
             reverse('adjuntar_imagenes_lote', args=[self.orden.id]),
-            {'imagenes': SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg')},
+            {
+                'tipo_estudio': self.cita.tipo_estudio_id,
+                'imagenes': SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+            },
         )
 
     def _pagar(self):
