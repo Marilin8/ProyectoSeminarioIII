@@ -6,7 +6,7 @@ from django.utils import timezone
 from accounts.models import Usuario
 from clinica.validators import validar_correo_existente, validar_dominio_correo
 
-from .models import Cita, Cobro, Combo, Paciente, TipoEstudio
+from .models import Cita, Cobro, Combo, Modalidad, Paciente, TipoEstudio
 
 CONVENIOS_QUE_REQUIEREN_CARNET_IGSS = (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS)
 
@@ -209,10 +209,10 @@ class AgendarCitaForm(forms.Form):
         widget=TipoEstudioSelect(),
     )
     modalidad = forms.ChoiceField(
-        label='Grupo de estudio',
-        choices=[('', 'Todos los grupos')] + list(TipoEstudio.MODALIDAD_CHOICES),
+        label='Modalidad',
+        choices=[],
         required=False,
-        help_text='Elegí el grupo para ver solo los estudios de ese tipo.',
+        help_text='Elegí la modalidad para ver solo los estudios de ese tipo.',
     )
     radiologo = forms.ModelChoiceField(
         label='Radiólogo asignado',
@@ -235,9 +235,19 @@ class AgendarCitaForm(forms.Form):
 
     def __init__(self, *args, convenio=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields['modalidad'].choices = [
+            ('', 'Todas las modalidades')
+        ] + [
+            (m.codigo, m.nombre)
+            for m in Modalidad.objects.filter(
+                activo=True,
+                codigo__isnull=False
+            ).exclude(codigo='').order_by('nombre')
+        ]
+
         self.fields['fecha_nacimiento'].widget.attrs['max'] = timezone.localdate().isoformat()
         self.fields['tipo_estudio'].queryset = (
-            self.fields['tipo_estudio'].queryset.prefetch_related('precios', 'radiologos')
+        self.fields['tipo_estudio'].queryset.prefetch_related('precios', 'radiologos')
         )
         self.fields['tipo_estudio'].widget.detalles = _detalles_tipo_estudio(
             self.fields['tipo_estudio'].queryset, convenio,
@@ -341,10 +351,10 @@ class AgendarCitaPrivadoForm(forms.Form):
         widget=TipoEstudioSelect(),
     )
     modalidad = forms.ChoiceField(
-        label='Grupo de estudio',
-        choices=[('', 'Todos los grupos')] + list(TipoEstudio.MODALIDAD_CHOICES),
+        label='Modalidad',
+        choices=[],
         required=False,
-        help_text='Elegí el grupo para ver solo los estudios de ese tipo.',
+        help_text='Elegí la modalidad para ver solo los estudios de ese tipo.',
     )
     radiologo = forms.ModelChoiceField(
         label='Radiólogo asignado',
@@ -362,6 +372,15 @@ class AgendarCitaPrivadoForm(forms.Form):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields['modalidad'].choices = [
+            ('', 'Todas las modalidades')
+        ] + [
+            (m.codigo, m.nombre)
+            for m in Modalidad.objects.filter(
+                activo=True,
+                codigo__isnull=False
+            ).exclude(codigo='').order_by('nombre')
+        ]
         self.fields['fecha_nacimiento'].widget.attrs['max'] = timezone.localdate().isoformat()
         queryset = self.fields['tipo_estudio'].queryset.prefetch_related('precios')
         self.fields['tipo_estudio'].queryset = queryset
@@ -572,21 +591,39 @@ PRECIOS_ESTUDIO = [
 
 
 class CrearTipoEstudioForm(forms.ModelForm):
+    modalidad = forms.ChoiceField(
+        label='Modalidad',
+        choices=[],
+    )
+
     class Meta:
         model = TipoEstudio
         fields = ('nombre', 'modalidad', 'duracion_minutos')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        self.fields['modalidad'].choices = [
+            (m.codigo, m.nombre)
+            for m in Modalidad.objects.filter(
+                activo=True,
+                codigo__isnull=False
+            ).exclude(codigo='').order_by('nombre')
+        ]
+
         actuales = {}
         if self.instance and self.instance.pk:
             actuales = {
                 (p.convenio, p.horario_habil): p.precio
                 for p in self.instance.precios.all()
             }
+
         for campo, convenio, habil, etiqueta in PRECIOS_ESTUDIO:
             self.fields[campo] = forms.DecimalField(
-                label=f'Precio {etiqueta}', max_digits=8, decimal_places=2, min_value=0,
+                label=f'Precio {etiqueta}',
+                max_digits=8,
+                decimal_places=2,
+                min_value=0,
                 initial=actuales.get((convenio, habil), 0),
             )
 
@@ -684,9 +721,12 @@ class AgregarEstudioExtraForm(forms.Form):
     """El radiólogo avisa que le realizó al paciente un estudio extra al
     agendado. Caja lo cobra directamente o lo agrupa según el convenio."""
 
+    # Opcional: en adjuntar_informe casi nunca hay estudio extra, y un
+    # <select required> impide guardar el informe sin elegir uno.
     tipo_estudio = forms.ModelChoiceField(
         queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
         label='Estudio extra realizado',
+        required=False,
     )
     notas = forms.CharField(
         label='Notas (opcional)', max_length=255, required=False,
@@ -700,6 +740,65 @@ class GenerarOrdenForm(forms.Form):
         widget=forms.Textarea(attrs={'rows': 4}),
         help_text='Ej: Paciente presenta lesiones graves en el brazo izquierdo.',
     )
+
+
+class SolicitarModificacionEstudioForm(forms.Form):
+    """El técnico le explica a recepción qué hay que cambiar del estudio
+    (ver validar_estudio)."""
+
+    nota = forms.CharField(
+        label='¿Qué hay que modificar?',
+        max_length=500,
+        widget=forms.Textarea(attrs={
+            'rows': 4,
+            'placeholder': 'Ej.: El paciente vino por una radiografía de hombro, no de clavícula.',
+        }),
+        error_messages={'required': 'Indicá qué hay que modificar del estudio.'},
+    )
+
+    def clean_nota(self):
+        nota = (self.cleaned_data.get('nota') or '').strip()
+        if not nota:
+            raise forms.ValidationError('Indicá qué hay que modificar del estudio.')
+        return nota
+
+
+class CorregirEstudioForm(forms.Form):
+    """Recepción actualiza el estudio (y, si hace falta, el radiólogo y la
+    indicación clínica) que el técnico pidió modificar."""
+
+    tipo_estudio = forms.ModelChoiceField(
+        label='Estudio correcto',
+        queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
+    )
+    radiologo = forms.ModelChoiceField(
+        label='Radiólogo asignado',
+        required=False,
+        queryset=_radiologos_disponibles(),
+        help_text='Solo aparecen los radiólogos que realizan el estudio elegido.',
+    )
+    motivo = forms.CharField(
+        label='Motivo / indicación clínica',
+        widget=forms.Textarea(attrs={'rows': 3}),
+    )
+    comentario = forms.CharField(
+        label='Comentario para el técnico (opcional)',
+        max_length=150,
+        required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'Ej.: Ya se cambió a hombro.'}),
+    )
+
+    def __init__(self, *args, cita, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cita = cita
+
+    def clean(self):
+        cleaned = super().clean()
+        # Las citas de emergencia sin radiólogo asignado se quedan así; si la
+        # cita ya tenía uno (o se elige uno ahora), tiene que hacer el estudio.
+        if self.cita.radiologo_id or cleaned.get('radiologo'):
+            resolver_radiologo_para_estudio(self, cleaned)
+        return cleaned
 
 
 EXTENSIONES_IMAGEN_DIRECTA = ('.jpg', '.jpeg', '.png')

@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+
+{% block title %}Estudios por corregir - Clínica de Imágenes{% endblock %}
+{% block page_title %}Estudios por corregir{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <p class="text-muted text-sm mb-2">
+        Estudios en los que el técnico encontró un error y pidió una modificación. Al actualizarlos, el técnico
+        recibe un aviso para confirmarlos y Caja puede cobrarlos.
+    </p>
+
+    {% if ordenes %}
+        {% for orden in ordenes %}
+            <div class="card mb-1">
+                <div class="card-body flex-between" style="gap:1rem;flex-wrap:wrap;">
+                    <div>
+                        <strong>{{ orden.cita.paciente.nombre }} {{ orden.cita.paciente.apellido }}</strong>
+                        <span class="badge badge-info" style="margin-left:0.4rem;">{{ orden.cita.get_convenio_display }}</span>
+                        <div class="text-muted text-sm">
+                            {{ orden.cita.tipo_estudio.nombre }} — {{ orden.cita.fecha|date:'d/m/Y' }} {{ orden.cita.hora|time:'H:i' }}
+                        </div>
+                        <div style="margin-top:0.4rem;font-size:0.9rem;">
+                            <span class="badge badge-warning">Pidió modificar</span>
+                            {{ orden.validacion_nota }}
+                        </div>
+                        <div class="text-muted text-xs" style="margin-top:0.25rem;">
+                            {{ orden.validacion_por.get_full_name|default:orden.validacion_por.username }}
+                            · {{ orden.validacion_en|date:'d/m/Y H:i' }}
+                        </div>
+                    </div>
+                    <a class="btn btn-primary btn-sm" href="{% url 'corregir_estudio_cita' cita_id=orden.cita_id %}">
+                        <svg width="14" height="14"><use href="#i-edit"/></svg>
+                        Modificar estudio
+                    </a>
+                </div>
+            </div>
+        {% endfor %}
+    {% else %}
+        <div class="card">
+            <p class="text-muted text-center" style="padding:2rem 0;">No hay estudios pendientes de corregir.</p>
+        </div>
+    {% endif %}
+{% endblock %}

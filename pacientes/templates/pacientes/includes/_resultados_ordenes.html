@@ -11,6 +11,15 @@
                     {{ orden.edad_paciente|default:"—" }} años — {{ orden.cita.paciente.get_sexo_display }} — <strong>{{ orden.cita.tipo_estudio.nombre }}</strong>
                 </p>
                 <p class="text-xs text-muted" style="margin: 0.25rem 0;">Indicación: {{ orden.motivo }}</p>
+                {% if orden.validacion_estado == 'correcto' %}
+                    <span class="badge badge-success">Estudio confirmado</span>
+                {% elif orden.validacion_estado == 'modificacion' %}
+                    <span class="badge badge-warning">Modificación pedida a recepción</span>
+                {% elif orden.validacion_estado == 'corregido' %}
+                    <span class="badge badge-info">Actualizado por recepción: confirmalo</span>
+                {% else %}
+                    <span class="badge badge-muted">Falta verificar el estudio</span>
+                {% endif %}
                 <a href="{% url 'adjuntar_imagenes' orden.id %}" class="btn btn-primary btn-sm mt-1">
                     <svg width="14" height="14"><use href="#i-camera"/></svg>
                     Cargar Imágenes DICOM

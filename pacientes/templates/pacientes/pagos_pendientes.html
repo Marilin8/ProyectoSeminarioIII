@@ -179,10 +179,20 @@
                                 <span class="badge badge-success">
                                     Pagado{% if cobro.forma_pago %} · {{ cobro.get_forma_pago_display }}{% endif %}
                                 </span>
-                            {% else %}
+                            {% elif cobro.listo_para_cobrar %}
                                 <span class="badge badge-warning">Pendiente de pago</span>
+                                <span class="badge badge-success">Estudio confirmado · listo para cobrar</span>
+                            {% elif cobro.orden.validacion_estado == 'modificacion' %}
+                                <span class="badge badge-warning">Recepción debe modificar el estudio</span>
+                            {% elif cobro.orden.validacion_estado == 'corregido' %}
+                                <span class="badge badge-info">Actualizado · falta que el técnico lo confirme</span>
+                            {% else %}
+                                <span class="badge badge-muted">Esperando que el técnico verifique el estudio</span>
                             {% endif %}
                         </div>
+                        {% if cobro.estado != 'pagado' and cobro.orden.validacion_estado == 'modificacion' %}
+                            <div class="meta" style="color:#92400e;">Pedido del técnico: {{ cobro.orden.validacion_nota }}</div>
+                        {% endif %}
                     </div>
 
                     {% if cobro.estado == 'pagado' %}
@@ -211,6 +221,8 @@
                                 <button type="submit" class="btn btn-outline btn-sm">Subir constancia firmada</button>
                             </form>
                         </div>
+                    {% elif not cobro.listo_para_cobrar %}
+                        <span class="text-muted text-sm">Se habilita cuando el técnico confirme el estudio.</span>
                     {% elif cobro.cita.convenio == 'privado' %}
                         <form method="post" action="{% url 'marcar_cobrado' cita_id=cobro.cita_id %}" class="form-cobrar form-cobrar-efectivo" enctype="multipart/form-data" data-precio="{{ cobro.cita.precio }}">
                             {% csrf_token %}

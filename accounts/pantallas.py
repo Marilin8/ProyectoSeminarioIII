@@ -20,6 +20,7 @@ PANTALLAS_POR_ROL = {
             ],
         },
         {'nombre': 'Estudios', 'url_name': 'lista_estudios'},
+        {'nombre': 'Modalidades', 'url_name': 'lista_modalidades'},
         {'nombre': 'Combos', 'url_name': 'lista_combos'},
         {'nombre': 'Bitácora del sistema', 'url_name': 'bitacora'},
         {
@@ -58,6 +59,7 @@ PANTALLAS_POR_ROL = {
             ],
         },
         {'nombre': 'Pantalla de turnos', 'url_name': 'pantalla_turnos'},
+        {'nombre': 'Estudios por corregir', 'url_name': 'estudios_por_corregir'},
         {'nombre': 'Estudios realizados', 'url_name': 'historial_pacientes'},
         {
             'nombre': 'Reportes diarios',

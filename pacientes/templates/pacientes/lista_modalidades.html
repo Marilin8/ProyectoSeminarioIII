@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="max-width: 1100px; margin: 30px auto;">
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+        <div>
+            <h2 style="margin:0;">Modalidades</h2>
+            <p style="color:#64748b; margin-top:6px;">
+                Administra las modalidades disponibles para los estudios.
+            </p>
+        </div>
+
+        <div style="display:flex; gap:10px;">
+            <a href="{% url 'historial_modalidades' %}"
+               style="padding:10px 16px; border:1px solid #cbd5e1; border-radius:8px; text-decoration:none;">
+                Ver historial
+            </a>
+
+            <a href="{% url 'crear_modalidad' %}"
+               style="padding:10px 16px; background:#2563eb; color:white; border-radius:8px; text-decoration:none;">
+                + Nueva modalidad
+            </a>
+        </div>
+    </div>
+
+    <form method="get" style="margin-bottom:20px;">
+        <input
+            type="text"
+            name="q"
+            value="{{ busqueda }}"
+            placeholder="Buscar modalidad..."
+            style="width:100%; max-width:420px; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px;"
+        >
+    </form>
+
+    <div style="background:white; border:1px solid #e2e8f0; border-radius:10px; overflow:hidden;">
+        <table style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="background:#f8fafc;">
+                    <th style="text-align:left; padding:14px;">Modalidad</th>
+                    <th style="text-align:left; padding:14px;">Estado</th>
+                    <th style="text-align:right; padding:14px;">Acciones</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                {% for modalidad in modalidades %}
+                <tr style="border-top:1px solid #e2e8f0;">
+
+                    <td style="padding:14px;">
+                        {{ modalidad.nombre }}
+                    </td>
+
+                    <td style="padding:14px;">
+                        {% if modalidad.activo %}
+                            <span style="color:#15803d; font-weight:600;">
+                                Activa
+                            </span>
+                        {% else %}
+                            <span style="color:#b91c1c; font-weight:600;">
+                                Inactiva
+                            </span>
+                        {% endif %}
+                    </td>
+
+                    <td style="padding:14px; text-align:right;">
+
+                        <a href="{% url 'editar_modalidad' modalidad.id %}"
+                           style="margin-right:10px; text-decoration:none;">
+                            Editar
+                        </a>
+
+                        {% if modalidad.activo %}
+
+                            <form method="post"
+                                  action="{% url 'eliminar_modalidad' modalidad.id %}"
+                                  style="display:inline;"
+                                  onsubmit="return confirm('¿Desea desactivar esta modalidad?');">
+                                {% csrf_token %}
+
+                                <button type="submit"
+                                        style="border:none; background:none; color:#dc2626; cursor:pointer;">
+                                    Desactivar
+                                </button>
+                            </form>
+
+                        {% else %}
+
+                            <form method="post"
+                                  action="{% url 'activar_modalidad' modalidad.id %}"
+                                  style="display:inline;"
+                                  onsubmit="return confirm('¿Desea activar esta modalidad?');">
+                                {% csrf_token %}
+
+                                <button type="submit"
+                                        style="border:none; background:none; color:#15803d; cursor:pointer;">
+                                    Activar
+                                </button>
+                            </form>
+
+                        {% endif %}
+
+                    </td>
+                </tr>
+
+                {% empty %}
+
+                <tr>
+                    <td colspan="3"
+                        style="padding:25px; text-align:center; color:#64748b;">
+                        No hay modalidades registradas.
+                    </td>
+                </tr>
+
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+</div>
+{% endblock %}

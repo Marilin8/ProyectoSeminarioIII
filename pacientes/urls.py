@@ -11,6 +11,13 @@ urlpatterns = [
     path('combos/nuevo/', views.crear_combo, name='crear_combo'),
     path('combos/', views.lista_combos, name='lista_combos'),
     path('combos/<int:combo_id>/editar/', views.editar_combo, name='editar_combo'),
+    path('modalidades/', views.lista_modalidades, name='lista_modalidades'),
+    path('modalidades/nueva/', views.crear_modalidad, name='crear_modalidad'),
+    path('modalidades/<int:modalidad_id>/editar/', views.editar_modalidad, name='editar_modalidad'),
+    path('modalidades/<int:modalidad_id>/eliminar/', views.eliminar_modalidad, name='eliminar_modalidad'),
+    path('modalidades/historial/', views.historial_modalidades, name='historial_modalidades'),
+    path('modalidades/<int:modalidad_id>/activar/', views.activar_modalidad, name='activar_modalidad'),
+
     # Visor web público del estudio (link estilo PACS que se manda por correo:
     # /visor/?studyId=<id>&tab=images&ac=<token base64>).
     path('visor/', views.visor_estudio, name='visor_estudio'),
@@ -170,6 +177,10 @@ urlpatterns = [
         views.adjuntar_imagenes_finalizar,
         name='adjuntar_imagenes_finalizar',
     ),
+    path('ordenes/pendientes/<int:orden_id>/validar/', views.validar_estudio, name='validar_estudio'),
+    path('estudios/por-corregir/', views.estudios_por_corregir, name='estudios_por_corregir'),
+    path('citas/<int:cita_id>/corregir-estudio/', views.corregir_estudio_cita, name='corregir_estudio_cita'),
+    path('citas/<int:cita_id>/eliminar/', views.eliminar_cita, name='eliminar_cita'),
     path('citas/procesadas/', views.citas_procesadas, name='citas_procesadas'),
     path('citas/procesadas/<int:cita_id>/informe/', views.adjuntar_informe, name='adjuntar_informe'),
     path(
@@ -200,6 +211,7 @@ urlpatterns = [
     path('turnos/<int:ticket_id>/siguiente/', views.avanzar_turno, name='avanzar_turno'),
     path('turnos/<int:ticket_id>/mover/', views.mover_turno, name='mover_turno'),
     path('turnos/<int:ticket_id>/procesar/', views.procesar_turno, name='procesar_turno'),
+    path('turnos/<int:ticket_id>/eliminar/', views.eliminar_turno, name='eliminar_turno'),
     path('notificaciones/pendientes/', views.notificaciones_pendientes, name='notificaciones_pendientes'),
     path(
         'notificaciones/<int:notificacion_id>/marcar-leida/',

@@ -19,6 +19,17 @@
         .progreso-barra-relleno { height: 100%; width: 0%; background: linear-gradient(90deg, var(--primary), var(--primary-light)); border-radius: 12px; transition: width 0.2s ease; }
         .progreso-detalle { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.4rem; }
         .progreso-error { font-size: 0.8rem; color: var(--danger); margin-top: 0.6rem; }
+        .verificacion { border-radius: var(--radius); padding: 0.85rem 1rem; margin: 1rem 0; font-size: 0.88rem; }
+        .verificacion p { margin: 0.3rem 0; }
+        .verificacion small { color: var(--text-muted); }
+        .verificacion-ok { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; font-weight: 600; }
+        .verificacion-espera { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+        .verificacion-actualizado { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a8a; }
+        .verificacion-acciones { display: flex; gap: 0.6rem; flex-wrap: wrap; margin: 1rem 0; }
+        .verificacion-acciones form { margin: 0; }
+        .verificacion-acciones .btn { min-width: 11rem; }
+        .bloqueado { opacity: 0.45; pointer-events: none; }
+        .modal-modificar textarea { width: 100%; }
     </style>
 {% endblock %}
 
@@ -37,6 +48,66 @@
             Estudio: {{ cita.tipo_estudio.nombre }} — {{ cita.fecha }} {{ cita.hora|time:'H:i' }}
         </div>
 
+        {% if orden.validacion_estado == 'correcto' %}
+            <div class="verificacion verificacion-ok">
+                <svg width="14" height="14"><use href="#i-check-circle"/></svg>
+                Estudio confirmado como correcto{% if orden.validacion_por %} por {{ orden.validacion_por.get_full_name|default:orden.validacion_por.username }}{% endif %}. Recepción ya puede cobrarlo.
+            </div>
+        {% elif orden.validacion_estado == 'modificacion' %}
+            <div class="verificacion verificacion-espera">
+                <strong>Modificación solicitada a recepción</strong>
+                <p>{{ orden.validacion_nota }}</p>
+                <small>Cuando recepción lo actualice te va a aparecer aquí para que lo confirmes.</small>
+            </div>
+        {% else %}
+            {% if orden.validacion_estado == 'corregido' %}
+                <div class="verificacion verificacion-actualizado">
+                    <strong>Recepción actualizó el estudio</strong>
+                    <p>{{ orden.correccion_detalle }}</p>
+                    <small>Habías pedido: {{ orden.validacion_nota }}. Revisá los datos de arriba y confirmá.</small>
+                </div>
+            {% else %}
+                <p class="ayuda" style="margin:1rem 0 0;">Revisá los datos del paciente y del estudio antes de cargar las imágenes.</p>
+            {% endif %}
+            <div class="verificacion-acciones">
+                <form method="post" action="{% url 'validar_estudio' orden.id %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="accion" value="correcto">
+                    <button type="submit" class="btn btn-success">
+                        <svg width="14" height="14"><use href="#i-check-circle"/></svg> Estudio correcto
+                    </button>
+                </form>
+                <button type="button" class="btn btn-outline" id="btn-modificar-estudio">
+                    <svg width="14" height="14"><use href="#i-edit"/></svg> Modificar estudio
+                </button>
+            </div>
+        {% endif %}
+        {% if not orden.esta_verificada %}
+            <p class="ayuda">Podés cargar las imágenes cuando confirmes que el estudio es correcto.</p>
+        {% endif %}
+
+        {% if cita.cobro and cita.cobro.pagado %}
+            <p>
+                <a class="btn btn-outline btn-sm" href="{% url 'boleta_pago_pdf' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                    <svg width="14" height="14"><use href="#i-file-text"/></svg>
+                    Ver recibo interno
+                </a>
+                <a class="btn btn-outline btn-sm" href="{% url 'constancia_pago_pdf' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                    Generar constancia de pago
+                </a>
+                {% if cita.cobro.comprobante_bancario %}
+                    <a class="btn btn-outline btn-sm" href="{% url 'comprobante_bancario' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                        Ver comprobante subido
+                    </a>
+                {% endif %}
+                {% if cita.cobro.constancia_firmada %}
+                    <a class="btn btn-outline btn-sm" href="{% url 'constancia_firmada' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                        Ver constancia firmada
+                    </a>
+                {% endif %}
+            </p>
+        {% endif %}
+
         {% if orden.imagenes.all %}
             <ul class="imagenes-previas">
                 {% for img in orden.imagenes.all %}
@@ -45,7 +116,7 @@
             </ul>
         {% endif %}
 
-        <form method="post" enctype="multipart/form-data" id="form-imagenes">
+        <form method="post" enctype="multipart/form-data" id="form-imagenes"{% if not orden.esta_verificada %} class="bloqueado" aria-disabled="true"{% endif %}>
             {% csrf_token %}
             {{ form.non_field_errors }}
             <label for="id_imagenes">{{ form.imagenes.label }}</label>
@@ -82,6 +153,45 @@
             <a href="{{ volver_url }}" class="btn btn-outline" style="flex:1;text-align:center;">Cancelar</a>
         </div>
     </div>
+
+    {% if orden.validacion_estado == 'pendiente' or orden.validacion_estado == 'corregido' %}
+        <div class="modal-overlay" id="modal-modificar">
+            <div class="modal-card modal-modificar">
+                <h2>Modificar estudio</h2>
+                <p style="color:var(--text-muted);">
+                    Explicale a recepción qué hay que cambiar (por ejemplo, si se equivocaron de estudio).
+                    Te va a aparecer aquí cuando lo actualicen.
+                </p>
+                <form method="post" action="{% url 'validar_estudio' orden.id %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="accion" value="modificar">
+                    <label for="{{ form_modificacion.nota.id_for_label }}">{{ form_modificacion.nota.label }}</label>
+                    {{ form_modificacion.nota }}
+                    <div class="modal-botones">
+                        <button type="button" class="btn btn-outline" id="btn-cancelar-modificar">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Enviar a recepción</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <script>
+            (function () {
+                var modal = document.getElementById('modal-modificar');
+                var abrir = document.getElementById('btn-modificar-estudio');
+                var cancelar = document.getElementById('btn-cancelar-modificar');
+                if (!modal || !abrir) { return; }
+                abrir.addEventListener('click', function () {
+                    modal.classList.add('abierto');
+                    var caja = modal.querySelector('textarea');
+                    if (caja) { caja.focus(); }
+                });
+                cancelar.addEventListener('click', function () { modal.classList.remove('abierto'); });
+                modal.addEventListener('click', function (e) {
+                    if (e.target === modal) { modal.classList.remove('abierto'); }
+                });
+            })();
+        </script>
+    {% endif %}
 
     <script>
         document.addEventListener('DOMContentLoaded', function () {

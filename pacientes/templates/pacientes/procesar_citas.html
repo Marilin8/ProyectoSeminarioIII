@@ -119,7 +119,21 @@
                                     <span class="llego-a">Llegó a las {{ cita.hora_llegada|time:'H:i' }}</span>
                                     <p class="ayuda" style="margin:0.25rem 0 0;">El estudio se procesa desde la <a href="{% url 'pantalla_turnos' %}">Pantalla de turnos</a>.</p>
                                 {% elif cita.estado == 'en_proceso' %}
-                                    <span class="llego-a">Orden enviada al técnico</span>
+                                    {% if cita.orden_trabajo.validacion_estado == 'modificacion' %}
+                                        <span class="motivo-rechazo"><strong>El técnico pidió modificar el estudio:</strong> {{ cita.orden_trabajo.validacion_nota }}</span>
+                                        <div class="acciones" style="margin-top:0.4rem;">
+                                            <a class="btn btn-primary btn-sm" href="{% url 'corregir_estudio_cita' cita_id=cita.id %}">
+                                                <svg width="14" height="14"><use href="#i-edit"/></svg>
+                                                Modificar estudio
+                                            </a>
+                                        </div>
+                                    {% elif cita.orden_trabajo.validacion_estado == 'corregido' %}
+                                        <span class="llego-a">Estudio actualizado: esperando que el técnico lo confirme</span>
+                                    {% elif cita.orden_trabajo.validacion_estado == 'correcto' %}
+                                        <span class="llego-a">Orden enviada al técnico · estudio confirmado, ya se puede cobrar</span>
+                                    {% else %}
+                                        <span class="llego-a">Orden enviada al técnico</span>
+                                    {% endif %}
                                 {% elif cita.estado == 'ausente' %}
                                     <div class="acciones">
                                         <a class="btn btn-outline btn-sm" href="{% url calendario_url_name %}?reagendar={{ cita.id }}">

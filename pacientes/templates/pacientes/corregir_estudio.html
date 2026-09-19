@@ -1,0 +1,111 @@
+{% extends 'base.html' %}
+
+{% block title %}Modificar estudio - Clínica de Imágenes{% endblock %}
+{% block page_title %}Modificar estudio{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .pedido-tecnico { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: var(--radius); padding: 0.85rem 1rem; margin-bottom: 1.25rem; font-size: 0.88rem; }
+        .pedido-tecnico p { margin: 0.35rem 0; font-size: 0.95rem; color: #78350f; }
+        .pedido-tecnico small { color: #a16207; }
+        .form-corregir label { display: block; margin-top: 1rem; }
+        .form-corregir select, .form-corregir textarea, .form-corregir input[type="text"] { width: 100%; }
+    </style>
+{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{{ volver_url }}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Estudios por corregir
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="card" style="padding:1.5rem;max-width:640px;">
+        <div class="resumen">
+            <strong>{{ cita.paciente.nombre }} {{ cita.paciente.apellido }}</strong> ({{ cita.paciente.dpi }})<br>
+            {% if edad is not None %}{{ edad }} años{% else %}Edad no registrada{% endif %}, {{ cita.paciente.get_sexo_display }}<br>
+            Estudio actual: <strong>{{ cita.tipo_estudio.nombre }}</strong> — {{ cita.get_convenio_display }} — {{ cita.fecha }} {{ cita.hora|time:'H:i' }}
+        </div>
+
+        <div class="pedido-tecnico">
+            <strong>El técnico pidió modificar este estudio</strong>
+            <p>{{ orden.validacion_nota }}</p>
+            <small>
+                {{ orden.validacion_por.get_full_name|default:orden.validacion_por.username }}
+                · {{ orden.validacion_en|date:'d/m/Y H:i' }}
+            </small>
+        </div>
+
+        <form method="post" class="form-corregir" id="form-corregir">
+            {% csrf_token %}
+            {{ form.non_field_errors }}
+
+            <label for="{{ form.tipo_estudio.id_for_label }}">{{ form.tipo_estudio.label }}</label>
+            {{ form.tipo_estudio }}
+            {{ form.tipo_estudio.errors }}
+
+            <div id="bloque-radiologo">
+                <label for="{{ form.radiologo.id_for_label }}">{{ form.radiologo.label }}</label>
+                {{ form.radiologo }}
+                <p class="ayuda">{{ form.radiologo.help_text }}</p>
+                {{ form.radiologo.errors }}
+            </div>
+
+            <label for="{{ form.motivo.id_for_label }}">{{ form.motivo.label }}</label>
+            {{ form.motivo }}
+            {{ form.motivo.errors }}
+
+            <label for="{{ form.comentario.id_for_label }}">{{ form.comentario.label }}</label>
+            {{ form.comentario }}
+            {{ form.comentario.errors }}
+
+            <p class="ayuda" style="margin-top:1rem;">
+                El precio del cobro se actualiza solo con el estudio nuevo. Al guardar, el técnico recibe un
+                aviso para confirmar que ahora sí es el estudio correcto.
+            </p>
+
+            <button type="submit" class="btn btn-primary btn-block btn-lg" style="margin-top:1rem;">
+                <svg width="14" height="14"><use href="#i-save"/></svg>
+                Guardar y avisar al técnico
+            </button>
+        </form>
+    </div>
+
+    <script>
+        (function () {
+            var tipo = document.getElementById('id_tipo_estudio');
+            var radiologo = document.getElementById('id_radiologo');
+            if (!tipo || !radiologo) { return; }
+            var estudioOriginal = '{{ cita.tipo_estudio_id }}';
+
+            function pintar(lista, seleccion) {
+                radiologo.innerHTML = '<option value="">---------</option>';
+                lista.forEach(function (r) {
+                    var op = document.createElement('option');
+                    op.value = r.id;
+                    op.textContent = r.texto;
+                    if (String(r.id) === String(seleccion)) { op.selected = true; }
+                    radiologo.appendChild(op);
+                });
+                // Si el estudio lo hace un solo radiólogo, queda elegido.
+                if (!radiologo.value && lista.length === 1) { radiologo.value = lista[0].id; }
+            }
+
+            function actualizar(primeraVez) {
+                var seleccion = radiologo.value;
+                if (!tipo.value) { pintar([], ''); return; }
+                fetch('{% url "radiologos_por_estudio" %}?tipo_estudio=' + encodeURIComponent(tipo.value))
+                    .then(function (r) { return r.json(); })
+                    .then(function (d) {
+                        // Al cambiar de estudio no se arrastra el radiólogo anterior.
+                        pintar(d.radiologos, (primeraVez || tipo.value === estudioOriginal) ? seleccion : '');
+                    });
+            }
+
+            tipo.addEventListener('change', function () { actualizar(false); });
+            actualizar(true);
+        })();
+    </script>
+{% endblock %}
