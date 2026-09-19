@@ -22,10 +22,8 @@
         .orden-agrupada-cabecera { display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; margin-bottom:1rem; }
         .orden-agrupada h3 { margin:0.15rem 0 0.25rem; }
         .orden-agrupada .eyebrow { color:var(--primary); font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
-        .orden-agrupada-lista { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:.55rem; max-height:18rem; overflow:auto; padding:.25rem; }
-        .estudio-seleccionable { display:flex; gap:.65rem; align-items:flex-start; padding:.7rem; border:1px solid #e2e8f0; border-radius:var(--radius); background:#fff; cursor:pointer; }
-        .estudio-seleccionable:hover { border-color:var(--primary); box-shadow:0 2px 8px rgba(30,64,175,.08); }
-        .estudio-seleccionable small { display:block; color:var(--text-muted); margin-top:.2rem; }
+        .check-agrupar { display:inline-flex; align-items:center; gap:.4rem; cursor:pointer; padding:.3rem .6rem; border:1px solid #fde68a; border-radius:999px; background:#fffbeb; color:#92400e; font-size:.82rem; font-weight:600; }
+        .check-agrupar:hover { border-color:#f59e0b; }
         .orden-agrupada-opciones { display:grid; grid-template-columns:minmax(12rem,1fr) minmax(16rem,2fr) auto; gap:.7rem; align-items:end; margin-top:1rem; }
         .orden-agrupada-opciones label { display:flex; flex-direction:column; gap:.3rem; font-size:.76rem; font-weight:600; color:var(--text-muted); }
         .orden-resumen { margin-top:1rem; padding:.8rem 1rem; border-radius:var(--radius); background:#eff6ff; border:1px solid #bfdbfe; color:#1e3a8a; }
@@ -83,37 +81,30 @@
     </form>
 
     {% if convenio == 'emergencia_igss' %}
-        <form method="post" action="{% url 'crear_orden_pago' %}" class="card mb-2 orden-agrupada">
+        <form method="post" action="{% url 'crear_orden_pago' %}" class="card mb-2 orden-agrupada" id="form-orden-agrupada">
             {% csrf_token %}
             <input type="hidden" name="combo" id="combo-seleccionado" value="">
             <div class="orden-agrupada-cabecera">
                 <div>
                     <span class="eyebrow">Cobro por convenio</span>
                     <h3>Crear orden agrupada</h3>
-                    <p class="text-muted text-sm">Agrupe estudios del mismo paciente para adjuntar una sola boleta global.</p>
+                    <p class="text-muted text-sm">Marcá "Agregar a la orden" en los estudios de la lista de abajo para agruparlos acá y adjuntar una sola boleta global.</p>
                 </div>
                 <span class="badge badge-info">Emergencia IGSS</span>
             </div>
-            <div class="orden-agrupada-lista">
-                {% for cobro in cobros_para_orden %}
-                        <label class="estudio-seleccionable"
-                               data-tipo-estudio="{{ cobro.cita.tipo_estudio_id }}"
-                               data-precio="{{ cobro.cita.precio }}"
-                               data-convenio="{{ cobro.cita.convenio }}">
-                            <input type="checkbox" name="cita_ids" value="{{ cobro.cita_id }}">
-                            <span>
-                                <strong>{{ cobro.cita.paciente.nombre }} {{ cobro.cita.paciente.apellido }}</strong>
-                                <small>{{ cobro.cita.tipo_estudio.nombre }} · {{ cobro.cita.get_convenio_display }} · Q{{ cobro.cita.precio|floatformat:2 }}</small>
-                            </span>
-                        </label>
-                {% empty %}
-                    <span class="text-muted">No hay estudios pendientes para agrupar.</span>
-                {% endfor %}
-            </div>
-            <div id="resumen-orden" class="orden-resumen" hidden>
-                <strong>Resumen de la orden</strong>
-                <div id="resumen-estudios"></div>
-                <div id="resumen-totales"></div>
+            <div id="resumen-orden" class="orden-resumen">
+                <div id="resumen-vacio" class="text-muted text-sm">
+                    {% if cobros_para_orden %}
+                        Todavía no seleccionaste ningún estudio. Marcalo en la lista de abajo.
+                    {% else %}
+                        No hay estudios pendientes para agrupar en este momento.
+                    {% endif %}
+                </div>
+                <div id="resumen-contenido" hidden>
+                    <strong>Resumen de la orden</strong>
+                    <ul id="resumen-lista" style="margin:.3rem 0 0;padding-left:1.15rem;"></ul>
+                    <div id="resumen-totales"></div>
+                </div>
             </div>
             <div class="orden-agrupada-opciones">
                 <label>Notas
@@ -246,7 +237,16 @@
                             </button>
                         </form>
                     {% else %}
-                        <span class="badge badge-warning">Pendiente de orden agrupada</span>
+                        <label class="check-agrupar">
+                            <input type="checkbox" name="cita_ids" value="{{ cobro.cita_id }}"
+                                   form="form-orden-agrupada"
+                                   data-tipo-estudio="{{ cobro.cita.tipo_estudio_id }}"
+                                   data-precio="{{ cobro.cita.precio }}"
+                                   data-convenio="{{ cobro.cita.convenio }}"
+                                   data-paciente="{{ cobro.cita.paciente.nombre }} {{ cobro.cita.paciente.apellido }}"
+                                   data-estudio="{{ cobro.cita.tipo_estudio.nombre }}">
+                            Agregar a la orden agrupada
+                        </label>
                     {% endif %}
                 </div>
             </div>
@@ -277,66 +277,75 @@
     {{ combos_preview|json_script:"combos-preview" }}
     <script>
         (function () {
-            var form = document.querySelector('form.orden-agrupada');
-            var tarjetas = form ? form.querySelectorAll('.estudio-seleccionable') : [];
-            var resumen = document.getElementById('resumen-orden');
-            var resumenEstudios = document.getElementById('resumen-estudios');
+            // Los checkboxes viven en la lista de abajo (fuera del <form>) y
+            // se asocian a él con el atributo form="form-orden-agrupada".
+            var form = document.getElementById('form-orden-agrupada');
+            if (!form) { return; }
+            var casillas = document.querySelectorAll('input[name="cita_ids"][form="form-orden-agrupada"]');
+            var resumenVacio = document.getElementById('resumen-vacio');
+            var resumenContenido = document.getElementById('resumen-contenido');
+            var resumenLista = document.getElementById('resumen-lista');
             var resumenTotales = document.getElementById('resumen-totales');
             var comboSeleccionado = document.getElementById('combo-seleccionado');
             var confirmada = false;
             var combos = JSON.parse(document.getElementById('combos-preview').textContent || '[]');
 
             function actualizarResumen() {
-                var seleccionados = Array.prototype.filter.call(tarjetas, function (tarjeta) {
-                    return tarjeta.querySelector('input').checked;
+                var seleccionadas = Array.prototype.filter.call(casillas, function (casilla) {
+                    return casilla.checked;
                 });
-                if (!seleccionados.length) {
-                    resumen.hidden = true;
+                if (!seleccionadas.length) {
+                    resumenVacio.hidden = false;
+                    resumenContenido.hidden = true;
                     comboSeleccionado.value = '';
                     return;
                 }
-                var tipos = seleccionados.map(function (tarjeta) {
-                    return Number(tarjeta.dataset.tipoEstudio);
+                var tipos = seleccionadas.map(function (casilla) {
+                    return Number(casilla.dataset.tipoEstudio);
                 });
                 var combo = combos.find(function (opcion) {
                     return opcion.estudios.every(function (id) { return tipos.indexOf(id) !== -1; });
                 });
-                var subtotal = seleccionados.reduce(function (total, tarjeta) {
-                    return total + Number(tarjeta.dataset.precio || 0);
+                var subtotal = seleccionadas.reduce(function (total, casilla) {
+                    return total + Number(casilla.dataset.precio || 0);
                 }, 0);
                 var descuento = combo ? subtotal * combo.porcentaje / 100 : 0;
                 comboSeleccionado.value = combo ? combo.id : '';
-                resumen.hidden = false;
-                resumenEstudios.textContent = seleccionados.length + ' estudio(s) seleccionado(s)'
-                    + (combo ? ' · ' + combo.nombre : ' · Sin combo aplicable');
+                resumenVacio.hidden = true;
+                resumenContenido.hidden = false;
+                resumenLista.innerHTML = '';
+                seleccionadas.forEach(function (casilla) {
+                    var li = document.createElement('li');
+                    li.textContent = casilla.dataset.paciente + ' — ' + casilla.dataset.estudio
+                        + ' (Q' + Number(casilla.dataset.precio || 0).toFixed(2) + ')';
+                    resumenLista.appendChild(li);
+                });
                 resumenTotales.textContent =
-                    'Subtotal: Q' + subtotal.toFixed(2)
+                    (combo ? 'Combo: ' + combo.nombre + ' · ' : 'Sin combo aplicable · ')
+                    + 'Subtotal: Q' + subtotal.toFixed(2)
                     + ' · Descuento: Q' + descuento.toFixed(2)
                     + ' · Total: Q' + (subtotal - descuento).toFixed(2);
             }
-            Array.prototype.forEach.call(tarjetas, function (tarjeta) {
-                tarjeta.querySelector('input').addEventListener('change', actualizarResumen);
+            Array.prototype.forEach.call(casillas, function (casilla) {
+                casilla.addEventListener('change', actualizarResumen);
             });
-            if (form) {
-                form.addEventListener('submit', function (evento) {
-                    if (confirmada) return;
-                    var seleccionados = Array.prototype.filter.call(tarjetas, function (tarjeta) {
-                        return tarjeta.querySelector('input').checked;
-                    });
-                    if (!seleccionados.length) {
-                        evento.preventDefault();
-                        window.alert('Seleccione al menos un estudio para crear la orden.');
-                        return;
-                    }
-                    var mensaje = resumenTotales.textContent + '\n\n'
-                        + resumenEstudios.textContent + '\n\n¿Desea crear esta orden de pago?';
-                    if (!window.confirm(mensaje)) {
-                        evento.preventDefault();
-                        return;
-                    }
-                    confirmada = true;
+            actualizarResumen();
+            form.addEventListener('submit', function (evento) {
+                if (confirmada) return;
+                var seleccionadas = Array.prototype.filter.call(casillas, function (casilla) {
+                    return casilla.checked;
                 });
-            }
+                if (!seleccionadas.length) {
+                    evento.preventDefault();
+                    window.alert('Seleccione al menos un estudio para crear la orden.');
+                    return;
+                }
+                if (!window.confirm(resumenTotales.textContent + '\n\n¿Desea crear esta orden de pago?')) {
+                    evento.preventDefault();
+                    return;
+                }
+                confirmada = true;
+            });
         })();
 
         // Al marcar un pago en Efectivo no tiene sentido pedir "boleta /
