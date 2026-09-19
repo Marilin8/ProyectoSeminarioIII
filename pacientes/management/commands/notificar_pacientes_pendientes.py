@@ -7,8 +7,9 @@ from ...views import _notificar_datos_pendientes_si_corresponde
 class Command(BaseCommand):
     help = (
         'Barrido de seguridad (pensado para fin del día) sobre TODOS los pacientes '
-        'registrados que quedaron con datos pendientes de llenar: sexo, fecha de '
-        'nacimiento o teléfono. Desde que se agenda una cita o se registra un ticket ya '
+        'registrados que quedaron con datos pendientes de llenar: fecha de nacimiento '
+        'o teléfono (el sexo es obligatorio desde el registro, nunca queda pendiente). '
+        'Desde que se agenda una cita o se registra un ticket ya '
         'se avisa al instante (ver pacientes.views._notificar_datos_pendientes_si_corresponde); '
         'este comando solo cubre el caso de pacientes viejos a los que no se les volvió a '
         'agendar nada y quedaron sin avisar. No duplica avisos: si ya hay uno sin leer '

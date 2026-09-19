@@ -13,6 +13,11 @@ urlpatterns = [
     path('perfil/verificacion-2-pasos/', views.configurar_mfa, name='configurar_mfa'),
     path('usuarios/nuevo/', views.crear_usuario, name='crear_usuario'),
     path(
+        'usuarios/confirmar-correo/<uuid:token>/',
+        views.confirmar_correo_usuario,
+        name='confirmar_correo_usuario',
+    ),
+    path(
         'usuarios/radiologos/',
         views.lista_usuarios,
         {'rol': Usuario.ROL_MEDICO_RADIOLOGO},
@@ -34,6 +39,8 @@ urlpatterns = [
     path('usuarios/<int:usuario_id>/estado/', views.cambiar_estado_usuario, name='cambiar_estado_usuario'),
     path('comisiones/historial/', views.historial_comisiones, name='historial_comisiones'),
     path('planilla/', views.planilla, name='planilla'),
+    path('planilla/pendiente/', views.pendiente_pago, name='pendiente_pago'),
+    path('planilla/adelantado/', views.pago_adelantado, name='pago_adelantado'),
     path('planilla/<int:usuario_id>/', views.planilla_empleado, name='planilla_empleado'),
     path('planilla/<int:usuario_id>/pagar-salario/', views.registrar_pago_salario, name='registrar_pago_salario'),
     path('planilla/<int:usuario_id>/pagar-comisiones/', views.registrar_pago_comision, name='registrar_pago_comision'),

@@ -48,11 +48,11 @@
 
         {% if orden.imagenes.all %}
             <div class="acciones-imagenes">
-                <a class="btn btn-outline" href="{% url 'ver_imagenes_jpg' orden_id=orden.id %}" target="_blank">
+                <button type="button" class="btn btn-outline" id="btn-ver-jpg" data-url="{% url 'ver_imagenes_jpg' orden_id=orden.id %}">
                     <svg width="14" height="14"><use href="#i-image"/></svg> Ver JPG
-                </a>
+                </button>
                 {% if tiene_dicom_original %}
-                    <a class="btn btn-outline" href="{% url 'descargar_dicom_orden' orden_id=orden.id %}">
+                    <a class="btn btn-outline" href="{% url 'descargar_dicom_orden' orden_id=orden.id %}" target="_blank" rel="noopener noreferrer">
                         <svg width="14" height="14"><use href="#i-download"/></svg> Descargar DICOM
                     </a>
                 {% endif %}
@@ -64,6 +64,33 @@
         <form method="post" enctype="multipart/form-data" id="form-informe">
             {% csrf_token %}
             {{ form.non_field_errors }}
+
+            {% if cita.convenio == 'privado' %}
+                <div class="card" style="padding:1rem;margin-bottom:1.25rem;background:#f8fafc;">
+                    <div style="font-weight:600;margin-bottom:0.5rem;">Estudios extra realizados</div>
+                    {% if estudios_extra %}
+                        <ul style="margin:0 0 0.75rem 0;padding-left:1.1rem;font-size:0.85rem;">
+                            {% for extra in estudios_extra %}
+                                <li>
+                                    {{ extra.tipo_estudio.nombre }} — Q{{ extra.precio|floatformat:2 }}
+                                    {% if extra.notas %}<span class="text-muted">({{ extra.notas }})</span>{% endif %}
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p class="ayuda" style="margin-bottom:0.75rem;">Todavía no se agregó ningún estudio extra.</p>
+                    {% endif %}
+
+                    {% if form_estudio_extra %}
+                        <label for="{{ form_estudio_extra.tipo_estudio.id_for_label }}">Notificar estudio extra realizado (opcional)</label>
+                        {{ form_estudio_extra.tipo_estudio }}
+                        {{ form_estudio_extra.tipo_estudio.errors }}
+                        {{ form_estudio_extra.notas }}
+                        {{ form_estudio_extra.notas.errors }}
+                        <p class="ayuda">Si elegís un estudio acá, se agrega y se le avisa a recepción al guardar el informe.</p>
+                    {% endif %}
+                </div>
+            {% endif %}
 
             <label for="{{ form.informe_archivo.id_for_label }}">{{ form.informe_archivo.label }}</label>
             {{ form.informe_archivo }}
@@ -99,6 +126,16 @@
         </div>
     </div>
 
+    <div id="modal-ver-jpg" class="modal-overlay">
+        <div class="modal-card modal-grande">
+            <div class="modal-grande-header">
+                <h2 style="margin:0;">Imágenes del estudio</h2>
+                <button type="button" class="btn btn-outline btn-sm" id="btn-cerrar-ver-jpg">Cerrar</button>
+            </div>
+            <iframe id="iframe-ver-jpg" title="Imágenes del estudio"></iframe>
+        </div>
+    </div>
+
     <div id="modal-cargando" class="modal-overlay">
         <div class="modal-card texto-centrado" style="max-width:420px;">
             <div class="spinner"></div>
@@ -118,7 +155,59 @@
     </div>
 
     <script>
+        // Aviso si se navega fuera de la página con un informe ya elegido
+        // sin guardar: los navegadores nunca restauran el archivo de un
+        // <input type="file"> después de cualquier navegación (ni volviendo
+        // "atrás" ni si "Ver JPG" termina abriendo en la misma pestaña en
+        // vez de una nueva) — sin este aviso, esa selección se perdía
+        // silenciosamente. `enviandoInforme` se pone en true recién cuando
+        // el radiólogo confirma el envío de verdad (ver botonConfirmar más
+        // abajo), no con el primer clic en "Guardar informe" (ese solo abre
+        // el modal de confirmación).
+        var informeInput = document.getElementById('id_informe_archivo');
+        var enviandoInforme = false;
+        if (informeInput) {
+            window.addEventListener('beforeunload', function (evento) {
+                if (!enviandoInforme && informeInput.files && informeInput.files.length > 0) {
+                    evento.preventDefault();
+                    evento.returnValue = '';
+                }
+            });
+        }
+
         document.addEventListener('DOMContentLoaded', function () {
+            // "Ver JPG" se muestra en un <iframe> DENTRO de esta misma
+            // página (en vez de abrir target="_blank" o window.open) porque
+            // en algunos navegadores/entornos embebidos eso termina
+            // navegando en esta misma pestaña — y ahí se perdía el PDF que
+            // ya se había elegido en "Adjuntá el informe" (los
+            // <input type="file"> se vacían apenas la página navega o se
+            // recarga; ningún JS puede recuperar eso una vez que ya pasó).
+            // Con el iframe, la página de "arriba" nunca navega, así que el
+            // archivo elegido queda intacto pase lo que pase adentro.
+            var botonVerJpg = document.getElementById('btn-ver-jpg');
+            var modalVerJpg = document.getElementById('modal-ver-jpg');
+            var iframeVerJpg = document.getElementById('iframe-ver-jpg');
+            var botonCerrarVerJpg = document.getElementById('btn-cerrar-ver-jpg');
+            if (botonVerJpg && modalVerJpg && iframeVerJpg && botonCerrarVerJpg) {
+                botonVerJpg.addEventListener('click', function () {
+                    // Carga perezosa: recién pone el src la primera vez que
+                    // se abre, no en cada carga de la página.
+                    if (!iframeVerJpg.src) {
+                        iframeVerJpg.src = botonVerJpg.dataset.url;
+                    }
+                    modalVerJpg.classList.add('abierto');
+                });
+                botonCerrarVerJpg.addEventListener('click', function () {
+                    modalVerJpg.classList.remove('abierto');
+                });
+                modalVerJpg.addEventListener('click', function (evento) {
+                    if (evento.target === modalVerJpg) {
+                        modalVerJpg.classList.remove('abierto');
+                    }
+                });
+            }
+
             var formulario = document.getElementById('form-informe');
             var botonPrincipal = document.getElementById('btn-guardar-informe');
             var modalConfirmacion = document.getElementById('modal-confirmacion');
@@ -150,6 +239,7 @@
                 if (envioConfirmado) {
                     return;
                 }
+                enviandoInforme = true;
                 envioConfirmado = true;
                 botonConfirmar.disabled = true;
                 botonCancelar.disabled = true;

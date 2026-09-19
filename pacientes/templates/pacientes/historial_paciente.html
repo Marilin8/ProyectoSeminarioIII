@@ -45,6 +45,22 @@
                             {% endfor %}
                         </select>
                     </div>
+                    <div style="flex:1;min-width:140px;">
+                        <label for="filtro-estado-pago" style="margin-top:0;">Estado de pago</label>
+                        <select id="filtro-estado-pago">
+                            <option value="">Todos</option>
+                            <option value="pagado" {% if filtro_estado_pago == 'pagado' %}selected{% endif %}>Pagado</option>
+                            <option value="pendiente" {% if filtro_estado_pago == 'pendiente' %}selected{% endif %}>Pendiente</option>
+                        </select>
+                    </div>
+                    <div style="flex:1;min-width:140px;">
+                        <label for="filtro-agrupacion" style="margin-top:0;">Modalidad de cobro</label>
+                        <select id="filtro-agrupacion">
+                            <option value="">Todos</option>
+                            <option value="agrupado" {% if filtro_agrupacion == 'agrupado' %}selected{% endif %}>Orden agrupada / combo</option>
+                            <option value="individual" {% if filtro_agrupacion == 'individual' %}selected{% endif %}>Cobro individual</option>
+                        </select>
+                    </div>
                     <button type="button" class="btn btn-outline btn-sm" id="btn-limpiar-filtros">
                         <svg width="14" height="14"><use href="#i-x"/></svg>
                         Limpiar filtros
@@ -59,7 +75,9 @@
                      style="{% if cita.fecha == hoy %}border-left:4px solid var(--success);{% endif %}"
                      data-convenio="{{ cita.convenio }}"
                      data-fecha="{{ cita.fecha|date:'Y-m-d' }}"
-                     data-estudio="{{ cita.tipo_estudio.nombre }}">
+                     data-estudio="{{ cita.tipo_estudio.nombre }}"
+                     data-pago="{% if cita.cobro and cita.cobro.pagado %}pagado{% else %}pendiente{% endif %}"
+                     data-agrupacion="{% if cita.ordenes_agrupadas %}agrupado{% else %}individual{% endif %}">
                     <div class="card-body flex-between">
                         <div>
                             <span class="text-bold">{{ cita.tipo_estudio.nombre }}</span>
@@ -74,6 +92,9 @@
                             {% elif cita.cobro.pagado %}
                                 <span class="badge badge-success" style="margin-left:0.5rem;">Pagado</span>
                             {% endif %}
+                            {% for orden in cita.ordenes_agrupadas %}
+                                <div class="text-muted text-sm">Orden #{{ orden.id }}{% if orden.combo %} · {{ orden.combo.nombre }}{% endif %}</div>
+                            {% endfor %}
                             <div class="text-muted text-sm" style="margin-top:0.25rem;">
                                 {{ cita.fecha }} {{ cita.hora|time:'H:i' }} &mdash; {{ cita.get_convenio_display }}
                             </div>
@@ -89,6 +110,25 @@
                                 <svg width="14" height="14"><use href="#i-image"/></svg>
                                 Ver estudio
                             </a>
+                            {% if cita.cobro and cita.cobro.pagado %}
+                                <a class="btn btn-outline btn-sm" href="{% url 'boleta_pago_pdf' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                                    <svg width="14" height="14"><use href="#i-file-text"/></svg>
+                                    Ver recibo interno
+                                </a>
+                                {% if cita.cobro.comprobante_bancario %}
+                                    <a class="btn btn-outline btn-sm" href="{% url 'comprobante_bancario' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                                        Ver comprobante bancario
+                                    </a>
+                                {% endif %}
+                                <a class="btn btn-outline btn-sm" href="{% url 'constancia_pago_pdf' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                                    Ver constancia interna
+                                </a>
+                                {% if cita.cobro.constancia_firmada %}
+                                    <a class="btn btn-outline btn-sm" href="{% url 'constancia_firmada' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
+                                        Ver constancia firmada
+                                    </a>
+                                {% endif %}
+                            {% endif %}
                             {% if cita.cobro and not cita.cobro.pagado %}
                                 <button type="button" class="btn btn-primary btn-sm" disabled
                                         title="Registrá el pago en la pantalla de Caja para poder enviar el estudio">
@@ -219,8 +259,12 @@
                 filtroConvenio.value = '';
                 filtroFecha.value = '';
                 filtroEstudio.value = '';
+                document.getElementById('filtro-estado-pago').value = '';
+                document.getElementById('filtro-agrupacion').value = '';
                 aplicarFiltros();
             });
+            document.getElementById('filtro-estado-pago').addEventListener('change', aplicarFiltros);
+            document.getElementById('filtro-agrupacion').addEventListener('change', aplicarFiltros);
         })();
     </script>
 {% endblock %}

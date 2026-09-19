@@ -1,0 +1,95 @@
+{% extends 'base.html' %}
+
+{% block title %}Informe anual {{ anio }} - Clínica de Imágenes{% endblock %}
+{% block page_title %}Informe anual — {{ anio }}{% endblock %}
+
+{% block topbar_actions %}
+    {% include 'includes/notificaciones.html' %}
+    <a class="btn btn-outline btn-sm" href="{% url 'historial_precios_estudio' %}">
+        <svg width="14" height="14"><use href="#i-clock"/></svg>
+        Historial de precios
+    </a>
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <p class="ayuda" style="margin-bottom:1rem;">
+        Cada cita se suma con el precio que estaba vigente el día en que se agendó
+        (no el precio actual del estudio) — si un precio cambió durante el año, este
+        informe ya lo refleja correctamente.
+    </p>
+
+    <form method="get" class="card mb-2" style="padding:0.85rem 1rem;display:flex;gap:0.6rem;align-items:flex-end;">
+        <div style="display:flex;flex-direction:column;gap:0.2rem;">
+            <label for="anio" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Año</label>
+            <select name="anio" id="anio" onchange="this.form.submit()">
+                {% for a in anios_disponibles %}
+                    <option value="{{ a }}" {% if a == anio %}selected{% endif %}>{{ a }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <noscript><button type="submit" class="btn btn-primary btn-sm">Ver</button></noscript>
+    </form>
+
+    <div class="grid grid-3 mb-2">
+        <div class="card">
+            <div class="card-body">
+                <div class="text-muted text-sm">Total facturado {{ anio }}</div>
+                <div class="text-bold" style="font-size:1.4rem;">Q{{ total_anual|floatformat:2 }}</div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-body">
+                <div class="text-muted text-sm">Citas facturadas</div>
+                <div class="text-bold" style="font-size:1.4rem;">{{ cantidad_anual }}</div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-body">
+                <div class="text-muted text-sm">Promedio por cita</div>
+                <div class="text-bold" style="font-size:1.4rem;">Q{{ promedio_por_cita|floatformat:2 }}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Facturación mensual por convenio</div>
+        <div class="card-body" style="padding:0;overflow-x:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Mes</th>
+                        {% for valor, nombre in convenios %}<th>{{ nombre }}</th>{% endfor %}
+                        <th>Total del mes</th>
+                        <th>Citas</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for fila in filas %}
+                        <tr>
+                            <td class="text-bold" style="text-transform:capitalize;">{{ fila.nombre_mes }}</td>
+                            {% for valor in fila.valores_lista %}
+                                <td>Q{{ valor|floatformat:2 }}</td>
+                            {% endfor %}
+                            <td class="text-bold">Q{{ fila.total|floatformat:2 }}</td>
+                            <td>{{ fila.cantidad }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr style="background:#f8fafc;">
+                        <td class="text-bold">Total {{ anio }}</td>
+                        {% for valor in totales_convenio_lista %}
+                            <td class="text-bold">Q{{ valor|floatformat:2 }}</td>
+                        {% endfor %}
+                        <td class="text-bold">Q{{ total_anual|floatformat:2 }}</td>
+                        <td class="text-bold">{{ cantidad_anual }}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+{% endblock %}

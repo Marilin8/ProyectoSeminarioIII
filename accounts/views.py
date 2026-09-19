@@ -20,6 +20,9 @@ from django_otp.plugins.otp_totp.models import TOTPDevice
 
 import qrcode
 
+from clinica.validators import avisar_si_correo_no_existe
+
+from .correos import enviar_confirmacion_cuenta
 from .forms import (
     CambiarContrasenaForm,
     CrearUsuarioForm,
@@ -215,6 +218,9 @@ def mi_perfil(request):
             messages.success(request, 'Contraseña actualizada correctamente.')
             return redirect('mi_perfil')
 
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, perfil_form)
+
     return render(request, 'accounts/mi_perfil.html', {
         'perfil_form': perfil_form,
         'password_form': password_form,
@@ -238,21 +244,70 @@ def crear_usuario(request):
     if request.method == 'POST':
         form = CrearUsuarioForm(request.POST)
         if form.is_valid():
-            nuevo_usuario = form.save()
+            # commit=False: la cuenta queda inactiva hasta que el usuario
+            # nuevo confirme su correo (ver confirmar_correo_usuario) --
+            # save() de CrearUsuarioForm ya deja is_active en su default
+            # (True) si se guarda directo, por eso se corrige antes de
+            # persistir en vez de después.
+            nuevo_usuario = form.save(commit=False)
+            nuevo_usuario.is_active = False
+            nuevo_usuario.save()
+            token = nuevo_usuario.generar_token_confirmacion_correo()
+
+            error_envio = enviar_confirmacion_cuenta(request, nuevo_usuario, token)
+
             Bitacora.registrar(
                 request=request,
                 usuario=request.user,
                 accion=Bitacora.ACCION_CREAR_USUARIO,
                 descripcion=(
                     f'Creó el usuario "{nuevo_usuario.username}" con rol '
-                    f'{nuevo_usuario.get_rol_display()}.'
+                    f'{nuevo_usuario.get_rol_display()}. Queda inactivo hasta '
+                    'que confirme su correo.'
                 ),
             )
-            messages.success(request, f'Usuario "{nuevo_usuario.username}" creado correctamente.')
+            if error_envio:
+                messages.warning(
+                    request,
+                    f'Usuario "{nuevo_usuario.username}" creado, pero no se pudo mandar el '
+                    f'correo de confirmación ({error_envio}). Queda inactivo hasta que se '
+                    'confirme -- podés activarlo a mano desde esta pantalla si hace falta.',
+                )
+            else:
+                messages.success(
+                    request,
+                    f'Usuario "{nuevo_usuario.username}" creado. Se le mandó un correo a '
+                    f'{nuevo_usuario.email} para que confirme su cuenta antes de poder ingresar.',
+                )
             return redirect('dashboard')
     else:
         form = CrearUsuarioForm()
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, form)
     return render(request, 'accounts/crear_usuario.html', {'form': form})
+
+
+def confirmar_correo_usuario(request, token):
+    """Link público (sin login) al que llega el usuario nuevo desde el
+    correo que le mandó crear_usuario. Activa la cuenta si el token es
+    válido y no venció."""
+    usuario = Usuario.objects.filter(token_confirmacion_correo=token).first()
+
+    if usuario is None:
+        contexto = {'estado': 'invalido'}
+    elif usuario.token_confirmacion_vencido():
+        contexto = {'estado': 'vencido', 'usuario': usuario}
+    else:
+        usuario.confirmar_correo()
+        Bitacora.registrar(
+            request=request,
+            usuario=usuario,
+            accion=Bitacora.ACCION_CONFIRMAR_CORREO_USUARIO,
+            descripcion=f'"{usuario.username}" confirmó su correo y quedó activo.',
+        )
+        contexto = {'estado': 'confirmado', 'usuario': usuario}
+
+    return render(request, 'accounts/confirmar_correo.html', contexto)
 
 
 @login_required
@@ -322,6 +377,134 @@ def planilla(request):
         'periodo': periodo,
         'mes_salario_etiqueta': _et_mes(anio, mes),
         'query': querystring(periodo),
+    })
+
+
+def _meses_entre(desde, hasta_exclusivo):
+    """Lista de (año, mes) desde `desde` hasta `hasta_exclusivo`, sin incluir
+    este último — para recorrer mes a mes sin depender de calendar."""
+    anio, mes = desde.year, desde.month
+    meses = []
+    while (anio, mes) < (hasta_exclusivo.year, hasta_exclusivo.month):
+        meses.append((anio, mes))
+        mes += 1
+        if mes > 12:
+            mes = 1
+            anio += 1
+    return meses
+
+
+@login_required
+@user_passes_test(es_administrador)
+def pendiente_pago(request):
+    """Empleados con algún pago atrasado, sin importar el período que se
+    esté viendo en Planilla: meses de salario ya cerrados que nunca se
+    registraron, y comisiones ganadas en cualquier momento que sigan sin
+    pagarse. El mes en curso no cuenta como "atrasado" todavía."""
+    from .models import etiqueta_mes as _et_mes
+    from .planilla import lineas_comision, marcar_pagadas
+
+    hoy = timezone.localdate()
+    inicio_mes_actual = hoy.replace(day=1)
+
+    usuarios = list(
+        Usuario.objects.filter(is_active=True).order_by('first_name', 'last_name', 'username')
+    )
+
+    # Comisiones sin pagar de toda la historia hasta el mes en curso
+    # (exclusivo): lo ganado este mes todavía no se considera atrasado.
+    lineas = marcar_pagadas(lineas_comision(datetime.date(2000, 1, 1), inicio_mes_actual))
+    comisiones_por_persona = {}
+    for linea in lineas:
+        if linea['pagada']:
+            continue
+        acc = comisiones_por_persona.setdefault(linea['persona_id'], {
+            'monto': Decimal('0.00'), 'cantidad': 0, 'desde': linea['fecha'],
+        })
+        acc['monto'] += linea['comision']
+        acc['cantidad'] += 1
+        acc['desde'] = min(acc['desde'], linea['fecha'])
+
+    pagos_existentes = set(PagoSalario.objects.values_list('usuario_id', 'anio', 'mes'))
+
+    filas = []
+    for usuario in usuarios:
+        meses_pendientes = []
+        if usuario.salario_base > 0:
+            inicio = usuario.date_joined.date().replace(day=1)
+            for anio, mes in _meses_entre(inicio, inicio_mes_actual):
+                if (usuario.id, anio, mes) not in pagos_existentes:
+                    meses_pendientes.append({
+                        'anio': anio, 'mes': mes, 'etiqueta': _et_mes(anio, mes),
+                        'monto': usuario.salario_base,
+                    })
+
+        comision_info = comisiones_por_persona.get(usuario.id)
+        total_salario = sum((m['monto'] for m in meses_pendientes), Decimal('0.00'))
+        total_comisiones = comision_info['monto'] if comision_info else Decimal('0.00')
+
+        if not meses_pendientes and not comision_info:
+            continue
+
+        filas.append({
+            'usuario': usuario,
+            'meses_pendientes': meses_pendientes,
+            'total_salario': total_salario,
+            'comisiones_pendientes': total_comisiones,
+            'cantidad_comisiones': comision_info['cantidad'] if comision_info else 0,
+            'comisiones_desde': comision_info['desde'] if comision_info else None,
+            'total': total_salario + total_comisiones,
+        })
+
+    filas.sort(key=lambda f: f['total'], reverse=True)
+
+    return render(request, 'accounts/pendiente_pago.html', {
+        'filas': filas,
+        'total_general': sum((f['total'] for f in filas), Decimal('0.00')),
+    })
+
+
+def _proximo_mes(fecha):
+    """(año, mes) del mes siguiente a `fecha`."""
+    if fecha.month == 12:
+        return fecha.year + 1, 1
+    return fecha.year, fecha.month + 1
+
+
+@login_required
+@user_passes_test(es_administrador)
+def pago_adelantado(request):
+    """Pago por adelantado del salario base: para cuando un empleado pide
+    que se le pague un mes que todavía no ha llegado. No aplica a
+    comisiones porque esas dependen de estudios que todavía no se
+    realizaron."""
+    hoy = timezone.localdate()
+    prox_anio, prox_mes = _proximo_mes(hoy)
+    mes_minimo = f'{prox_anio:04d}-{prox_mes:02d}'
+
+    usuarios = list(
+        Usuario.objects.filter(is_active=True, salario_base__gt=0)
+        .order_by('first_name', 'last_name', 'username')
+    )
+
+    adelantos_por_usuario = {}
+    pagos = (
+        PagoSalario.objects.filter(usuario_id__in=[u.id for u in usuarios])
+        .select_related('usuario').order_by('anio', 'mes')
+    )
+    for pago in pagos:
+        if (pago.anio, pago.mes) >= (prox_anio, prox_mes):
+            adelantos_por_usuario.setdefault(pago.usuario_id, []).append(pago)
+
+    filas = [
+        {'usuario': usuario, 'adelantos': adelantos_por_usuario.get(usuario.id, [])}
+        for usuario in usuarios
+    ]
+
+    return render(request, 'accounts/pago_adelantado.html', {
+        'filas': filas,
+        'mes_minimo': mes_minimo,
+        'mes_sugerido': mes_minimo,
     })
 
 
@@ -531,6 +714,9 @@ def editar_usuario(request, usuario_id):
             return redirect(_url_lista_para(editado))
     else:
         form = EditarUsuarioForm(instance=usuario)
+
+    if request.method == 'POST':
+        avisar_si_correo_no_existe(request, form)
 
     contexto = {
         'form': form,

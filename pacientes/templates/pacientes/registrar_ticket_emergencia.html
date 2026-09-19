@@ -33,6 +33,10 @@
                     Paciente ya registrado — se completaron sus datos automáticamente.
                     <a href="#" id="btn-buscar-otro" style="font-weight:bold;margin-left:0.5rem;">No es este paciente</a>
                 </div>
+                <div class="info-box" id="aviso-paciente-no-encontrado" style="display:none;">
+                    <svg style="width:16px;height:16px;vertical-align:middle;margin-right:0.3rem;"><use href="#i-info"/></svg>
+                    No hay ningún paciente registrado con ese DPI — completá los datos para registrarlo.
+                </div>
 
                 <label for="{{ form.nombre.id_for_label }}">Nombre</label>
                 {{ form.nombre }}
@@ -42,7 +46,7 @@
                 {{ form.apellido }}
                 {{ form.apellido.errors }}
 
-                <label for="{{ form.sexo.id_for_label }}">Sexo (opcional)</label>
+                <label for="{{ form.sexo.id_for_label }}">Sexo</label>
                 {{ form.sexo }}
                 {{ form.sexo.errors }}
 
@@ -78,13 +82,16 @@
         </div>
     </div>
 
+    {% include 'includes/telefono_pais.html' %}
     <script>
+        activarSelectorTelefono('telefono');
         // Autocompleta los datos del paciente si el DPI ya está registrado,
         // para no volver a escribir nombre/apellido/sexo/teléfono/fecha de
         // nacimiento cada vez.
         (function () {
             var dpiInput = document.getElementById('id_dpi');
             var aviso = document.getElementById('aviso-paciente-existente');
+            var avisoNoEncontrado = document.getElementById('aviso-paciente-no-encontrado');
             var camposAutocompletables = [
                 'nombre', 'apellido', 'sexo', 'telefono', 'correo', 'fecha_nacimiento', 'carnet_igss',
             ];
@@ -102,12 +109,25 @@
                     .then(function (datos) {
                         if (!datos.encontrado) {
                             aviso.style.display = 'none';
+                            avisoNoEncontrado.style.display = 'block';
+                            // Libera los campos si venían llenos de un DPI
+                            // anterior que sí estaba registrado.
+                            camposAutocompletables.forEach(function (nombreCampo) {
+                                var elemento = document.getElementById('id_' + nombreCampo);
+                                if (elemento) {
+                                    elemento.value = '';
+                                }
+                            });
                             return;
                         }
+                        avisoNoEncontrado.style.display = 'none';
                         camposAutocompletables.forEach(function (nombreCampo) {
                             var elemento = document.getElementById('id_' + nombreCampo);
                             if (elemento) {
                                 elemento.value = datos[nombreCampo];
+                                if (nombreCampo === 'telefono') {
+                                    resincronizarTelefonoPais('telefono');
+                                }
                             }
                         });
                         aviso.style.display = 'block';
@@ -120,6 +140,7 @@
                 clearTimeout(temporizadorBusqueda);
                 if (dpiInput.value.trim().length !== 13) {
                     aviso.style.display = 'none';
+                    avisoNoEncontrado.style.display = 'none';
                     ultimoDpiBuscado = '';
                     return;
                 }

@@ -27,3 +27,10 @@ PASSWORD_HASHERS = [
 MEDIA_ROOT = BASE_DIR / 'media_test'  # noqa: F405 (definida en settings.py)
 
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
+
+# validar_correo_existente hace una consulta DNS real por cada correo --
+# apagado acá para que las pruebas no dependan de salida a internet ni
+# tarden segundos por cada correo. Las pruebas que sí quieren ejercitar esa
+# validación la vuelven a prender con @override_settings y mockean
+# dns.resolver (ver clinica/tests.py y pacientes/tests.py).
+VERIFICAR_CORREO_EXISTENTE = False

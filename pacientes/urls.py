@@ -7,6 +7,7 @@ urlpatterns = [
     path('estudios/nuevo/', views.crear_estudio, name='crear_estudio'),
     path('estudios/', views.lista_estudios, name='lista_estudios'),
     path('estudios/<int:estudio_id>/editar/', views.editar_estudio, name='editar_estudio'),
+    path('estudios/historial-precios/', views.historial_precios_estudio, name='historial_precios_estudio'),
     path('combos/nuevo/', views.crear_combo, name='crear_combo'),
     path('combos/', views.lista_combos, name='lista_combos'),
     path('combos/<int:combo_id>/editar/', views.editar_combo, name='editar_combo'),
@@ -52,7 +53,13 @@ urlpatterns = [
         name='marcar_cobrado',
     ),
     path('pagos/', views.pagos_pendientes, name='pagos_pendientes'),
+    path('pagos/ordenes/nueva/', views.crear_orden_pago, name='crear_orden_pago'),
+    path('pagos/ordenes/<int:orden_id>/pagar/', views.pagar_orden_pago, name='pagar_orden_pago'),
     path('pagos/<int:cobro_id>/boleta/', views.boleta_pago_pdf, name='boleta_pago_pdf'),
+    path('pagos/<int:cobro_id>/constancia/', views.constancia_pago_pdf, name='constancia_pago_pdf'),
+    path('pagos/<int:cobro_id>/comprobante-bancario/', views.comprobante_bancario, name='comprobante_bancario'),
+    path('pagos/<int:cobro_id>/constancia-firmada/', views.constancia_firmada, name='constancia_firmada'),
+    path('pagos/<int:cobro_id>/constancia-firmada/subir/', views.subir_constancia_firmada, name='subir_constancia_firmada'),
     path(
         'citas/calendario/coex/',
         views.seleccionar_horario,
@@ -164,6 +171,11 @@ urlpatterns = [
     ),
     path('citas/procesadas/', views.citas_procesadas, name='citas_procesadas'),
     path('citas/procesadas/<int:cita_id>/informe/', views.adjuntar_informe, name='adjuntar_informe'),
+    path(
+        'citas/procesadas/<int:cita_id>/estudio-extra/',
+        views.agregar_estudio_extra,
+        name='agregar_estudio_extra',
+    ),
     path('ordenes/<int:orden_id>/imagenes/ver/', views.ver_imagenes_jpg, name='ver_imagenes_jpg'),
     path(
         'ordenes/<int:orden_id>/imagenes/seleccion/',
@@ -198,6 +210,7 @@ urlpatterns = [
         views.marcar_notificaciones_leidas,
         name='marcar_notificaciones_leidas',
     ),
+    path('reportes/anual/', views.informe_anual, name='informe_anual'),
     path(
         'reportes/coex/',
         views.lista_reportes_diarios,

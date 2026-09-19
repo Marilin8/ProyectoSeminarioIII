@@ -18,6 +18,19 @@
         .fila-cobro .meta { font-size: 0.82rem; color: var(--text-muted); margin-top: 0.15rem; }
         .form-cobrar { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
         .form-cobrar select, .form-cobrar input { min-width: 9rem; }
+        .orden-agrupada { padding: 1.25rem; border: 1px solid #cbd5e1; background: linear-gradient(135deg, #ffffff, #f8fbff); }
+        .orden-agrupada-cabecera { display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; margin-bottom:1rem; }
+        .orden-agrupada h3 { margin:0.15rem 0 0.25rem; }
+        .orden-agrupada .eyebrow { color:var(--primary); font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+        .orden-agrupada-lista { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:.55rem; max-height:18rem; overflow:auto; padding:.25rem; }
+        .estudio-seleccionable { display:flex; gap:.65rem; align-items:flex-start; padding:.7rem; border:1px solid #e2e8f0; border-radius:var(--radius); background:#fff; cursor:pointer; }
+        .estudio-seleccionable:hover { border-color:var(--primary); box-shadow:0 2px 8px rgba(30,64,175,.08); }
+        .estudio-seleccionable small { display:block; color:var(--text-muted); margin-top:.2rem; }
+        .orden-agrupada-opciones { display:grid; grid-template-columns:minmax(12rem,1fr) minmax(16rem,2fr) auto; gap:.7rem; align-items:end; margin-top:1rem; }
+        .orden-agrupada-opciones label { display:flex; flex-direction:column; gap:.3rem; font-size:.76rem; font-weight:600; color:var(--text-muted); }
+        .orden-resumen { margin-top:1rem; padding:.8rem 1rem; border-radius:var(--radius); background:#eff6ff; border:1px solid #bfdbfe; color:#1e3a8a; }
+        .orden-resumen div { margin-top:.25rem; font-size:.85rem; }
+        @media (max-width: 800px) { .orden-agrupada-opciones { grid-template-columns:1fr; } .orden-agrupada-cabecera { flex-direction:column; } }
     </style>
 {% endblock %}
 
@@ -45,6 +58,15 @@
             </select>
         </div>
         <div style="display:flex;flex-direction:column;gap:0.2rem;">
+            <label for="combo" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Combo</label>
+            <select name="combo" id="combo">
+                <option value="">Todos</option>
+                {% for combo in combos %}
+                    <option value="{{ combo.id }}" {% if combo_id == combo.id|stringformat:'s' %}selected{% endif %}>{{ combo.nombre }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:0.2rem;">
             <label for="tipo_estudio" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Estudio</label>
             <select name="tipo_estudio" id="tipo_estudio">
                 <option value="">Todos</option>
@@ -67,6 +89,75 @@
         <a class="btn btn-outline btn-sm" href="{% url 'pagos_pendientes' %}">Limpiar</a>
     </form>
 
+    <form method="post" action="{% url 'crear_orden_pago' %}" class="card mb-2 orden-agrupada">
+        {% csrf_token %}
+        <input type="hidden" name="combo" id="combo-seleccionado" value="">
+        <div class="orden-agrupada-cabecera">
+            <div>
+                <span class="eyebrow">Cobro por convenio</span>
+                <h3>Crear orden agrupada</h3>
+                <p class="text-muted text-sm">Agrupe estudios del mismo paciente y convenio para adjuntar una sola boleta global.</p>
+            </div>
+            <span class="badge badge-info">COEX · Emergencia IGSS</span>
+        </div>
+        <div class="orden-agrupada-lista">
+            {% for cobro in cobros_para_orden %}
+                    <label class="estudio-seleccionable"
+                           data-tipo-estudio="{{ cobro.cita.tipo_estudio_id }}"
+                           data-precio="{{ cobro.cita.precio }}"
+                           data-convenio="{{ cobro.cita.convenio }}">
+                        <input type="checkbox" name="cita_ids" value="{{ cobro.cita_id }}">
+                        <span>
+                            <strong>{{ cobro.cita.paciente.nombre }} {{ cobro.cita.paciente.apellido }}</strong>
+                            <small>{{ cobro.cita.tipo_estudio.nombre }} · {{ cobro.cita.get_convenio_display }} · Q{{ cobro.cita.precio|floatformat:2 }}</small>
+                        </span>
+                    </label>
+            {% empty %}
+                <span class="text-muted">No hay estudios pendientes para agrupar.</span>
+            {% endfor %}
+        </div>
+        <div id="resumen-orden" class="orden-resumen" hidden>
+            <strong>Resumen de la orden</strong>
+            <div id="resumen-estudios"></div>
+            <div id="resumen-totales"></div>
+        </div>
+        <div class="orden-agrupada-opciones">
+            <label>Notas
+                <input type="text" name="notas" placeholder="Ej.: pago global de convenio">
+            </label>
+            <button type="submit" class="btn btn-primary" id="crear-orden">Crear orden de pago</button>
+        </div>
+    </form>
+
+    {% if ordenes_pago %}
+        <div class="card mb-2" style="padding:1rem;">
+            <h3 style="margin-top:0;">Órdenes agrupadas pendientes de boleta</h3>
+            {% for orden in ordenes_pago %}
+                <div style="border-top:1px solid var(--border);padding:0.75rem 0;">
+                    <strong>Orden #{{ orden.id }} · {{ orden.paciente.nombre }} {{ orden.paciente.apellido }}</strong>
+                    <div class="meta">{{ orden.get_convenio_display }} · Total Q{{ orden.total|floatformat:2 }}{% if orden.combo %} · {{ orden.combo.nombre }}{% endif %}</div>
+                    <div class="meta">
+                        {% for detalle in orden.detalles.all %}
+                            {{ detalle.tipo_estudio.nombre }} (Q{{ detalle.total|floatformat:2 }}){% if not forloop.last %}, {% endif %}
+                        {% endfor %}
+                    </div>
+                    <form method="post" action="{% url 'pagar_orden_pago' orden_id=orden.id %}" enctype="multipart/form-data" class="form-cobrar" style="margin-top:0.5rem;">
+                        {% csrf_token %}
+                        <select name="forma_pago" required>
+                            <option value="">Forma de pago</option>
+                            <option value="transferencia">Transferencia</option>
+                            <option value="efectivo">Efectivo</option>
+                            <option value="tarjeta">Tarjeta</option>
+                        </select>
+                        <input type="text" name="numero_boleta" placeholder="Boleta global / referencia" required>
+                        <input type="file" name="comprobante_bancario" accept=".pdf,.jpg,.jpeg,.png" required>
+                        <button type="submit" class="btn btn-primary btn-sm">Adjuntar boleta y confirmar</button>
+                    </form>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
     <p class="text-muted text-sm mb-2">{{ pagina.paginator.count }} estudio{{ pagina.paginator.count|pluralize }}</p>
 
     {% if pagina %}
@@ -82,6 +173,14 @@
                         <div class="meta">
                             Creado {{ cobro.creado_en|date:'d/m/Y H:i' }} · Q{{ cobro.cita.precio|floatformat:2 }}
                         </div>
+                        {% if cobro.cita.estudios_extra.all %}
+                            <div class="meta" style="color:var(--primary-dark);">
+                                Incluye extra:
+                                {% for extra in cobro.cita.estudios_extra.all %}
+                                    {{ extra.tipo_estudio.nombre }} (Q{{ extra.precio|floatformat:2 }}){% if not forloop.last %}, {% endif %}
+                                {% endfor %}
+                            </div>
+                        {% endif %}
                         <div style="margin-top:0.4rem;">
                             {% if cobro.estado == 'pagado' %}
                                 <span class="badge badge-success">
@@ -98,11 +197,29 @@
                             <div class="meta">Ref.: {{ cobro.numero_boleta|default:'—' }}</div>
                             <a class="btn btn-outline btn-sm" href="{% url 'boleta_pago_pdf' cobro_id=cobro.id %}" target="_blank" rel="noopener">
                                 <svg width="14" height="14"><use href="#i-file-text"/></svg>
-                                Ver boleta PDF
+                                Ver recibo interno
                             </a>
+                            <a class="btn btn-outline btn-sm" href="{% url 'constancia_pago_pdf' cobro_id=cobro.id %}" target="_blank" rel="noopener">
+                                Generar constancia
+                            </a>
+                            {% if cobro.comprobante_bancario %}
+                                <a class="btn btn-outline btn-sm" href="{% url 'comprobante_bancario' cobro_id=cobro.id %}" target="_blank" rel="noopener">
+                                    Ver comprobante subido
+                                </a>
+                            {% endif %}
+                            {% if cobro.constancia_firmada %}
+                                <a class="btn btn-outline btn-sm" href="{% url 'constancia_firmada' cobro_id=cobro.id %}" target="_blank" rel="noopener">
+                                    Ver constancia firmada
+                                </a>
+                            {% endif %}
+                            <form method="post" action="{% url 'subir_constancia_firmada' cobro_id=cobro.id %}" enctype="multipart/form-data" style="margin-top:0.4rem;">
+                                {% csrf_token %}
+                                <input type="file" name="constancia_firmada" accept=".pdf,.jpg,.jpeg,.png" required>
+                                <button type="submit" class="btn btn-outline btn-sm">Subir constancia firmada</button>
+                            </form>
                         </div>
-                    {% else %}
-                        <form method="post" action="{% url 'marcar_cobrado' cita_id=cobro.cita_id %}" class="form-cobrar">
+                    {% elif cobro.cita.convenio == 'privado' %}
+                        <form method="post" action="{% url 'marcar_cobrado' cita_id=cobro.cita_id %}" class="form-cobrar" enctype="multipart/form-data">
                             {% csrf_token %}
                             <select name="forma_pago" required>
                                 <option value="">Forma de pago</option>
@@ -111,11 +228,14 @@
                                 <option value="transferencia">Transferencia</option>
                             </select>
                             <input type="text" name="numero_boleta" placeholder="Boleta / referencia">
+                            <input type="file" name="comprobante_bancario" accept=".pdf,.jpg,.jpeg,.png">
                             <button type="submit" class="btn btn-primary btn-sm">
                                 <svg width="14" height="14"><use href="#i-check"/></svg>
                                 Marcar pagado
                             </button>
                         </form>
+                    {% else %}
+                        <span class="badge badge-warning">Pendiente de orden agrupada</span>
                     {% endif %}
                 </div>
             </div>
@@ -142,4 +262,68 @@
             </span>
         </div>
     {% endif %}
+
+    {{ combos_preview|json_script:"combos-preview" }}
+    <script>
+        (function () {
+            var form = document.querySelector('form.orden-agrupada');
+            var tarjetas = form ? form.querySelectorAll('.estudio-seleccionable') : [];
+            var resumen = document.getElementById('resumen-orden');
+            var resumenEstudios = document.getElementById('resumen-estudios');
+            var resumenTotales = document.getElementById('resumen-totales');
+            var comboSeleccionado = document.getElementById('combo-seleccionado');
+            var confirmada = false;
+            var combos = JSON.parse(document.getElementById('combos-preview').textContent || '[]');
+
+            function actualizarResumen() {
+                var seleccionados = Array.prototype.filter.call(tarjetas, function (tarjeta) {
+                    return tarjeta.querySelector('input').checked;
+                });
+                if (!seleccionados.length) {
+                    resumen.hidden = true;
+                    comboSeleccionado.value = '';
+                    return;
+                }
+                var tipos = seleccionados.map(function (tarjeta) {
+                    return Number(tarjeta.dataset.tipoEstudio);
+                });
+                var combo = combos.find(function (opcion) {
+                    return opcion.estudios.every(function (id) { return tipos.indexOf(id) !== -1; });
+                });
+                var subtotal = seleccionados.reduce(function (total, tarjeta) {
+                    return total + Number(tarjeta.dataset.precio || 0);
+                }, 0);
+                var descuento = combo ? subtotal * combo.porcentaje / 100 : 0;
+                comboSeleccionado.value = combo ? combo.id : '';
+                resumen.hidden = false;
+                resumenEstudios.textContent = seleccionados.length + ' estudio(s) seleccionado(s)'
+                    + (combo ? ' · ' + combo.nombre : ' · Sin combo aplicable');
+                resumenTotales.textContent =
+                    'Subtotal: Q' + subtotal.toFixed(2)
+                    + ' · Descuento: Q' + descuento.toFixed(2)
+                    + ' · Total: Q' + (subtotal - descuento).toFixed(2);
+            }
+            Array.prototype.forEach.call(tarjetas, function (tarjeta) {
+                tarjeta.querySelector('input').addEventListener('change', actualizarResumen);
+            });
+            form.addEventListener('submit', function (evento) {
+                if (confirmada) return;
+                var seleccionados = Array.prototype.filter.call(tarjetas, function (tarjeta) {
+                    return tarjeta.querySelector('input').checked;
+                });
+                if (!seleccionados.length) {
+                    evento.preventDefault();
+                    window.alert('Seleccione al menos un estudio para crear la orden.');
+                    return;
+                }
+                var mensaje = resumenTotales.textContent + '\n\n'
+                    + resumenEstudios.textContent + '\n\n¿Desea crear esta orden de pago?';
+                if (!window.confirm(mensaje)) {
+                    evento.preventDefault();
+                    return;
+                }
+                confirmada = true;
+            });
+        })();
+    </script>
 {% endblock %}

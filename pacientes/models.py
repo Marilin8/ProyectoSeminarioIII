@@ -54,7 +54,7 @@ class Paciente(models.Model):
     )
     nombre = models.CharField(max_length=100)
     apellido = models.CharField(max_length=100)
-    sexo = models.CharField(max_length=1, choices=SEXO_CHOICES, blank=True)
+    sexo = models.CharField(max_length=1, choices=SEXO_CHOICES)
     telefono = models.CharField(max_length=20, blank=True)
     correo = models.EmailField(max_length=254, blank=True, null=True)
     fecha_nacimiento = models.DateField(null=True, blank=True)
@@ -62,9 +62,11 @@ class Paciente(models.Model):
     # Campos que se pueden dejar sin llenar al registrar al paciente (ej. en
     # una emergencia) y que luego se le avisan pendientes a recepción. Ver
     # accounts.management.commands.notificar_pacientes_pendientes.
-    CAMPOS_OPCIONALES = ('sexo', 'fecha_nacimiento', 'telefono')
+    # 'sexo' salió de esta lista: ahora es obligatorio siempre (a diferencia
+    # de teléfono/fecha de nacimiento, es un dato que se puede determinar
+    # incluso en una emergencia).
+    CAMPOS_OPCIONALES = ('fecha_nacimiento', 'telefono')
     ETIQUETAS_CAMPOS_OPCIONALES = {
-        'sexo': 'Sexo',
         'fecha_nacimiento': 'Fecha de nacimiento',
         'telefono': 'Teléfono',
     }
@@ -152,16 +154,48 @@ class TipoEstudio(models.Model):
     def __str__(self):
         return self.nombre
 
-    def precio_para(self, convenio, horario_habil=True):
+    def precio_para(self, convenio, horario_habil=True, fecha=None):
         """Precio de este estudio para un convenio y tipo de horario.
-        Si no hay tarifa inhábil cargada, cae a la hábil; si no hay ninguna,
-        devuelve 0."""
+
+        Si se pasa `fecha`, devuelve el precio que estaba vigente ESE día
+        según HistorialPrecioEstudio, no el precio actual -- así un reporte
+        o una boleta de una cita vieja no cambia si después se actualiza la
+        tarifa (ver historial_precio_vigente_en). Sin `fecha`, o si no hay
+        ningún cambio registrado antes de esa fecha (ej. citas de antes de
+        que existiera este historial), se usa el precio actual.
+
+        Si no hay tarifa inhábil cargada, cae a la hábil; si no hay
+        ninguna, devuelve 0."""
+        if fecha is not None:
+            precio_historico = self.historial_precio_vigente_en(convenio, horario_habil, fecha)
+            if precio_historico is None and not horario_habil:
+                precio_historico = self.historial_precio_vigente_en(convenio, True, fecha)
+            if precio_historico is not None:
+                return precio_historico
+
         precios = {(p.convenio, p.horario_habil): p.precio for p in self.precios.all()}
         return (
             precios.get((convenio, horario_habil))
             or precios.get((convenio, True))
             or Decimal('0.00')
         )
+
+    def historial_precio_vigente_en(self, convenio, horario_habil, fecha):
+        """Precio de (convenio, horario_habil) vigente en `fecha`, buscando
+        en HistorialPrecioEstudio el cambio más próximo que haya ocurrido
+        DESPUÉS de esa fecha: el valor que tenía justo antes de ese cambio
+        es el que estaba vigente en `fecha` (encadena hacia atrás si hubo
+        varios cambios). None si no hay ningún cambio posterior a `fecha`
+        -- en ese caso el precio vigente en `fecha` es el mismo que el
+        actual, porque nada cambió desde entonces."""
+        limite = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.max))
+        siguiente_cambio = (
+            self.historial_precios
+            .filter(convenio=convenio, horario_habil=horario_habil, creado_en__gt=limite)
+            .order_by('creado_en')
+            .first()
+        )
+        return siguiente_cambio.valor_anterior if siguiente_cambio else None
 
     @property
     def precio_referencia(self):
@@ -195,6 +229,44 @@ class PrecioEstudio(models.Model):
     def __str__(self):
         horario = 'hábil' if self.horario_habil else 'inhábil'
         return f'{self.tipo_estudio.nombre} · {self.get_convenio_display()} {horario}: Q{self.precio}'
+
+
+class HistorialPrecioEstudio(models.Model):
+    """Auditoría de los cambios de precio de un estudio (una celda de la
+    matriz convenio×horario): guarda el valor anterior y el nuevo, con la
+    fecha y el administrador que lo hizo. Mismo patrón que
+    accounts.models.HistorialComision, pero para precios de estudio.
+
+    Además de auditoría, esto es lo que permite que un reporte o una
+    boleta de una cita vieja siga mostrando el precio que estaba vigente
+    ese día, aunque después se haya actualizado la tarifa (ver
+    TipoEstudio.precio_para / historial_precio_vigente_en)."""
+
+    tipo_estudio = models.ForeignKey(
+        TipoEstudio, on_delete=models.CASCADE, related_name='historial_precios',
+    )
+    convenio = models.CharField(max_length=20, choices=CONVENIO_CHOICES)
+    horario_habil = models.BooleanField(default=True, choices=PrecioEstudio.HORARIO_CHOICES)
+    valor_anterior = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    valor_nuevo = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    modificado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='cambios_precio_estudio_realizados',
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'historial_precios_estudio'
+        verbose_name = 'cambio de precio de estudio'
+        verbose_name_plural = 'historial de precios de estudio'
+        ordering = ['-creado_en']
+
+    def __str__(self):
+        horario = 'hábil' if self.horario_habil else 'inhábil'
+        return (
+            f'{self.tipo_estudio} · {self.get_convenio_display()} {horario}: '
+            f'Q{self.valor_anterior} -> Q{self.valor_nuevo} ({self.modificado_por})'
+        )
 
 
 class Combo(models.Model):
@@ -373,9 +445,53 @@ class Cita(models.Model):
         return es_horario_habil(self.convenio, self.hora)
 
     @property
+    def precio_base(self):
+        """Precio del estudio agendado originalmente, sin contar los
+        estudios extra que el radiólogo haya agregado durante la atención.
+
+        Usa el precio vigente en la fecha de la cita (no el precio actual
+        del estudio): así un reporte o boleta de una cita vieja no cambia
+        si después se actualiza la tarifa. Ver
+        TipoEstudio.precio_para/HistorialPrecioEstudio."""
+        return self.tipo_estudio.precio_para(self.convenio, self.horario_habil, fecha=self.fecha)
+
+    @property
     def precio(self):
-        """Precio de la cita según su estudio, convenio y horario."""
-        return self.tipo_estudio.precio_para(self.convenio, self.horario_habil)
+        """Precio total que debe pagar el paciente: el estudio agendado más
+        cualquier estudio extra que el radiólogo haya agregado (ver
+        EstudioExtra). Es lo que usan Caja y el reporte diario."""
+        extra = sum((e.precio for e in self.estudios_extra.all()), Decimal('0.00'))
+        return self.precio_base + extra
+
+
+class EstudioExtra(models.Model):
+    """Estudio adicional que el radiólogo detecta y realiza durante la
+    atención, aparte del que se agendó originalmente. Por ahora solo aplica
+    al convenio Privado (es al único que Caja le cobra directamente al
+    paciente): sube el total de la cita y le avisa a recepción."""
+
+    cita = models.ForeignKey(Cita, on_delete=models.PROTECT, related_name='estudios_extra')
+    tipo_estudio = models.ForeignKey(TipoEstudio, on_delete=models.PROTECT, related_name='+')
+    agregado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='estudios_extra_agregados',
+    )
+    notas = models.CharField(max_length=255, blank=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'estudios_extra'
+        verbose_name = 'estudio extra'
+        verbose_name_plural = 'estudios extra'
+        ordering = ['creado_en']
+
+    def __str__(self):
+        return f'{self.tipo_estudio} (extra) — {self.cita}'
+
+    @property
+    def precio(self):
+        return self.tipo_estudio.precio_para(
+            self.cita.convenio, self.cita.horario_habil, fecha=self.cita.fecha,
+        )
 
 
 class Cobro(models.Model):
@@ -414,6 +530,26 @@ class Cobro(models.Model):
     notas = models.CharField(max_length=255, blank=True)
     forma_pago = models.CharField(max_length=20, choices=FORMA_PAGO_CHOICES, blank=True)
     numero_boleta = models.CharField(max_length=60, blank=True, verbose_name='número de boleta / referencia')
+    comprobante_bancario = models.FileField(
+        upload_to='comprobantes_bancarios/%Y/%m/',
+        blank=True,
+        null=True,
+        verbose_name='boleta o comprobante bancario',
+    )
+    constancia_firmada = models.FileField(
+        upload_to='constancias_pago_firmadas/%Y/%m/',
+        blank=True,
+        null=True,
+        verbose_name='constancia firmada',
+    )
+    constancia_subida_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='constancias_pago_subidas',
+    )
+    constancia_subida_en = models.DateTimeField(null=True, blank=True)
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -435,7 +571,70 @@ class Cobro(models.Model):
         self.cobrado_por = usuario
         if notas:
             self.notas = notas
-        self.save(update_fields=['estado', 'pagado_en', 'cobrado_por', 'notas'])
+        self.save(update_fields=[
+            'estado', 'pagado_en', 'cobrado_por', 'notas', 'forma_pago', 'numero_boleta',
+            'comprobante_bancario',
+        ])
+
+
+class OrdenPago(models.Model):
+    """Orden agrupada para convenios que liquidan varios estudios con una
+    boleta global (COEX y Emergencia IGSS)."""
+
+    ESTADO_PENDIENTE = 'pendiente'
+    ESTADO_PAGADA = 'pagada'
+    ESTADO_ANULADA = 'anulada'
+    ESTADO_CHOICES = [
+        (ESTADO_PENDIENTE, 'Pendiente de boleta'),
+        (ESTADO_PAGADA, 'Pagada'),
+        (ESTADO_ANULADA, 'Anulada'),
+    ]
+
+    convenio = models.CharField(max_length=20, choices=CONVENIO_CHOICES)
+    paciente = models.ForeignKey(Paciente, on_delete=models.PROTECT, related_name='ordenes_pago')
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=ESTADO_PENDIENTE)
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    descuento = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    notas = models.CharField(max_length=255, blank=True)
+    combo = models.ForeignKey(
+        Combo, on_delete=models.PROTECT, null=True, blank=True, related_name='ordenes_pago',
+    )
+    numero_boleta = models.CharField(max_length=60, blank=True)
+    comprobante_bancario = models.FileField(
+        upload_to='comprobantes_ordenes_pago/%Y/%m/', blank=True, null=True,
+    )
+    creado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='ordenes_pago_creadas',
+    )
+    pagado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='ordenes_pago_confirmadas',
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+    pagado_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'ordenes_pago'
+        ordering = ['-creado_en']
+
+    def __str__(self):
+        return f'Orden de pago #{self.id} — {self.get_estado_display()}'
+
+
+class DetalleOrdenPago(models.Model):
+    orden_pago = models.ForeignKey(OrdenPago, on_delete=models.CASCADE, related_name='detalles')
+    cita = models.ForeignKey(Cita, on_delete=models.PROTECT, related_name='detalles_orden_pago')
+    tipo_estudio = models.ForeignKey(TipoEstudio, on_delete=models.PROTECT)
+    estudio_extra = models.ForeignKey(
+        'EstudioExtra', on_delete=models.PROTECT, null=True, blank=True, related_name='detalles_pago',
+    )
+    precio = models.DecimalField(max_digits=10, decimal_places=2)
+    descuento = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=10, decimal_places=2)
+
+    class Meta:
+        db_table = 'detalles_orden_pago'
 
 
 class ReporteDiario(models.Model):
@@ -744,6 +943,7 @@ class Notificacion(models.Model):
     TIPO_ESTUDIO_COMPLETADO = 'estudio_completado'
     TIPO_DATOS_PACIENTE_PENDIENTES = 'datos_paciente_pendientes'
     TIPO_REPORTE_ENVIADO = 'reporte_enviado'
+    TIPO_ESTUDIO_EXTRA_AGREGADO = 'estudio_extra_agregado'
 
     TIPO_CHOICES = [
         (TIPO_CITA_ASIGNADA, 'Nueva cita asignada'),
@@ -754,6 +954,7 @@ class Notificacion(models.Model):
         (TIPO_ESTUDIO_COMPLETADO, 'Estudio completado'),
         (TIPO_DATOS_PACIENTE_PENDIENTES, 'Datos de paciente pendientes de llenar'),
         (TIPO_REPORTE_ENVIADO, 'Reporte diario enviado'),
+        (TIPO_ESTUDIO_EXTRA_AGREGADO, 'Estudio extra agregado'),
     ]
 
     destinatario = models.ForeignKey(

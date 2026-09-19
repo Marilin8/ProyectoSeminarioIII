@@ -1,0 +1,120 @@
+<script>
+    // Selector de país para campos de teléfono: agrega un <select> de país al
+    // lado del input real del formulario (sin tocar el campo de Django) y le
+    // limita la cantidad de dígitos según el país elegido — ej. Guatemala
+    // (+502) solo permite 8. El valor final que se guarda es "+<código>
+    // <dígitos>" (ej. "+502 12345678"), directo en el mismo campo de siempre.
+    //
+    // Se incluye una sola vez por página (icons.html-style) y cada template
+    // llama a activarSelectorTelefono('<nombre_del_campo>') por cada campo
+    // de teléfono que tenga.
+    window.PAISES_TELEFONO = window.PAISES_TELEFONO || [
+        {codigo: '502', digitos: 8, nombre: 'Guatemala'},
+        {codigo: '501', digitos: 7, nombre: 'Belice'},
+        {codigo: '503', digitos: 8, nombre: 'El Salvador'},
+        {codigo: '504', digitos: 8, nombre: 'Honduras'},
+        {codigo: '505', digitos: 8, nombre: 'Nicaragua'},
+        {codigo: '506', digitos: 8, nombre: 'Costa Rica'},
+        {codigo: '507', digitos: 8, nombre: 'Panamá'},
+        {codigo: '52', digitos: 10, nombre: 'México'},
+        {codigo: '1', digitos: 10, nombre: 'Estados Unidos / Canadá'},
+        {codigo: '1', digitos: 10, nombre: 'República Dominicana'},
+        {codigo: '57', digitos: 10, nombre: 'Colombia'},
+        {codigo: '58', digitos: 10, nombre: 'Venezuela'},
+        {codigo: '593', digitos: 9, nombre: 'Ecuador'},
+        {codigo: '51', digitos: 9, nombre: 'Perú'},
+        {codigo: '591', digitos: 8, nombre: 'Bolivia'},
+        {codigo: '56', digitos: 9, nombre: 'Chile'},
+        {codigo: '54', digitos: 10, nombre: 'Argentina'},
+        {codigo: '34', digitos: 9, nombre: 'España'},
+    ];
+
+    window.activarSelectorTelefono = window.activarSelectorTelefono || function (idCampo) {
+        var input = document.getElementById('id_' + idCampo);
+        if (!input || input.dataset.selectorPaisListo) return;
+        input.dataset.selectorPaisListo = '1';
+
+        var select = document.createElement('select');
+        select.className = 'selector-pais-telefono';
+        select.setAttribute('aria-label', 'País');
+        window.PAISES_TELEFONO.forEach(function (pais) {
+            var opcion = document.createElement('option');
+            opcion.value = pais.codigo;
+            opcion.textContent = pais.nombre + ' (+' + pais.codigo + ')';
+            opcion.dataset.digitos = pais.digitos;
+            select.appendChild(opcion);
+        });
+
+        var contenedor = document.createElement('div');
+        contenedor.className = 'campo-telefono-pais';
+        input.parentNode.insertBefore(contenedor, input);
+        contenedor.appendChild(select);
+        contenedor.appendChild(input);
+        input.setAttribute('inputmode', 'numeric');
+        input.setAttribute('placeholder', 'Número');
+
+        function paisSeleccionado() {
+            var opcion = select.options[select.selectedIndex];
+            return {codigo: opcion.value, digitos: parseInt(opcion.dataset.digitos, 10)};
+        }
+
+        function soloDigitos(texto) {
+            return (texto || '').replace(/\D/g, '');
+        }
+
+        // Separa lo que ya haya en el input ("+502 12345678" o solo dígitos
+        // sueltos de un valor viejo sin prefijo) en {codigo, digitos}.
+        function separarValorActual() {
+            var valor = input.value || '';
+            var coincide = /^\+(\d+)\s*(.*)$/.exec(valor);
+            if (coincide) {
+                return {codigo: coincide[1], digitos: soloDigitos(coincide[2])};
+            }
+            return {codigo: null, digitos: soloDigitos(valor)};
+        }
+
+        function actualizarInput() {
+            var pais = paisSeleccionado();
+            var previo = separarValorActual();
+            var digitos = previo.digitos.slice(0, pais.digitos);
+            input.value = digitos ? '+' + pais.codigo + ' ' + digitos : '';
+            input.maxLength = 2 + pais.codigo.length + pais.digitos;
+        }
+
+        // Si el valor inicial (guardado o autocompletado por DPI) ya trae un
+        // código reconocido, selecciona ese país en vez de dejar Guatemala.
+        function sincronizarDesdeValor() {
+            var previo = separarValorActual();
+            if (previo.codigo) {
+                for (var i = 0; i < select.options.length; i++) {
+                    if (select.options[i].value === previo.codigo) {
+                        select.selectedIndex = i;
+                        break;
+                    }
+                }
+            }
+            actualizarInput();
+        }
+
+        select.addEventListener('change', actualizarInput);
+        input.addEventListener('input', actualizarInput);
+        sincronizarDesdeValor();
+
+        // Por si el DPI-autocompletado de la pantalla vuelve a pisar el
+        // valor del input directamente (elemento.value = ...): se puede
+        // llamar de nuevo para que el select y el límite de dígitos queden
+        // acordes al nuevo valor.
+        input._resincronizarTelefonoPais = sincronizarDesdeValor;
+    };
+
+    // Los scripts de autocompletado por DPI hacen `elemento.value = ...`
+    // directo, lo cual no dispara el evento 'input'. Esta función se llama
+    // desde esos scripts después de eso para resincronizar el select de país
+    // y el límite de dígitos con el valor recién puesto.
+    window.resincronizarTelefonoPais = window.resincronizarTelefonoPais || function (idCampo) {
+        var input = document.getElementById('id_' + idCampo);
+        if (input && input._resincronizarTelefonoPais) {
+            input._resincronizarTelefonoPais();
+        }
+    };
+</script>
