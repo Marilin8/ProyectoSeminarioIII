@@ -71,6 +71,7 @@ from .models import (
     HistorialPrecioEstudio,
     ImagenEstudio,
     InformeEstudio,
+    MedicoTratante,
     Modalidad,
     Notificacion,
     OrdenPago,
@@ -1739,6 +1740,88 @@ def historial_modalidades(request):
     })
 
 
+@login_required
+@user_passes_test(es_administrador)
+def lista_medicos_tratantes(request):
+    """Catálogo administrable de médicos tratantes (COEX / Emergencia
+    IGSS): se elige uno de esta lista al agendar en vez de escribirlo a
+    mano cada vez (ver AgendarCitaForm/ProcesarTicketForm)."""
+    busqueda = (request.GET.get('q') or '').strip()
+
+    medicos = MedicoTratante.objects.all().order_by('nombre')
+    if busqueda:
+        medicos = medicos.filter(nombre__icontains=busqueda)
+
+    return render(request, 'pacientes/lista_medicos_tratantes.html', {
+        'medicos': medicos,
+        'busqueda': busqueda,
+    })
+
+
+@login_required
+@user_passes_test(es_administrador)
+def crear_medico_tratante(request):
+    if request.method == 'POST':
+        nombre = (request.POST.get('nombre') or '').strip()
+        if not nombre:
+            messages.error(request, 'Escriba el nombre del médico.')
+        elif MedicoTratante.objects.filter(nombre__iexact=nombre).exists():
+            messages.error(request, 'Ya existe un médico tratante con ese nombre.')
+        else:
+            medico = MedicoTratante.objects.create(nombre=nombre)
+            messages.success(request, f'Médico tratante "{medico.nombre}" creado correctamente.')
+            return redirect('lista_medicos_tratantes')
+
+    return render(request, 'pacientes/crear_medico_tratante.html', {'editando': None})
+
+
+@login_required
+@user_passes_test(es_administrador)
+def editar_medico_tratante(request, medico_id):
+    medico = get_object_or_404(MedicoTratante, id=medico_id)
+
+    if request.method == 'POST':
+        nombre_nuevo = (request.POST.get('nombre') or '').strip()
+        if not nombre_nuevo:
+            messages.error(request, 'Escriba el nombre del médico.')
+        elif MedicoTratante.objects.filter(nombre__iexact=nombre_nuevo).exclude(id=medico.id).exists():
+            messages.error(request, 'Ya existe otro médico tratante con ese nombre.')
+        elif nombre_nuevo != medico.nombre:
+            medico.nombre = nombre_nuevo
+            medico.save(update_fields=['nombre', 'actualizado_en'])
+            messages.success(request, f'Médico tratante "{medico.nombre}" actualizado correctamente.')
+            return redirect('lista_medicos_tratantes')
+        else:
+            messages.info(request, 'No se realizaron cambios.')
+            return redirect('lista_medicos_tratantes')
+
+    return render(request, 'pacientes/crear_medico_tratante.html', {
+        'editando': medico, 'medico': medico,
+    })
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def eliminar_medico_tratante(request, medico_id):
+    medico = get_object_or_404(MedicoTratante, id=medico_id)
+    medico.activo = False
+    medico.save(update_fields=['activo', 'actualizado_en'])
+    messages.success(request, f'Médico tratante "{medico.nombre}" desactivado correctamente.')
+    return redirect('lista_medicos_tratantes')
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def activar_medico_tratante(request, medico_id):
+    medico = get_object_or_404(MedicoTratante, id=medico_id)
+    medico.activo = True
+    medico.save(update_fields=['activo', 'actualizado_en'])
+    messages.success(request, f'Médico tratante "{medico.nombre}" activado correctamente.')
+    return redirect('lista_medicos_tratantes')
+
+
 ESTUDIOS_POR_PAGINA = 20
 
 
@@ -2172,6 +2255,8 @@ def agendar_cita(request, convenio):
                 fecha=cd['fecha'],
                 hora=cd['hora'],
                 medico_referente=cd['medico_referente'],
+                codigo_igss=cd['codigo_igss'],
+                medico_tratante=cd['medico_tratante'],
                 fecha_sugerida=cd['fecha'],
                 hora_sugerida=cd['hora'],
                 notas=cd['notas'],
@@ -3925,6 +4010,8 @@ def procesar_ticket_emergencia(request, ticket_id):
                 fecha=ahora.date(),
                 hora=ahora.time(),
                 hora_llegada=ticket.creado_en,
+                codigo_igss=form.cleaned_data['codigo_igss'],
+                medico_tratante=form.cleaned_data['medico_tratante'],
                 notas=ticket.motivo,
                 creada_por=request.user,
             )

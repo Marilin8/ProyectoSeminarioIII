@@ -181,6 +181,26 @@ class HistorialModalidad(models.Model):
 
 
 
+class MedicoTratante(models.Model):
+    """Catálogo administrable de médicos tratantes (COEX / Emergencia IGSS),
+    para elegir uno al agendar en vez de escribirlo a mano cada vez. El
+    administrador lo mantiene desde "Médicos tratantes" en su panel."""
+
+    nombre = models.CharField(max_length=150, unique=True, verbose_name='nombre')
+    activo = models.BooleanField(default=True, verbose_name='activo')
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'medicos_tratantes'
+        verbose_name = 'médico tratante'
+        verbose_name_plural = 'médicos tratantes'
+        ordering = ['nombre']
+
+    def __str__(self):
+        return self.nombre
+
+
 class TipoEstudio(models.Model):
     MODALIDAD_RX = 'rx'
     MODALIDAD_RX_CONTRASTE = 'rx_contraste'
@@ -514,6 +534,15 @@ class Cita(models.Model):
         max_length=150, blank=True,
         verbose_name='médico referente',
         help_text='Nombre del médico externo que refiere al paciente (para el reporte diario).',
+    )
+    codigo_igss = models.CharField(
+        max_length=50, blank=True,
+        verbose_name='código IGSS',
+        help_text='Código de orden/autorización que emite IGSS para este estudio (COEX / Emergencia IGSS).',
+    )
+    medico_tratante = models.ForeignKey(
+        'MedicoTratante', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='citas', verbose_name='médico tratante',
     )
     fecha_sugerida = models.DateField(null=True, blank=True)
     hora_sugerida = models.TimeField(null=True, blank=True)

@@ -27,6 +27,15 @@
                 {{ form.tipo_estudio }}
                 {{ form.tipo_estudio.errors }}
 
+                <label for="{{ form.codigo_igss.id_for_label }}">{{ form.codigo_igss.label }}</label>
+                {{ form.codigo_igss }}
+                <p class="form-help">{{ form.codigo_igss.help_text }}</p>
+                {{ form.codigo_igss.errors }}
+
+                <label for="{{ form.medico_tratante.id_for_label }}">{{ form.medico_tratante.label }}</label>
+                {{ form.medico_tratante }}
+                {{ form.medico_tratante.errors }}
+
                 <label for="{{ form.motivo.id_for_label }}">{{ form.motivo.label }}</label>
                 {{ form.motivo }}
                 <p class="form-help">{{ form.motivo.help_text }}</p>

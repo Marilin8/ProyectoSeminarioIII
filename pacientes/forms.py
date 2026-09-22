@@ -6,7 +6,7 @@ from django.utils import timezone
 from accounts.models import Usuario
 from clinica.validators import validar_correo_existente, validar_dominio_correo
 
-from .models import Cita, Cobro, Combo, Modalidad, Paciente, TipoEstudio
+from .models import Cita, Cobro, Combo, MedicoTratante, Modalidad, Paciente, TipoEstudio
 
 CONVENIOS_QUE_REQUIEREN_CARNET_IGSS = (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS)
 
@@ -224,6 +224,17 @@ class AgendarCitaForm(forms.Form):
         max_length=150,
         required=False,
         help_text='Médico externo que refiere al paciente (aparece en el reporte diario).',
+    )
+    codigo_igss = forms.CharField(
+        label='Código IGSS',
+        max_length=50,
+        required=False,
+        help_text='Código de orden/autorización que emite IGSS para este estudio.',
+    )
+    medico_tratante = forms.ModelChoiceField(
+        label='Médico tratante',
+        required=False,
+        queryset=MedicoTratante.objects.filter(activo=True).order_by('nombre'),
     )
     fecha = forms.DateField(widget=forms.DateInput(attrs={'type': 'date'}))
     hora = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}))
@@ -593,6 +604,17 @@ class ProcesarTicketForm(forms.Form):
     tipo_estudio = forms.ModelChoiceField(
         queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
         label='Tipo de estudio',
+    )
+    codigo_igss = forms.CharField(
+        label='Código IGSS',
+        max_length=50,
+        required=False,
+        help_text='Código de orden/autorización que emite IGSS para este estudio.',
+    )
+    medico_tratante = forms.ModelChoiceField(
+        label='Médico tratante',
+        required=False,
+        queryset=MedicoTratante.objects.filter(activo=True).order_by('nombre'),
     )
     motivo = forms.CharField(
         label='Motivo / indicación clínica',

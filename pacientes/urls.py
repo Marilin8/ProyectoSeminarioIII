@@ -18,6 +18,12 @@ urlpatterns = [
     path('modalidades/historial/', views.historial_modalidades, name='historial_modalidades'),
     path('modalidades/<int:modalidad_id>/activar/', views.activar_modalidad, name='activar_modalidad'),
 
+    path('medicos-tratantes/', views.lista_medicos_tratantes, name='lista_medicos_tratantes'),
+    path('medicos-tratantes/nuevo/', views.crear_medico_tratante, name='crear_medico_tratante'),
+    path('medicos-tratantes/<int:medico_id>/editar/', views.editar_medico_tratante, name='editar_medico_tratante'),
+    path('medicos-tratantes/<int:medico_id>/eliminar/', views.eliminar_medico_tratante, name='eliminar_medico_tratante'),
+    path('medicos-tratantes/<int:medico_id>/activar/', views.activar_medico_tratante, name='activar_medico_tratante'),
+
     # Visor web público del estudio (link estilo PACS que se manda por correo:
     # /visor/?studyId=<id>&tab=images&ac=<token base64>).
     path('visor/', views.visor_estudio, name='visor_estudio'),

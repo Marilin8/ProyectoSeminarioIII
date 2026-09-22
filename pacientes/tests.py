@@ -22,6 +22,7 @@ from pacientes.models import (
     HistorialPrecioEstudio,
     ImagenEstudio,
     InformeEstudio,
+    MedicoTratante,
     Modalidad,
     Notificacion,
     OrdenPago,
@@ -1302,6 +1303,23 @@ class AgendarCitaViewTests(TestCase):
         )
         self.assertContains(respuesta, 'ya tiene agendado ese mismo estudio')
 
+    def test_guarda_codigo_igss_y_medico_tratante(self):
+        medico = MedicoTratante.objects.create(nombre='Dr. Juan Pérez')
+        datos = dict(self.datos_formulario, codigo_igss='ORD-12345', medico_tratante=medico.id)
+
+        self.client.post(self._url(), datos)
+
+        cita = Cita.objects.get(paciente__dpi='2020202020202')
+        self.assertEqual(cita.codigo_igss, 'ORD-12345')
+        self.assertEqual(cita.medico_tratante, medico)
+
+    def test_codigo_igss_y_medico_tratante_son_opcionales(self):
+        self.client.post(self._url(), self.datos_formulario)
+
+        cita = Cita.objects.get(paciente__dpi='2020202020202')
+        self.assertEqual(cita.codigo_igss, '')
+        self.assertIsNone(cita.medico_tratante)
+
 
 class PantallaTurnosViewTests(TestCase):
 
@@ -1678,6 +1696,22 @@ class ProcesarTicketEmergenciaViewTests(TestCase):
         ordenes = list(respuesta.context['ordenes'])
         self.assertEqual(len(ordenes), 1)
         self.assertEqual(ordenes[0].cita.paciente, self.paciente)
+
+    def test_guarda_codigo_igss_y_medico_tratante(self):
+        medico = MedicoTratante.objects.create(nombre='Dra. Ana López')
+
+        self.client.post(
+            reverse('procesar_ticket_emergencia', args=[self.ticket.id]),
+            {
+                'tipo_estudio': self.tipo_estudio.id, 'motivo': 'Control.',
+                'codigo_igss': 'IGSS-999', 'medico_tratante': medico.id,
+            },
+        )
+
+        self.ticket.refresh_from_db()
+        cita = self.ticket.cita
+        self.assertEqual(cita.codigo_igss, 'IGSS-999')
+        self.assertEqual(cita.medico_tratante, medico)
 
     def test_no_se_puede_procesar_dos_veces_el_mismo_ticket(self):
         self.client.post(
@@ -3700,3 +3734,71 @@ class ReagendarYCancelarDesdeTurnoTests(TestCase):
 
         self.assertNotContains(pantalla, reverse('reagendar_desde_turno', args=[self.ticket.id]))
         self.assertNotContains(pantalla, reverse('eliminar_cita', args=[self.cita.id]))
+
+
+class MedicoTratanteTests(TestCase):
+    """Catálogo administrable de médicos tratantes: el admin los crea/edita/
+    desactiva, y quedan disponibles para elegir al agendar COEX/Emergencia
+    IGSS o procesar un ticket de Emergencia IGSS."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_medicos', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.client.force_login(self.admin)
+
+    def test_crea_un_medico_tratante(self):
+        respuesta = self.client.post(reverse('crear_medico_tratante'), {'nombre': 'Dr. Mario Solís'})
+
+        self.assertRedirects(respuesta, reverse('lista_medicos_tratantes'))
+        self.assertTrue(MedicoTratante.objects.filter(nombre='Dr. Mario Solís', activo=True).exists())
+
+    def test_no_permite_nombres_duplicados(self):
+        MedicoTratante.objects.create(nombre='Dr. Mario Solís')
+
+        self.client.post(reverse('crear_medico_tratante'), {'nombre': 'Dr. Mario Solís'})
+
+        self.assertEqual(MedicoTratante.objects.filter(nombre='Dr. Mario Solís').count(), 1)
+
+    def test_edita_el_nombre(self):
+        medico = MedicoTratante.objects.create(nombre='Dr. Viejo Nombre')
+
+        respuesta = self.client.post(
+            reverse('editar_medico_tratante', args=[medico.id]), {'nombre': 'Dr. Nombre Corregido'},
+        )
+
+        self.assertRedirects(respuesta, reverse('lista_medicos_tratantes'))
+        medico.refresh_from_db()
+        self.assertEqual(medico.nombre, 'Dr. Nombre Corregido')
+
+    def test_desactivar_y_reactivar(self):
+        medico = MedicoTratante.objects.create(nombre='Dr. Activo')
+
+        self.client.post(reverse('eliminar_medico_tratante', args=[medico.id]))
+        medico.refresh_from_db()
+        self.assertFalse(medico.activo)
+
+        self.client.post(reverse('activar_medico_tratante', args=[medico.id]))
+        medico.refresh_from_db()
+        self.assertTrue(medico.activo)
+
+    def test_solo_admin_puede_administrar_medicos_tratantes(self):
+        recepcion = crear_usuario('recep_medicos', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(recepcion)
+
+        respuesta = self.client.get(reverse('lista_medicos_tratantes'))
+
+        self.assertNotEqual(respuesta.status_code, 200)
+
+    def test_solo_medicos_activos_se_ofrecen_al_agendar(self):
+        activo = MedicoTratante.objects.create(nombre='Dr. Activo')
+        MedicoTratante.objects.create(nombre='Dr. Inactivo', activo=False)
+        recepcion = crear_usuario('recep_medicos_2', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(recepcion)
+        tipo_estudio = TipoEstudio.objects.create(nombre='RX médico tratante')
+        manana = timezone.localdate() + datetime.timedelta(days=1)
+
+        respuesta = self.client.get(
+            f"{reverse('agendar_cita_coex')}?fecha={manana}&hora=10:00",
+        )
+
+        opciones = list(respuesta.context['form'].fields['medico_tratante'].queryset)
+        self.assertEqual(opciones, [activo])
