@@ -59,6 +59,11 @@ urlpatterns = [
         name='ingresar_correo_envio',
     ),
     path(
+        'pacientes/historial/<int:paciente_id>/contacto/',
+        views.editar_contacto_paciente,
+        name='editar_contacto_paciente',
+    ),
+    path(
         'pacientes/historial/estudio/<int:cita_id>/cobrar/',
         views.marcar_cobrado,
         name='marcar_cobrado',

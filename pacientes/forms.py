@@ -562,6 +562,29 @@ class IngresarCorreoEnvioForm(forms.Form):
         return correo
 
 
+class EditarContactoPacienteForm(forms.Form):
+    """Usado desde "Estudios realizados" para corregir el teléfono o el
+    correo de un paciente sin salir de esa pantalla -- por ejemplo cuando
+    el correo estaba mal escrito y por eso el envío (automático o manual)
+    no llegó. Ambos campos son opcionales: se puede corregir uno solo."""
+
+    telefono = forms.CharField(max_length=20, required=False, validators=[validar_telefono_pais])
+    correo = forms.EmailField(
+        label='Correo electrónico', max_length=254, required=False,
+        widget=forms.EmailInput(attrs={
+            'placeholder': 'paciente@correo.com',
+            'autocomplete': 'email',
+        }),
+    )
+
+    def clean_correo(self):
+        correo = self.cleaned_data.get('correo', '').strip().lower()
+        if correo:
+            validar_dominio_correo(correo)
+            validar_correo_existente(correo)
+        return correo
+
+
 class ProcesarTicketForm(forms.Form):
     """Convierte un ticket en espera directamente en una orden de trabajo
     para el técnico (se salta la revisión del radiólogo: el paciente ya

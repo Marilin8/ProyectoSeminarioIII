@@ -40,6 +40,7 @@ from .forms import (
     CorregirEstudioForm,
     CrearTipoEstudioForm,
     CrearOrdenPagoForm,
+    EditarContactoPacienteForm,
     EXTENSIONES_IMAGEN_DIRECTA,
     GenerarOrdenForm,
     IngresarCorreoEnvioForm,
@@ -791,6 +792,38 @@ def ingresar_correo_envio(request, cita_id):
         'form': form,
         'cita': cita,
     })
+
+
+@login_required
+@user_passes_test(es_recepcionista)
+@require_POST
+def editar_contacto_paciente(request, paciente_id):
+    """Corrige el teléfono y/o el correo del paciente desde "Estudios
+    realizados", sin salir de esa pantalla -- para el caso de un correo mal
+    escrito (o que faltaba) que hizo fallar el envío automático o manual.
+    No envía nada por sí sola: el botón de enviar/reenviar sigue aparte,
+    para que quien corrige revise antes de mandar."""
+    paciente = get_object_or_404(Paciente, id=paciente_id)
+    form = EditarContactoPacienteForm(request.POST)
+    if form.is_valid():
+        cd = form.cleaned_data
+        cambiados = [
+            campo for campo in ('telefono', 'correo')
+            if cd[campo] and cd[campo] != (getattr(paciente, campo) or '')
+        ]
+        for campo in cambiados:
+            setattr(paciente, campo, cd[campo])
+        if cambiados:
+            paciente.save(update_fields=cambiados)
+            messages.success(request, f'Datos de contacto de {paciente} actualizados.')
+        else:
+            messages.info(request, 'No se cargó ningún dato nuevo.')
+    else:
+        avisar_si_correo_no_existe(request, form)
+        for campo, errores in form.errors.items():
+            for error in errores:
+                messages.error(request, error)
+    return redirect('historial_paciente', paciente_id=paciente.id)
 
 
 # --- Caja: cobro de estudios ----------------------------------------------

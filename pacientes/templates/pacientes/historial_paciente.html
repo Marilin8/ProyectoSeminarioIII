@@ -17,6 +17,25 @@
         (Expediente: {{ paciente.expediente|default:'—' }} &middot; DPI: {{ paciente.dpi }})<br>
         {% if edad is not None %}{{ edad }} anios{% else %}Edad no registrada{% endif %}, {{ paciente.get_sexo_display }}
         {% if paciente.telefono %} &mdash; Tel: {{ paciente.telefono }}{% endif %}
+        &mdash; Correo: {{ paciente.correo|default:'No registrado' }}
+        <details style="display:inline-block;margin-left:0.5rem;vertical-align:middle;">
+            <summary class="btn btn-outline btn-sm" style="display:inline-block;cursor:pointer;">
+                Editar teléfono / correo
+            </summary>
+            <form method="post" action="{% url 'editar_contacto_paciente' paciente_id=paciente.id %}"
+                  class="flex flex-wrap gap-2" style="margin-top:0.5rem;align-items:flex-end;">
+                {% csrf_token %}
+                <div>
+                    <label for="contacto-telefono" style="margin-top:0;">Teléfono</label>
+                    <input type="text" id="contacto-telefono" name="telefono" value="{{ paciente.telefono|default:'' }}">
+                </div>
+                <div>
+                    <label for="contacto-correo" style="margin-top:0;">Correo electrónico</label>
+                    <input type="email" id="contacto-correo" name="correo" value="{{ paciente.correo|default:'' }}">
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">Guardar</button>
+            </form>
+        </details>
     </div>
 
     {% if citas %}
@@ -85,15 +104,17 @@
                                 <span class="badge badge-success" style="margin-left:0.5rem;">HOY</span>
                             {% endif %}
                             {% if cita.estado != 'procesada' %}
-                                <span class="badge badge-warning" style="margin-left:0.5rem;">Informe pendiente</span>
+                                <span class="badge badge-warning" style="margin-left:0.5rem;">Pendiente de informe</span>
                             {% elif not cita.orden_trabajo.resultados_enviados_en %}
                                 <span class="badge badge-warning" style="margin-left:0.5rem;">No enviado</span>
+                            {% else %}
+                                <span class="badge badge-success" style="margin-left:0.5rem;">Enviado</span>
                             {% endif %}
                             {% if not cita.orden_trabajo.imagenes_completas %}
-                                <span class="badge badge-warning" style="margin-left:0.5rem;">Imágenes pendientes</span>
+                                <span class="badge badge-warning" style="margin-left:0.5rem;">Pendiente de imágenes</span>
                             {% endif %}
                             {% if cita.cobro and not cita.cobro.pagado %}
-                                <span class="badge badge-danger" style="margin-left:0.5rem;">Cobro pendiente</span>
+                                <span class="badge badge-danger" style="margin-left:0.5rem;">Pendiente de pago</span>
                             {% elif cita.cobro.pagado %}
                                 <span class="badge badge-success" style="margin-left:0.5rem;">Pagado</span>
                             {% endif %}

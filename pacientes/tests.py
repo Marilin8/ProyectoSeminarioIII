@@ -2443,7 +2443,7 @@ class CajaTests(TestCase):
         html = self.client.get(
             reverse('historial_paciente', args=[paciente.id])
         ).content.decode('utf-8')
-        self.assertIn('Cobro pendiente', html)
+        self.assertIn('Pendiente de pago', html)
         self.assertIn('tiene un cobro pendiente', html)
         self.assertIn('<button type="button" class="btn btn-primary btn-sm" disabled', html)
         self.assertNotIn(f"{reverse('enviar_estudio', args=[cita.id])}", html)
@@ -2493,8 +2493,8 @@ class HistorialConEstudiosEnProcesoTests(TestCase):
 
         html = self.client.get(reverse('historial_paciente', args=[paciente.id])).content.decode('utf-8')
 
-        self.assertIn('Informe pendiente', html)
-        self.assertIn('Imágenes pendientes', html)
+        self.assertIn('Pendiente de informe', html)
+        self.assertIn('Pendiente de imágenes', html)
         self.assertIn('Estudio en proceso: todavía no se puede enviar.', html)
         self.assertNotIn(f"{reverse('enviar_estudio', args=[cita.id])}", html)
 
@@ -2513,8 +2513,63 @@ class HistorialConEstudiosEnProcesoTests(TestCase):
 
         html = self.client.get(reverse('historial_paciente', args=[paciente.id])).content.decode('utf-8')
 
-        self.assertNotIn('Informe pendiente', html)
-        self.assertNotIn('Imágenes pendientes', html)
+        self.assertNotIn('Pendiente de informe', html)
+        self.assertNotIn('Pendiente de imágenes', html)
+
+
+class EditarContactoPacienteTests(TestCase):
+    """Desde "Estudios realizados" se puede corregir el teléfono y/o el
+    correo del paciente sin salir de esa pantalla -- por ejemplo cuando el
+    correo estaba mal escrito y por eso no llegó el envío."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_contacto', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(self.recepcion)
+        self.paciente = crear_paciente(
+            dpi='8008008008001', telefono='55551234', correo='viejo@example.com',
+        )
+
+    def test_actualiza_telefono_y_correo(self):
+        respuesta = self.client.post(
+            reverse('editar_contacto_paciente', args=[self.paciente.id]),
+            {'telefono': '55559999', 'correo': 'nuevo@example.com'},
+        )
+
+        self.assertRedirects(respuesta, reverse('historial_paciente', args=[self.paciente.id]))
+        self.paciente.refresh_from_db()
+        self.assertEqual(self.paciente.telefono, '55559999')
+        self.assertEqual(self.paciente.correo, 'nuevo@example.com')
+
+    def test_se_puede_corregir_solo_el_correo(self):
+        self.client.post(
+            reverse('editar_contacto_paciente', args=[self.paciente.id]),
+            {'telefono': '', 'correo': 'corregido@example.com'},
+        )
+
+        self.paciente.refresh_from_db()
+        self.assertEqual(self.paciente.telefono, '55551234')
+        self.assertEqual(self.paciente.correo, 'corregido@example.com')
+
+    def test_correo_con_dominio_invalido_no_se_guarda(self):
+        respuesta = self.client.post(
+            reverse('editar_contacto_paciente', args=[self.paciente.id]),
+            {'telefono': '', 'correo': 'roto@dominio-invalido'},
+            follow=True,
+        )
+
+        self.paciente.refresh_from_db()
+        self.assertEqual(self.paciente.correo, 'viejo@example.com')
+        mensajes = [str(m) for m in respuesta.context['messages']]
+        self.assertTrue(any('correo' in m.lower() for m in mensajes))
+
+    def test_el_formulario_aparece_en_estudios_realizados(self):
+        crear_cita(self.recepcion, paciente=self.paciente, estado=Cita.ESTADO_EN_PROCESO)
+
+        html = self.client.get(
+            reverse('historial_paciente', args=[self.paciente.id])
+        ).content.decode('utf-8')
+
+        self.assertIn(reverse('editar_contacto_paciente', args=[self.paciente.id]), html)
 
 
 class EnvioAutomaticoEstudioTests(TestCase):
