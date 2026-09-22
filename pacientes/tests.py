@@ -2465,6 +2465,171 @@ class CajaTests(TestCase):
         self.assertFalse(_cobro_bloquea_envio(cita))
 
 
+class HistorialConEstudiosEnProcesoTests(TestCase):
+    """"Estudios realizados" ahora también incluye los que todavía están en
+    proceso, con etiquetas de qué les falta (pago, imágenes, informe), para
+    que recepción les pueda hacer seguimiento sin esperar a que se
+    completen (ver ESTADOS_HISTORIAL en views.py)."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_en_proceso', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(self.recepcion)
+
+    def test_cita_en_proceso_aparece_en_el_listado_de_pacientes(self):
+        paciente = crear_paciente(dpi='6006006006001')
+        crear_cita(self.recepcion, paciente=paciente, estado=Cita.ESTADO_EN_PROCESO)
+
+        respuesta = self.client.get(reverse('historial_pacientes'))
+        encontrados = [p.id for p in respuesta.context['pacientes']]
+        self.assertIn(paciente.id, encontrados)
+
+    def test_cita_en_proceso_muestra_las_etiquetas_de_lo_que_falta_y_oculta_el_envio(self):
+        paciente = crear_paciente(dpi='6006006006002')
+        cita = crear_cita(self.recepcion, paciente=paciente, estado=Cita.ESTADO_EN_PROCESO)
+        OrdenTrabajo.objects.create(
+            cita=cita, motivo='x', creada_por=self.recepcion,
+            validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO,
+        )
+
+        html = self.client.get(reverse('historial_paciente', args=[paciente.id])).content.decode('utf-8')
+
+        self.assertIn('Informe pendiente', html)
+        self.assertIn('Imágenes pendientes', html)
+        self.assertIn('Estudio en proceso: todavía no se puede enviar.', html)
+        self.assertNotIn(f"{reverse('enviar_estudio', args=[cita.id])}", html)
+
+    def test_cita_procesada_no_muestra_informe_pendiente_ni_imagenes_pendientes(self):
+        paciente = crear_paciente(dpi='6006006006003')
+        cita = crear_cita(self.recepcion, paciente=paciente, estado=Cita.ESTADO_PROCESADA)
+        orden = OrdenTrabajo.objects.create(
+            cita=cita, motivo='x', creada_por=self.recepcion,
+            validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO,
+        )
+        ImagenEstudio.objects.create(
+            orden=orden, tipo_estudio=cita.tipo_estudio,
+            archivo=SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+            subida_por=self.recepcion,
+        )
+
+        html = self.client.get(reverse('historial_paciente', args=[paciente.id])).content.decode('utf-8')
+
+        self.assertNotIn('Informe pendiente', html)
+        self.assertNotIn('Imágenes pendientes', html)
+
+
+class EnvioAutomaticoEstudioTests(TestCase):
+    """Para convenio privado, con correo ya registrado, el estudio se envía
+    solo apenas se cumplen las 3 condiciones -- pago, imágenes e informe --
+    sin que recepción tenga que apretar "Enviar estudio" a mano (ver
+    _intentar_envio_automatico en views.py)."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_auto', rol=Usuario.ROL_RECEPCIONISTA)
+        self.caja = crear_usuario('caja_auto', rol=Usuario.ROL_RECEPCIONISTA, puede_operar_caja=True)
+        self.radiologo = crear_usuario('rad_auto', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+
+    def _preparar_cita(self, dpi, correo='paciente@example.com', convenio=Cita.CONVENIO_PRIVADO):
+        paciente = crear_paciente(dpi=dpi, correo=correo)
+        cita = crear_cita(
+            self.recepcion, paciente=paciente, convenio=convenio, estado=Cita.ESTADO_EN_PROCESO,
+        )
+        orden = OrdenTrabajo.objects.create(
+            cita=cita, motivo='x', creada_por=self.recepcion,
+            validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO,
+        )
+        ImagenEstudio.objects.create(
+            orden=orden, tipo_estudio=cita.tipo_estudio,
+            archivo=SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+            subida_por=self.recepcion,
+        )
+        return cita, orden
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_se_envia_solo_al_completar_el_informe_si_ya_estaba_pagado(self):
+        cita, orden = self._preparar_cita(dpi='7007007007001')
+        Cobro.objects.create(cita=cita).marcar_pagado(self.caja)
+
+        self.client.force_login(self.radiologo)
+        self.client.post(reverse('adjuntar_informe', args=[cita.id]), {
+            f'texto_{cita.tipo_estudio.id}': 'Sin hallazgos.',
+        })
+
+        cita.refresh_from_db()
+        orden.refresh_from_db()
+        self.assertEqual(cita.estado, Cita.ESTADO_PROCESADA)
+        self.assertIsNotNone(orden.resultados_enviados_en)
+        self.assertEqual(len(mail.outbox), 1)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_se_envia_solo_al_marcar_cobrado_si_el_informe_ya_estaba_completo(self):
+        cita, orden = self._preparar_cita(dpi='7007007007002')
+        Cobro.objects.create(cita=cita)
+
+        self.client.force_login(self.radiologo)
+        self.client.post(reverse('adjuntar_informe', args=[cita.id]), {
+            f'texto_{cita.tipo_estudio.id}': 'Sin hallazgos.',
+        })
+        orden.refresh_from_db()
+        self.assertIsNone(orden.resultados_enviados_en)  # completo, pero todavía no pagado
+
+        self.client.force_login(self.caja)
+        self.client.post(reverse('marcar_cobrado', args=[cita.id]), {
+            'forma_pago': Cobro.FORMA_EFECTIVO, 'numero_boleta': 'B-100', 'notas': '',
+        })
+
+        orden.refresh_from_db()
+        self.assertIsNotNone(orden.resultados_enviados_en)
+        self.assertEqual(len(mail.outbox), 1)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_no_se_envia_si_el_paciente_no_tiene_correo(self):
+        cita, orden = self._preparar_cita(dpi='7007007007003', correo='')
+        Cobro.objects.create(cita=cita).marcar_pagado(self.caja)
+
+        self.client.force_login(self.radiologo)
+        self.client.post(reverse('adjuntar_informe', args=[cita.id]), {
+            f'texto_{cita.tipo_estudio.id}': 'Sin hallazgos.',
+        })
+
+        orden.refresh_from_db()
+        self.assertIsNone(orden.resultados_enviados_en)
+        self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_no_se_envia_automatico_para_convenio_coex(self):
+        cita, orden = self._preparar_cita(dpi='7007007007004', convenio=Cita.CONVENIO_COEX)
+        Cobro.objects.create(cita=cita).marcar_pagado(self.caja)
+
+        self.client.force_login(self.radiologo)
+        self.client.post(reverse('adjuntar_informe', args=[cita.id]), {
+            f'texto_{cita.tipo_estudio.id}': 'Sin hallazgos.',
+        })
+
+        orden.refresh_from_db()
+        self.assertIsNone(orden.resultados_enviados_en)
+        self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_no_reenvia_si_ya_estaba_enviado(self):
+        from django.test import RequestFactory
+
+        from pacientes.views import _intentar_envio_automatico
+
+        cita, orden = self._preparar_cita(dpi='7007007007005')
+        cita.estado = Cita.ESTADO_PROCESADA
+        cita.save(update_fields=['estado'])
+        orden.resultados_enviados_en = timezone.now()
+        orden.save(update_fields=['resultados_enviados_en'])
+        Cobro.objects.create(cita=cita).marcar_pagado(self.caja)
+
+        request = RequestFactory().get('/')
+        request.user = self.caja
+        enviado = _intentar_envio_automatico(request, cita)
+
+        self.assertFalse(enviado)
+        self.assertEqual(len(mail.outbox), 0)
+
+
 class EstudioExtraTests(TestCase):
     """El radiólogo avisa que le realizó al paciente un estudio extra al
     agendado (solo aplica a Privado): sube el total que ve Caja y le

@@ -909,10 +909,12 @@ class OrdenTrabajo(models.Model):
     )
     creada_en = models.DateTimeField(auto_now_add=True)
 
-    # El envío de resultados al paciente ya no ocurre automáticamente cuando
-    # la radióloga adjunta el informe: ahora lo dispara la recepcionista
-    # manualmente desde "Estudios realizados" (botón "Enviar estudio").
-    # Este campo queda null hasta que efectivamente se envía.
+    # Para convenio privado con correo ya registrado, el envío se dispara
+    # solo apenas se cumplen pago + imágenes + informe completos (ver
+    # _intentar_envio_automatico en views.py); para los demás casos (u
+    # otros convenios) lo sigue disparando la recepcionista a mano desde
+    # "Estudios realizados" (botón "Enviar estudio"). Este campo queda
+    # null hasta que efectivamente se envía.
     resultados_enviados_en = models.DateTimeField(null=True, blank=True)
 
     # Token opaco para el visor web público del estudio (se manda en el

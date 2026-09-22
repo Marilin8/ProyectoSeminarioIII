@@ -504,12 +504,18 @@ def radiologos_por_estudio(request):
     })
 
 
+ESTADOS_HISTORIAL = (Cita.ESTADO_EN_PROCESO, Cita.ESTADO_PROCESADA)
+
+
 @login_required
 @user_passes_test(es_recepcionista)
 def historial_pacientes(request):
-    """Listado de pacientes con al menos un estudio ya realizado (informe
-    entregado), con búsqueda por nombre/apellido, DPI o N° de expediente y
-    filtros por convenio, fecha y tipo de estudio. Los que todavía tienen datos
+    """Listado de pacientes con al menos un estudio en proceso o ya
+    realizado (informe entregado), con búsqueda por nombre/apellido, DPI o
+    N° de expediente y filtros por convenio, fecha y tipo de estudio. Los
+    estudios en proceso se muestran con sus etiquetas de qué falta (pago,
+    imágenes, informe) para que recepción pueda seguirles el rastro sin
+    tener que esperar a que se completen. Los que todavía tienen datos
     pendientes (sexo/teléfono/fecha de nacimiento) van primero, con un
     botón para completarlos; a los demás se les muestra de qué
     convenio(s) son sus estudios (COEX, Privado, Emergencia IGSS)."""
@@ -520,7 +526,7 @@ def historial_pacientes(request):
     filtro_estado_pago = (request.GET.get('estado_pago') or '').strip()
     filtro_agrupacion = (request.GET.get('agrupacion') or '').strip()
 
-    citas_procesadas = Cita.objects.filter(estado=Cita.ESTADO_PROCESADA)
+    citas_procesadas = Cita.objects.filter(estado__in=ESTADOS_HISTORIAL)
     if filtro_convenio:
         citas_procesadas = citas_procesadas.filter(convenio=filtro_convenio)
     if filtro_fecha:
@@ -564,7 +570,7 @@ def historial_pacientes(request):
         # que .distinct() no junte filas de un mismo convenio con distinta
         # fecha, mostrando el mismo convenio repetido para un paciente.
         filas = (
-            Cita.objects.filter(paciente__in=pacientes, estado=Cita.ESTADO_PROCESADA)
+            Cita.objects.filter(paciente__in=pacientes, estado__in=ESTADOS_HISTORIAL)
             .order_by().values_list('paciente_id', 'convenio').distinct()
         )
         for paciente_id, convenio in filas:
@@ -589,7 +595,7 @@ def historial_pacientes(request):
         'filtro_estado_pago': filtro_estado_pago,
         'filtro_agrupacion': filtro_agrupacion,
         'tipos_estudio': TipoEstudio.objects.filter(
-            id__in=Cita.objects.filter(estado=Cita.ESTADO_PROCESADA).values('tipo_estudio_id')
+            id__in=Cita.objects.filter(estado__in=ESTADOS_HISTORIAL).values('tipo_estudio_id')
         ).order_by('nombre'),
     }
 
@@ -604,13 +610,14 @@ def historial_pacientes(request):
 @login_required
 @user_passes_test(es_recepcionista)
 def historial_paciente(request, paciente_id):
-    """Estudios ya realizados (con informe) de un paciente, del más
-    reciente al más antiguo."""
+    """Estudios en proceso o ya realizados de un paciente, del más
+    reciente al más antiguo. Los que todavía están en proceso se muestran
+    con etiquetas de qué les falta (pago, imágenes, informe)."""
     paciente = get_object_or_404(Paciente, id=paciente_id)
     filtro_estado_pago = (request.GET.get('estado_pago') or '').strip()
     filtro_agrupacion = (request.GET.get('agrupacion') or '').strip()
     citas = (
-        Cita.objects.filter(paciente=paciente, estado=Cita.ESTADO_PROCESADA)
+        Cita.objects.filter(paciente=paciente, estado__in=ESTADOS_HISTORIAL)
         .select_related('tipo_estudio', 'orden_trabajo', 'cobro')
         .prefetch_related('detalles_orden_pago__orden_pago__combo')
         .order_by('-fecha', '-hora')
@@ -698,15 +705,41 @@ def _enviar_estudio_y_registrar(request, cita, orden):
     messages.success(request, f'Estudio enviado a {cita.paciente} ({cita.paciente.correo}).')
 
 
+def _intentar_envio_automatico(request, cita):
+    """Envía el estudio sin que recepción tenga que apretar el botón,
+    únicamente para convenio privado: cuando ya está pagado, tiene todas
+    las imágenes y el informe completo (cita en ESTADO_PROCESADA), y el
+    paciente ya tenía un correo registrado de antes (si no lo tiene, no se
+    le pide acá -- sigue quedando para que recepción lo envíe a mano una
+    vez lo complete). Se llama desde los tres lugares donde se puede
+    cumplir la última condición pendiente: adjuntar_informe, marcar_cobrado
+    y pagar_orden_pago. Reutiliza _enviar_estudio_y_registrar para que
+    quede igual de registrado (bitácora, mensaje, marca de enviado) que un
+    envío manual. Devuelve True si efectivamente se envió."""
+    if cita.convenio != Cita.CONVENIO_PRIVADO or cita.estado != Cita.ESTADO_PROCESADA:
+        return False
+    if not cita.paciente.correo:
+        return False
+    orden = OrdenTrabajo.objects.filter(cita=cita).first()
+    if not orden or orden.resultados_enviados_en or not orden.imagenes_completas:
+        return False
+    if _cobro_bloquea_envio(cita):
+        return False
+    _enviar_estudio_y_registrar(request, cita, orden)
+    return True
+
+
 @login_required
 @user_passes_test(es_recepcionista)
 @require_POST
 def enviar_estudio(request, cita_id):
-    """Envía los resultados del estudio al correo del paciente. Antes esto
-    pasaba automático cuando la radióloga adjuntaba el informe; ahora lo
-    dispara la recepcionista a mano desde "Estudios realizados", una vez
-    que quiere confirmar el envío (botón "Enviar estudio"). Si el paciente
-    todavía no tiene correo registrado, primero la manda a completarlo."""
+    """Envía los resultados del estudio al correo del paciente, a mano
+    desde "Estudios realizados" (botón "Enviar estudio"/"Reenviar
+    estudio"). Para convenio privado con correo ya registrado esto suele
+    pasar solo (ver _intentar_envio_automatico); este botón sigue
+    existiendo para los demás casos y para reenviar o completar el correo
+    cuando falta. Si el paciente todavía no tiene correo registrado,
+    primero la manda a completarlo."""
     cita = get_object_or_404(Cita, id=cita_id, estado=Cita.ESTADO_PROCESADA)
     orden = OrdenTrabajo.objects.filter(cita=cita).first()
     if not orden:
@@ -1012,14 +1045,18 @@ def pagar_orden_pago(request, orden_id):
         orden.save(update_fields=[
             'numero_boleta', 'comprobante_bancario', 'estado', 'pagado_por', 'pagado_en',
         ])
+        citas_pagadas = []
         for detalle in orden.detalles.select_related('cita'):
             cobro, _ = Cobro.objects.get_or_create(cita=detalle.cita)
             cobro.forma_pago = form.cleaned_data['forma_pago']
             cobro.numero_boleta = orden.numero_boleta
             cobro.comprobante_bancario = orden.comprobante_bancario.name
             cobro.marcar_pagado(request.user, notas=form.cleaned_data['notas'])
+            citas_pagadas.append(detalle.cita)
 
     messages.success(request, f'Orden de pago #{orden.id} confirmada y estudios liberados.')
+    for cita in citas_pagadas:
+        _intentar_envio_automatico(request, cita)
     return redirect('pagos_pendientes')
 
 
@@ -1362,6 +1399,7 @@ def marcar_cobrado(request, cita_id):
         descripcion=f'Marcó como cobrado el estudio de {cita.paciente} (cita #{cita.id}).',
     )
     messages.success(request, f'Estudio de {cita.paciente} marcado como cobrado.')
+    _intentar_envio_automatico(request, cita)
     return redirect('pagos_pendientes')
 
 
@@ -2874,7 +2912,8 @@ def adjuntar_informe(request, cita_id):
                 cita.estado = Cita.ESTADO_PROCESADA
                 cita.save(update_fields=['estado'])
                 _notificar_estudio_completado(cita)
-                messages.success(request, f'Informe completo para {cita.paciente}. Ya se puede enviar al paciente.')
+                if not _intentar_envio_automatico(request, cita):
+                    messages.success(request, f'Informe completo para {cita.paciente}. Ya se puede enviar al paciente.')
             else:
                 messages.success(
                     request,
