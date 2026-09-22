@@ -22,13 +22,11 @@
         .orden-agrupada-cabecera { display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; margin-bottom:1rem; }
         .orden-agrupada h3 { margin:0.15rem 0 0.25rem; }
         .orden-agrupada .eyebrow { color:var(--primary); font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
-        .check-agrupar { display:inline-flex; align-items:center; gap:.4rem; cursor:pointer; padding:.3rem .6rem; border:1px solid #fde68a; border-radius:999px; background:#fffbeb; color:#92400e; font-size:.82rem; font-weight:600; }
-        .check-agrupar:hover { border-color:#f59e0b; }
-        .orden-agrupada-opciones { display:grid; grid-template-columns:minmax(12rem,1fr) minmax(16rem,2fr) auto; gap:.7rem; align-items:end; margin-top:1rem; }
-        .orden-agrupada-opciones label { display:flex; flex-direction:column; gap:.3rem; font-size:.76rem; font-weight:600; color:var(--text-muted); }
+        .orden-agrupada-opciones { display:flex; flex-wrap:wrap; gap:.7rem; align-items:end; margin-top:1rem; }
+        .orden-agrupada-opciones label { display:flex; flex-direction:column; gap:.3rem; font-size:.76rem; font-weight:600; color:var(--text-muted); min-width:9rem; }
         .orden-resumen { margin-top:1rem; padding:.8rem 1rem; border-radius:var(--radius); background:#eff6ff; border:1px solid #bfdbfe; color:#1e3a8a; }
         .orden-resumen div { margin-top:.25rem; font-size:.85rem; }
-        @media (max-width: 800px) { .orden-agrupada-opciones { grid-template-columns:1fr; } .orden-agrupada-cabecera { flex-direction:column; } }
+        @media (max-width: 800px) { .orden-agrupada-cabecera { flex-direction:column; } }
     </style>
 {% endblock %}
 
@@ -82,39 +80,63 @@
         <a class="btn btn-outline btn-sm" href="{% if convenio == 'emergencia_igss' %}{% url 'pagos_pendientes_igss' %}{% else %}{% url 'pagos_pendientes' %}{% endif %}">Limpiar</a>
     </form>
 
-    {% if convenio == 'emergencia_igss' %}
-        <form method="post" action="{% url 'crear_orden_pago' %}" class="card mb-2 orden-agrupada" id="form-orden-agrupada">
-            {% csrf_token %}
-            <input type="hidden" name="combo" id="combo-seleccionado" value="">
+    {% if convenio == 'emergencia_igss' or convenio == 'coex' %}
+        <div class="card mb-2 orden-agrupada">
             <div class="orden-agrupada-cabecera">
                 <div>
                     <span class="eyebrow">Cobro por convenio</span>
                     <h3>Crear orden agrupada</h3>
-                    <p class="text-muted text-sm">Marcá "Agregar a la orden" en los estudios de la lista de abajo para agruparlos acá y adjuntar una sola boleta global.</p>
-                </div>
-                <span class="badge badge-info">Emergencia IGSS</span>
-            </div>
-            <div id="resumen-orden" class="orden-resumen">
-                <div id="resumen-vacio" class="text-muted text-sm">
-                    {% if cobros_para_orden %}
-                        Todavía no seleccionaste ningún estudio. Marcalo en la lista de abajo.
-                    {% else %}
-                        No hay estudios pendientes para agrupar en este momento.
-                    {% endif %}
-                </div>
-                <div id="resumen-contenido" hidden>
-                    <strong>Resumen de la orden</strong>
-                    <ul id="resumen-lista" style="margin:.3rem 0 0;padding-left:1.15rem;"></ul>
-                    <div id="resumen-totales"></div>
+                    <p class="text-muted text-sm">
+                        Agrupa TODOS los estudios pendientes de cobro de un convenio (COEX o Emergencia IGSS)
+                        en un rango de fechas en una sola orden de pago — por ejemplo, la liquidación semanal
+                        de un convenio institucional que cubre muchos pacientes distintos.
+                    </p>
                 </div>
             </div>
-            <div class="orden-agrupada-opciones">
-                <label>Notas
-                    <input type="text" name="notas" placeholder="Ej.: pago global de convenio">
+            <form method="get" class="orden-agrupada-opciones">
+                <label>Convenio
+                    <select name="orden_convenio">
+                        <option value="coex" {% if orden_convenio == 'coex' %}selected{% endif %}>COEX</option>
+                        <option value="emergencia_igss" {% if orden_convenio == 'emergencia_igss' %}selected{% endif %}>Emergencia IGSS</option>
+                    </select>
                 </label>
-                <button type="submit" class="btn btn-primary" id="crear-orden">Crear orden de pago</button>
+                <label>Desde
+                    <input type="date" name="orden_desde" value="{{ orden_desde|date:'Y-m-d' }}">
+                </label>
+                <label>Hasta
+                    <input type="date" name="orden_hasta" value="{{ orden_hasta|date:'Y-m-d' }}">
+                </label>
+                <button type="submit" class="btn btn-outline">Ver estudios a agrupar</button>
+            </form>
+            <div id="resumen-orden" class="orden-resumen">
+                {% if resumen_orden_rango %}
+                    {% if resumen_orden_rango.cantidad %}
+                        <div>
+                            <strong>{{ resumen_orden_rango.cantidad }}</strong> estudio{{ resumen_orden_rango.cantidad|pluralize }}
+                            de <strong>{{ resumen_orden_rango.pacientes }}</strong> paciente{{ resumen_orden_rango.pacientes|pluralize }}
+                            — Total: <strong>Q{{ resumen_orden_rango.total|floatformat:2 }}</strong>
+                        </div>
+                        <form method="post" action="{% url 'crear_orden_pago' %}" style="margin-top:0.6rem;"
+                              data-confirmar="¿Crear una orden de pago agrupando {{ resumen_orden_rango.cantidad }} estudio{{ resumen_orden_rango.cantidad|pluralize }} de {{ resumen_orden_rango.pacientes }} paciente{{ resumen_orden_rango.pacientes|pluralize }} por un total de Q{{ resumen_orden_rango.total|floatformat:2 }}?">
+                            {% csrf_token %}
+                            <input type="hidden" name="convenio" value="{{ orden_convenio }}">
+                            <input type="hidden" name="desde" value="{{ orden_desde|date:'Y-m-d' }}">
+                            <input type="hidden" name="hasta" value="{{ orden_hasta|date:'Y-m-d' }}">
+                            <div class="orden-agrupada-opciones" style="margin-top:0;">
+                                <label>Notas
+                                    <input type="text" name="notas" placeholder="Opcional: se completa solo con el convenio y las fechas">
+                                </label>
+                                <button type="submit" class="btn btn-primary">Crear orden de pago</button>
+                            </div>
+                        </form>
+                    {% else %}
+                        <div class="text-muted text-sm">No hay estudios pendientes para agrupar con ese convenio y rango de fechas.</div>
+                    {% endif %}
+                {% else %}
+                    <div class="text-muted text-sm">Elegí convenio y rango de fechas, y hacé clic en "Ver estudios a agrupar".</div>
+                {% endif %}
             </div>
-        </form>
+        </div>
     {% endif %}
 
     {% if ordenes_pago %}
@@ -122,13 +144,16 @@
             <h3 style="margin-top:0;">Órdenes agrupadas pendientes de boleta</h3>
             {% for orden in ordenes_pago %}
                 <div style="border-top:1px solid var(--border);padding:0.75rem 0;">
-                    <strong>Orden #{{ orden.id }} · {{ orden.paciente.nombre }} {{ orden.paciente.apellido }}</strong>
-                    <div class="meta">{{ orden.get_convenio_display }} · Total Q{{ orden.total|floatformat:2 }}{% if orden.combo %} · {{ orden.combo.nombre }}{% endif %}</div>
-                    <div class="meta">
-                        {% for detalle in orden.detalles.all %}
-                            {{ detalle.tipo_estudio.nombre }} (Q{{ detalle.total|floatformat:2 }}){% if not forloop.last %}, {% endif %}
-                        {% endfor %}
-                    </div>
+                    <strong>
+                        Orden #{{ orden.id }} ·
+                        {% if orden.paciente %}{{ orden.paciente.nombre }} {{ orden.paciente.apellido }}{% else %}Varios pacientes{% endif %}
+                    </strong>
+                    <div class="meta">{{ orden.get_convenio_display }} · {{ orden.detalles.count }} estudio{{ orden.detalles.count|pluralize }} · Total Q{{ orden.total|floatformat:2 }}{% if orden.combo %} · {{ orden.combo.nombre }}{% endif %}</div>
+                    {% if orden.notas %}<div class="meta">{{ orden.notas }}</div>{% endif %}
+                    <a class="btn btn-outline btn-sm" style="margin-top:0.4rem;" href="{% url 'orden_pago_pdf' orden_id=orden.id %}" target="_blank" rel="noopener">
+                        <svg width="14" height="14"><use href="#i-file-text"/></svg>
+                        Ver listado
+                    </a>
                     <form method="post" action="{% url 'pagar_orden_pago' orden_id=orden.id %}" enctype="multipart/form-data" class="form-cobrar" style="margin-top:0.5rem;">
                         {% csrf_token %}
                         <select name="forma_pago" required>
@@ -239,16 +264,9 @@
                             </button>
                         </form>
                     {% else %}
-                        <label class="check-agrupar">
-                            <input type="checkbox" name="cita_ids" value="{{ cobro.cita_id }}"
-                                   form="form-orden-agrupada"
-                                   data-tipo-estudio="{{ cobro.cita.tipo_estudio_id }}"
-                                   data-precio="{{ cobro.cita.precio }}"
-                                   data-convenio="{{ cobro.cita.convenio }}"
-                                   data-paciente="{{ cobro.cita.paciente.nombre }} {{ cobro.cita.paciente.apellido }}"
-                                   data-estudio="{{ cobro.cita.tipo_estudio.nombre }}">
-                            Agregar a la orden agrupada
-                        </label>
+                        <span class="text-muted text-sm">
+                            Se agrupa con "Crear orden agrupada" arriba (por convenio y rango de fechas).
+                        </span>
                     {% endif %}
                 </div>
             </div>
@@ -276,79 +294,14 @@
         </div>
     {% endif %}
 
-    {{ combos_preview|json_script:"combos-preview" }}
     <script>
-        (function () {
-            // Los checkboxes viven en la lista de abajo (fuera del <form>) y
-            // se asocian a él con el atributo form="form-orden-agrupada".
-            var form = document.getElementById('form-orden-agrupada');
-            if (!form) { return; }
-            var casillas = document.querySelectorAll('input[name="cita_ids"][form="form-orden-agrupada"]');
-            var resumenVacio = document.getElementById('resumen-vacio');
-            var resumenContenido = document.getElementById('resumen-contenido');
-            var resumenLista = document.getElementById('resumen-lista');
-            var resumenTotales = document.getElementById('resumen-totales');
-            var comboSeleccionado = document.getElementById('combo-seleccionado');
-            var confirmada = false;
-            var combos = JSON.parse(document.getElementById('combos-preview').textContent || '[]');
-
-            function actualizarResumen() {
-                var seleccionadas = Array.prototype.filter.call(casillas, function (casilla) {
-                    return casilla.checked;
-                });
-                if (!seleccionadas.length) {
-                    resumenVacio.hidden = false;
-                    resumenContenido.hidden = true;
-                    comboSeleccionado.value = '';
-                    return;
-                }
-                var tipos = seleccionadas.map(function (casilla) {
-                    return Number(casilla.dataset.tipoEstudio);
-                });
-                var combo = combos.find(function (opcion) {
-                    return opcion.estudios.every(function (id) { return tipos.indexOf(id) !== -1; });
-                });
-                var subtotal = seleccionadas.reduce(function (total, casilla) {
-                    return total + Number(casilla.dataset.precio || 0);
-                }, 0);
-                var descuento = combo ? subtotal * combo.porcentaje / 100 : 0;
-                comboSeleccionado.value = combo ? combo.id : '';
-                resumenVacio.hidden = true;
-                resumenContenido.hidden = false;
-                resumenLista.innerHTML = '';
-                seleccionadas.forEach(function (casilla) {
-                    var li = document.createElement('li');
-                    li.textContent = casilla.dataset.paciente + ' — ' + casilla.dataset.estudio
-                        + ' (Q' + Number(casilla.dataset.precio || 0).toFixed(2) + ')';
-                    resumenLista.appendChild(li);
-                });
-                resumenTotales.textContent =
-                    (combo ? 'Combo: ' + combo.nombre + ' · ' : 'Sin combo aplicable · ')
-                    + 'Subtotal: Q' + subtotal.toFixed(2)
-                    + ' · Descuento: Q' + descuento.toFixed(2)
-                    + ' · Total: Q' + (subtotal - descuento).toFixed(2);
-            }
-            Array.prototype.forEach.call(casillas, function (casilla) {
-                casilla.addEventListener('change', actualizarResumen);
+        // Confirmación antes de crear la orden agrupada (ver data-confirmar
+        // en el formulario de "Crear orden agrupada" arriba).
+        document.querySelectorAll('form[data-confirmar]').forEach(function (f) {
+            f.addEventListener('submit', function (e) {
+                if (!window.confirm(f.getAttribute('data-confirmar'))) { e.preventDefault(); }
             });
-            actualizarResumen();
-            form.addEventListener('submit', function (evento) {
-                if (confirmada) return;
-                var seleccionadas = Array.prototype.filter.call(casillas, function (casilla) {
-                    return casilla.checked;
-                });
-                if (!seleccionadas.length) {
-                    evento.preventDefault();
-                    window.alert('Seleccione al menos un estudio para crear la orden.');
-                    return;
-                }
-                if (!window.confirm(resumenTotales.textContent + '\n\n¿Desea crear esta orden de pago?')) {
-                    evento.preventDefault();
-                    return;
-                }
-                confirmada = true;
-            });
-        })();
+        });
 
         // Al marcar un pago en Efectivo no tiene sentido pedir "boleta /
         // referencia" (eso es de tarjeta/transferencia) ni el comprobante

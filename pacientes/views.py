@@ -887,18 +887,23 @@ def pagos_pendientes(request):
             cita__detalles_orden_pago__orden_pago__combo_id=int(combo_id),
         ).distinct()
 
-    # Solo entran a una orden agrupada los estudios que el técnico ya
-    # confirmó como correctos (ver OrdenTrabajo.validacion_estado). Se arma
-    # aparte de `qs` (no filtrando sobre ella) para que siempre traiga TODOS
-    # los pendientes de COEX y Emergencia IGSS sin importar qué convenio
-    # haya elegido la recepcionista en el filtro de la pantalla -- el
-    # formulario para crearla solo se muestra en Pagos IGSS (ver template),
-    # pero agrupa estudios de ambos convenios.
-    cobros_para_orden = Cobro.objects.filter(
-        estado=Cobro.ESTADO_PENDIENTE,
-        cita__convenio__in=(Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS),
-        cita__orden_trabajo__validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO,
-    ).select_related('cita__paciente', 'cita__tipo_estudio').order_by('-creado_en')
+    # Vista previa de "Crear orden agrupada": convenio + rango de fechas
+    # elegidos en ese formulario aparte (no los filtros de arriba, que son
+    # para mirar la lista, no para armar la orden). Solo se calcula cuando
+    # los tres datos están completos, para no barrer sin querer todo el
+    # historial pendiente de un convenio.
+    orden_convenio = request.GET.get('orden_convenio', '')
+    orden_desde = parse_date(request.GET.get('orden_desde', ''))
+    orden_hasta = parse_date(request.GET.get('orden_hasta', ''))
+    resumen_orden_rango = None
+    if orden_convenio in (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS) and orden_desde and orden_hasta:
+        citas_rango = _citas_pendientes_para_orden(orden_convenio, orden_desde, orden_hasta)
+        resumen_orden_rango = {
+            'cantidad': len(citas_rango),
+            'pacientes': len({c.paciente_id for c in citas_rango}),
+            'total': _total_citas_para_orden(citas_rango),
+        }
+
     pagina = Paginator(qs, 20).get_page(request.GET.get('page'))
 
     filtros = request.GET.copy()
@@ -919,7 +924,6 @@ def pagos_pendientes(request):
     combos = Combo.objects.filter(activo=True).prefetch_related('estudios').order_by('nombre')
     return render(request, 'pacientes/pagos_pendientes.html', {
         'pagina': pagina,
-        'cobros_para_orden': cobros_para_orden,
         'busqueda': busqueda,
         'estado': estado,
         'convenio': convenio,
@@ -932,110 +936,97 @@ def pagos_pendientes(request):
         'filtros_qs': filtros.urlencode(),
         'ordenes_pago': ordenes_pago[:20],
         'combos': combos,
-        'combos_preview': [
-            {
-                'id': combo.id,
-                'nombre': combo.nombre,
-                'porcentaje': float(combo.porcentaje_descuento or 0),
-                'estudios': list(combo.estudios.values_list('id', flat=True)),
-            }
-            for combo in combos
-        ],
+        'orden_convenio': orden_convenio,
+        'orden_desde': orden_desde,
+        'orden_hasta': orden_hasta,
+        'resumen_orden_rango': resumen_orden_rango,
     })
+
+
+def _citas_pendientes_para_orden(convenio, desde, hasta, *, para_actualizar=False):
+    """Citas de `convenio` entre `desde` y `hasta` (inclusive) listas para
+    agruparse en una orden de pago: el técnico ya confirmó el estudio,
+    tienen cobro pendiente y no están ya en otra orden agrupada abierta.
+    No importa de qué paciente sean -- una orden agrupada cubre el
+    convenio/rango elegido, no una sola visita de un paciente."""
+    qs = Cita.objects.filter(
+        convenio=convenio,
+        fecha__gte=desde, fecha__lte=hasta,
+        orden_trabajo__validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO,
+        cobro__estado=Cobro.ESTADO_PENDIENTE,
+    ).exclude(
+        detalles_orden_pago__orden_pago__estado=OrdenPago.ESTADO_PENDIENTE,
+    ).select_related('paciente', 'tipo_estudio').prefetch_related('estudios_extra').order_by('fecha', 'hora')
+    if para_actualizar:
+        qs = qs.select_for_update()
+    return list(qs)
+
+
+def _total_citas_para_orden(citas):
+    total = Decimal('0.00')
+    for cita in citas:
+        total += cita.precio_base
+        for extra in cita.estudios_extra.all():
+            total += extra.precio
+    return total
 
 
 @login_required
 @user_passes_test(es_caja)
 @require_POST
 def crear_orden_pago(request):
-    """Agrupa estudios pendientes de un mismo paciente y convenio COEX/IGSS."""
-    cita_ids = request.POST.getlist('cita_ids')
-    if not cita_ids:
-        messages.error(request, 'Seleccione al menos un estudio para crear la orden de pago.')
-        return redirect('pagos_pendientes')
-
+    """Agrupa TODOS los estudios pendientes de cobro de un convenio (COEX o
+    Emergencia IGSS) dentro de un rango de fechas en una sola orden de
+    pago -- por ejemplo, la liquidación semanal de un convenio
+    institucional que cubre decenas de pacientes distintos. No exige que
+    los estudios sean del mismo paciente: el único requisito compartido es
+    el convenio."""
     form = CrearOrdenPagoForm(request.POST)
     if not form.is_valid():
-        messages.error(request, 'Revise el combo seleccionado y las notas de la orden.')
+        for error in form.non_field_errors():
+            messages.error(request, error)
+        if not form.non_field_errors():
+            messages.error(request, 'Revisá el convenio y el rango de fechas.')
         return redirect('pagos_pendientes')
 
+    convenio = form.cleaned_data['convenio']
+    desde = form.cleaned_data['desde']
+    hasta = form.cleaned_data['hasta']
+
     with transaction.atomic():
-        citas = list(
-            Cita.objects.select_for_update().select_related('paciente', 'tipo_estudio')
-            .prefetch_related('estudios_extra')
-            .filter(
-                id__in=cita_ids,
-                convenio__in=(Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS),
-                orden_trabajo__isnull=False,
-            )
-        )
-        if len(citas) != len(set(cita_ids)):
-            messages.error(request, 'Uno o más estudios seleccionados no son válidos para una orden agrupada.')
-            return redirect('pagos_pendientes')
-        claves = {(c.paciente_id, c.convenio) for c in citas}
-        if len(claves) != 1:
-            messages.error(request, 'La orden debe contener estudios del mismo paciente y convenio.')
-            return redirect('pagos_pendientes')
-        if any(
-            not hasattr(c, 'cobro') or c.cobro.estado != Cobro.ESTADO_PENDIENTE
-            or OrdenPago.objects.filter(detalles__cita=c, estado=OrdenPago.ESTADO_PENDIENTE).exists()
-            for c in citas
-        ):
-            messages.error(request, 'Solo se pueden agrupar estudios con cobro pendiente y sin otra orden abierta.')
-            return redirect('pagos_pendientes')
-        if any(not c.cobro.listo_para_cobrar for c in citas):
+        citas = _citas_pendientes_para_orden(convenio, desde, hasta, para_actualizar=True)
+        if not citas:
             messages.error(
                 request,
-                'Solo se pueden agrupar estudios que el técnico ya confirmó como correctos.',
+                'No hay estudios pendientes de cobro para ese convenio en ese rango de fechas.',
             )
             return redirect('pagos_pendientes')
 
-        combo = form.cleaned_data['combo']
         detalles = []
         subtotal = Decimal('0.00')
-        tipos = set()
         for cita in citas:
             precio = cita.precio_base
             detalles.append((cita, cita.tipo_estudio, None, precio))
             subtotal += precio
-            tipos.add(cita.tipo_estudio_id)
             for extra in cita.estudios_extra.all():
                 precio_extra = extra.precio
                 detalles.append((cita, extra.tipo_estudio, extra, precio_extra))
                 subtotal += precio_extra
-                tipos.add(extra.tipo_estudio_id)
 
-        descuento = Decimal('0.00')
-        if combo:
-            combo_ids = set(combo.estudios.values_list('id', flat=True))
-            if not combo_ids.issubset(tipos):
-                messages.error(request, 'El combo elegido no coincide con todos los estudios seleccionados.')
-                return redirect('pagos_pendientes')
-            descuento = (subtotal * (combo.porcentaje_descuento or 0) / 100).quantize(Decimal('0.01'))
-        elif tipos:
-            combo = Combo.objects.filter(
-                activo=True, estudios__id__in=tipos,
-            ).prefetch_related('estudios').distinct().order_by('id').first()
-            if combo:
-                combo_ids = set(combo.estudios.values_list('id', flat=True))
-                if combo_ids.issubset(tipos):
-                    descuento = (
-                        subtotal * (combo.porcentaje_descuento or 0) / 100
-                    ).quantize(Decimal('0.01'))
-                else:
-                    combo = None
-
+        pacientes_distintos = {c.paciente_id for c in citas}
+        notas = form.cleaned_data['notas'] or (
+            f'{dict(Cita.CONVENIO_CHOICES).get(convenio, convenio)} del {desde:%d/%m/%Y} al {hasta:%d/%m/%Y}'
+        )
         orden = OrdenPago.objects.create(
-            convenio=citas[0].convenio,
-            paciente=citas[0].paciente,
+            convenio=convenio,
+            paciente=citas[0].paciente if len(pacientes_distintos) == 1 else None,
             subtotal=subtotal,
-            descuento=descuento,
-            total=subtotal - descuento,
-            combo=combo,
-            notas=form.cleaned_data['notas'],
+            descuento=Decimal('0.00'),
+            total=subtotal,
+            combo=None,
+            notas=notas,
             creado_por=request.user,
         )
-        descuento_unitario = (descuento / len(detalles)).quantize(Decimal('0.01')) if detalles else 0
         for cita, tipo, extra, precio in detalles:
             DetalleOrdenPago.objects.create(
                 orden_pago=orden,
@@ -1043,11 +1034,16 @@ def crear_orden_pago(request):
                 tipo_estudio=tipo,
                 estudio_extra=extra,
                 precio=precio,
-                descuento=descuento_unitario,
-                total=precio - descuento_unitario,
+                descuento=Decimal('0.00'),
+                total=precio,
             )
 
-    messages.success(request, f'Orden de pago #{orden.id} creada y pendiente de boleta.')
+    messages.success(
+        request,
+        f'Orden de pago #{orden.id} creada: {len(citas)} estudio{"s" if len(citas) != 1 else ""} '
+        f'de {len(pacientes_distintos)} paciente{"s" if len(pacientes_distintos) != 1 else ""}, '
+        f'total Q{subtotal:.2f}.',
+    )
     return redirect('pagos_pendientes')
 
 
@@ -1091,6 +1087,97 @@ def pagar_orden_pago(request, orden_id):
     for cita in citas_pagadas:
         _intentar_envio_automatico(request, cita)
     return redirect('pagos_pendientes')
+
+
+@login_required
+@user_passes_test(es_caja)
+def orden_pago_pdf(request, orden_id):
+    """Listado imprimible de una orden de pago agrupada: una fila por
+    estudio (paciente, DPI, estudio, precio) y el total general. A
+    diferencia de la boleta de un cobro individual (armada para un solo
+    paciente), esta orden suele cubrir muchos pacientes distintos del
+    mismo convenio en un rango de fechas, así que el comprobante es un
+    listado en vez de un recibo por paciente."""
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    orden = get_object_or_404(
+        OrdenPago.objects.prefetch_related('detalles__cita__paciente', 'detalles__tipo_estudio'),
+        id=orden_id,
+    )
+    detalles = list(orden.detalles.all())
+    pacientes_distintos = len({d.cita.paciente_id for d in detalles})
+
+    azul = colors.HexColor('#1d3a8a')
+    gris = colors.HexColor('#cbd5e1')
+
+    base = getSampleStyleSheet()['BodyText']
+    base.fontSize = 9
+    base.leading = 13
+    negrita = {'parent': base, 'fontName': 'Helvetica-Bold'}
+    st_titulo = ParagraphStyle('titulo', fontSize=13, alignment=TA_CENTER, **negrita)
+    st_derecha = ParagraphStyle('derecha', parent=base, alignment=TA_RIGHT)
+
+    filas = [['Paciente', 'DPI', 'Estudio', 'Precio']]
+    for detalle in detalles:
+        paciente = detalle.cita.paciente
+        filas.append([
+            f'{paciente.nombre} {paciente.apellido}',
+            paciente.dpi,
+            detalle.tipo_estudio.nombre,
+            f'Q{detalle.total:.2f}',
+        ])
+    filas.append(['', '', 'Total:', f'Q{orden.total:.2f}'])
+
+    tabla = Table(filas, colWidths=[5.5 * cm, 3.2 * cm, 5.5 * cm, 3.0 * cm], repeatRows=1)
+    tabla.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), azul),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTNAME', (2, -1), (3, -1), 'Helvetica-Bold'),
+        ('ALIGN', (3, 0), (3, -1), 'RIGHT'),
+        ('GRID', (0, 0), (-1, -1), 0.5, gris),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+    ]))
+
+    elementos = [
+        Paragraph(
+            f'<b>{CLINICA_NOMBRE}</b><br/>{CLINICA_RUBRO}<br/>'
+            f'Dirección: {CLINICA_DIRECCION}<br/>Tel: {CLINICA_TELEFONO}',
+            base,
+        ),
+        Spacer(1, 14),
+        Paragraph('LISTADO DE ORDEN DE PAGO AGRUPADA', st_titulo),
+        Spacer(1, 4),
+        Paragraph(f'N.º de orden: {orden.id} — {orden.get_estado_display()}', st_derecha),
+        Spacer(1, 10),
+        Paragraph(
+            f'<b>Convenio:</b> {orden.get_convenio_display()}<br/>'
+            f'<b>Notas:</b> {orden.notas or "—"}<br/>'
+            f'<b>Cantidad de estudios:</b> {len(detalles)}<br/>'
+            f'<b>Pacientes distintos:</b> {pacientes_distintos}',
+            base,
+        ),
+        Spacer(1, 14),
+        tabla,
+    ]
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=letter, topMargin=1.6 * cm, bottomMargin=1.6 * cm,
+        leftMargin=1.8 * cm, rightMargin=1.8 * cm, title=f'Orden de pago {orden.id}',
+    )
+    doc.build(elementos)
+
+    respuesta = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+    respuesta['Content-Disposition'] = f'inline; filename="orden_pago_{orden.id}.pdf"'
+    return respuesta
 
 
 def datos_paciente_boleta(cita):

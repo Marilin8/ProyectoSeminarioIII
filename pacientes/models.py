@@ -758,7 +758,10 @@ class Cobro(models.Model):
 
 class OrdenPago(models.Model):
     """Orden agrupada para convenios que liquidan varios estudios con una
-    boleta global (COEX y Emergencia IGSS)."""
+    boleta global (COEX y Emergencia IGSS). Agrupa por convenio y rango de
+    fechas (ver crear_orden_pago), no por paciente: puede cubrir estudios de
+    muchos pacientes distintos, como la liquidación semanal de un convenio
+    institucional."""
 
     ESTADO_PENDIENTE = 'pendiente'
     ESTADO_PAGADA = 'pagada'
@@ -770,7 +773,12 @@ class OrdenPago(models.Model):
     ]
 
     convenio = models.CharField(max_length=20, choices=CONVENIO_CHOICES)
-    paciente = models.ForeignKey(Paciente, on_delete=models.PROTECT, related_name='ordenes_pago')
+    # Nulo cuando la orden agrupa estudios de más de un paciente (el caso
+    # normal ahora); se sigue completando cuando por casualidad todos los
+    # estudios del rango elegido resultan ser del mismo paciente.
+    paciente = models.ForeignKey(
+        Paciente, on_delete=models.PROTECT, null=True, blank=True, related_name='ordenes_pago',
+    )
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=ESTADO_PENDIENTE)
     subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     descuento = models.DecimalField(max_digits=10, decimal_places=2, default=0)

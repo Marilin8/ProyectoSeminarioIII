@@ -2875,6 +2875,11 @@ class EstudioExtraTests(TestCase):
 
 
 class OrdenPagoTests(TestCase):
+    """Una orden de pago agrupada cubre un convenio (COEX/Emergencia IGSS) y
+    un rango de fechas -- no un solo paciente: puede juntar estudios de
+    muchos pacientes distintos, como la liquidación semanal de un convenio
+    institucional (ver crear_orden_pago)."""
+
     def setUp(self):
         self.caja = crear_usuario('caja_orden', rol=Usuario.ROL_RECEPCIONISTA, puede_operar_caja=True)
         self.paciente = crear_paciente(dpi='7776665554443')
@@ -2885,26 +2890,33 @@ class OrdenPagoTests(TestCase):
                 tipo_estudio=estudio, convenio=Cita.CONVENIO_COEX,
                 horario_habil=True, precio=Decimal(precio),
             )
+        self.fecha = timezone.localdate()
         self.cita_a = crear_cita(
             self.caja, paciente=self.paciente, tipo_estudio=self.estudio_a,
             convenio=Cita.CONVENIO_COEX, estado=Cita.ESTADO_EN_PROCESO,
-            hora=datetime.time(9, 0),
+            fecha=self.fecha, hora=datetime.time(9, 0),
         )
         self.cita_b = crear_cita(
             self.caja, paciente=self.paciente, tipo_estudio=self.estudio_b,
             convenio=Cita.CONVENIO_COEX, estado=Cita.ESTADO_EN_PROCESO,
-            hora=datetime.time(9, 30),
+            fecha=self.fecha, hora=datetime.time(9, 30),
         )
         for cita in (self.cita_a, self.cita_b):
             OrdenTrabajo.objects.create(cita=cita, motivo='demo HU-058', creada_por=self.caja, validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO)
             Cobro.objects.create(cita=cita)
         self.client.force_login(self.caja)
 
-    def test_crea_orden_agrupada_para_mismo_paciente_y_convenio(self):
-        respuesta = self.client.post(reverse('crear_orden_pago'), {
-            'cita_ids': [self.cita_a.id, self.cita_b.id],
-            'notas': 'Orden global COEX',
-        })
+    def _crear_orden(self, **extra):
+        datos = {
+            'convenio': Cita.CONVENIO_COEX,
+            'desde': self.fecha.isoformat(),
+            'hasta': self.fecha.isoformat(),
+        }
+        datos.update(extra)
+        return self.client.post(reverse('crear_orden_pago'), datos)
+
+    def test_crea_orden_agrupada_por_convenio_y_rango_de_fechas(self):
+        respuesta = self._crear_orden(notas='Orden global COEX')
 
         self.assertRedirects(respuesta, reverse('pagos_pendientes'))
         orden = OrdenPago.objects.get()
@@ -2914,10 +2926,50 @@ class OrdenPagoTests(TestCase):
         self.assertEqual(orden.total, Decimal('180.00'))
         self.assertEqual(orden.detalles.count(), 2)
 
+    def test_permite_agrupar_estudios_de_pacientes_distintos(self):
+        otro = crear_cita(
+            self.caja, paciente=crear_paciente(dpi='7776665554444'),
+            tipo_estudio=self.estudio_a, convenio=Cita.CONVENIO_COEX,
+            estado=Cita.ESTADO_EN_PROCESO, fecha=self.fecha, hora=datetime.time(10, 0),
+        )
+        OrdenTrabajo.objects.create(cita=otro, motivo='demo HU-058', creada_por=self.caja, validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO)
+        Cobro.objects.create(cita=otro)
+
+        respuesta = self._crear_orden()
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
+        orden = OrdenPago.objects.get()
+        self.assertIsNone(orden.paciente)
+        self.assertEqual(orden.detalles.count(), 3)
+        pacientes = {d.cita.paciente_id for d in orden.detalles.all()}
+        self.assertEqual(pacientes, {self.paciente.id, otro.paciente_id})
+
+    def test_no_agrupa_estudios_fuera_del_rango_de_fechas(self):
+        fuera_de_rango = crear_cita(
+            self.caja, paciente=self.paciente, tipo_estudio=self.estudio_a,
+            convenio=Cita.CONVENIO_COEX, estado=Cita.ESTADO_EN_PROCESO,
+            fecha=self.fecha + datetime.timedelta(days=5), hora=datetime.time(9, 0),
+        )
+        OrdenTrabajo.objects.create(cita=fuera_de_rango, motivo='x', creada_por=self.caja, validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO)
+        Cobro.objects.create(cita=fuera_de_rango)
+
+        self._crear_orden()
+
+        orden = OrdenPago.objects.get()
+        self.assertEqual(orden.detalles.count(), 2)
+        self.assertFalse(orden.detalles.filter(cita=fuera_de_rango).exists())
+
+    def test_no_crea_orden_sin_estudios_pendientes_en_el_rango(self):
+        respuesta = self._crear_orden(
+            desde=(self.fecha + datetime.timedelta(days=10)).isoformat(),
+            hasta=(self.fecha + datetime.timedelta(days=10)).isoformat(),
+        )
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
+        self.assertFalse(OrdenPago.objects.exists())
+
     def test_pagar_orden_agrupada_liquida_todos_los_cobros(self):
-        self.client.post(reverse('crear_orden_pago'), {
-            'cita_ids': [self.cita_a.id, self.cita_b.id],
-        })
+        self._crear_orden()
         orden = OrdenPago.objects.get()
         boleta = SimpleUploadedFile('boleta-global.pdf', b'pdf demo', content_type='application/pdf')
         respuesta = self.client.post(
@@ -2937,27 +2989,21 @@ class OrdenPagoTests(TestCase):
         self.assertTrue(Cobro.objects.get(cita=self.cita_a).pagado)
         self.assertTrue(Cobro.objects.get(cita=self.cita_b).pagado)
 
-    def test_no_permite_mezclar_pacientes_en_orden_agrupada(self):
-        otro = crear_cita(
-            self.caja, paciente=crear_paciente(dpi='7776665554444'),
-            tipo_estudio=self.estudio_a, convenio=Cita.CONVENIO_COEX,
-            estado=Cita.ESTADO_EN_PROCESO, hora=datetime.time(10, 0),
-        )
-        OrdenTrabajo.objects.create(cita=otro, motivo='demo HU-058', creada_por=self.caja, validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO)
-        Cobro.objects.create(cita=otro)
-
-        respuesta = self.client.post(reverse('crear_orden_pago'), {
-            'cita_ids': [self.cita_a.id, otro.id],
-        })
-
-        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
-        self.assertFalse(OrdenPago.objects.exists())
-
     def test_orden_pendiente_mantiene_bloqueado_el_envio(self):
-        self.client.post(reverse('crear_orden_pago'), {'cita_ids': [self.cita_a.id]})
+        self._crear_orden()
         from pacientes.views import _cobro_bloquea_envio
 
         self.assertTrue(_cobro_bloquea_envio(self.cita_a))
+
+    def test_listado_pdf_de_la_orden(self):
+        self._crear_orden()
+        orden = OrdenPago.objects.get()
+
+        respuesta = self.client.get(reverse('orden_pago_pdf', args=[orden.id]))
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta['Content-Type'], 'application/pdf')
+        self.assertTrue(respuesta.content.startswith(b'%PDF'))
 
 
 class VerificacionDelTecnicoTests(TestCase):
@@ -3293,11 +3339,12 @@ class VerificacionDelTecnicoTests(TestCase):
     def test_una_orden_agrupada_solo_incluye_estudios_confirmados(self):
         estudio = TipoEstudio.objects.create(nombre='COEX verificacion')
         paciente = crear_paciente(dpi='7770001112223')
+        fecha = timezone.localdate()
         citas = []
         for hora in (datetime.time(12, 0), datetime.time(12, 30)):
             cita = crear_cita(
                 self.caja, paciente=paciente, tipo_estudio=estudio, convenio=Cita.CONVENIO_COEX,
-                estado=Cita.ESTADO_EN_PROCESO, hora=hora,
+                estado=Cita.ESTADO_EN_PROCESO, fecha=fecha, hora=hora,
             )
             OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.caja)
             Cobro.objects.create(cita=cita)
@@ -3308,14 +3355,18 @@ class VerificacionDelTecnicoTests(TestCase):
         )
         self.client.force_login(self.caja)
 
-        pantalla = self.client.get(reverse('pagos_pendientes'))
-        ofrecidos = [c.cita_id for c in pantalla.context['cobros_para_orden']]
-        self.assertEqual(ofrecidos, [confirmada.id])
+        pantalla = self.client.get(reverse('pagos_pendientes'), {
+            'orden_convenio': Cita.CONVENIO_COEX,
+            'orden_desde': fecha.isoformat(), 'orden_hasta': fecha.isoformat(),
+        })
+        self.assertEqual(pantalla.context['resumen_orden_rango']['cantidad'], 1)
 
-        self.client.post(reverse('crear_orden_pago'), {'cita_ids': [confirmada.id, sin_confirmar.id]})
-        self.assertFalse(OrdenPago.objects.exists())
-        self.client.post(reverse('crear_orden_pago'), {'cita_ids': [confirmada.id]})
-        self.assertEqual(OrdenPago.objects.count(), 1)
+        self.client.post(reverse('crear_orden_pago'), {
+            'convenio': Cita.CONVENIO_COEX, 'desde': fecha.isoformat(), 'hasta': fecha.isoformat(),
+        })
+        orden = OrdenPago.objects.get()
+        self.assertEqual(orden.detalles.count(), 1)
+        self.assertEqual(orden.detalles.first().cita_id, confirmada.id)
 
     def test_lista_del_tecnico_muestra_el_estado_de_verificacion(self):
         self.client.force_login(self.tecnico)

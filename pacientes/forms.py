@@ -729,15 +729,28 @@ class SubirConstanciaFirmadaForm(forms.Form):
 
 
 class CrearOrdenPagoForm(forms.Form):
-    combo = forms.ModelChoiceField(
-        queryset=Combo.objects.filter(activo=True).order_by('nombre'),
-        required=False,
-        label='Combo o tarifa preferencial',
+    """Agrupa TODOS los estudios pendientes de cobro de un convenio dentro
+    de un rango de fechas en una sola orden de pago -- para liquidaciones
+    institucionales (COEX/Emergencia IGSS) que cubren muchos pacientes a la
+    vez, no una sola visita de un mismo paciente (ver crear_orden_pago)."""
+
+    convenio = forms.ChoiceField(
+        choices=[(Cita.CONVENIO_COEX, 'COEX'), (Cita.CONVENIO_EMERGENCIA_IGSS, 'Emergencia IGSS')],
+        label='Convenio',
     )
+    desde = forms.DateField(label='Desde', widget=forms.DateInput(attrs={'type': 'date'}))
+    hasta = forms.DateField(label='Hasta', widget=forms.DateInput(attrs={'type': 'date'}))
     notas = forms.CharField(
         label='Notas', max_length=255, required=False,
         widget=forms.Textarea(attrs={'rows': 2}),
     )
+
+    def clean(self):
+        cleaned = super().clean()
+        desde, hasta = cleaned.get('desde'), cleaned.get('hasta')
+        if desde and hasta and desde > hasta:
+            raise forms.ValidationError('La fecha "desde" no puede ser posterior a "hasta".')
+        return cleaned
 
 
 class AgregarEstudioExtraForm(forms.Form):
