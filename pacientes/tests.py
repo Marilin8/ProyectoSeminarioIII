@@ -560,6 +560,53 @@ class CalendarioRadiologoTests(TestCase):
         self.assertIn(clave, r.context['slots_detalle'])
 
 
+class CalendarioReagendarTests(TestCase):
+    """Bug: al reagendar, el calendario mostraba TODOS los horarios futuros
+    como si estuvieran libres (la rama del template usaba `celda.cantidad`,
+    un campo que ya no existe en el contexto), sin fijarse si ya había una
+    cita ahí. Ahora la vista de reagendar usa la misma distinción
+    ocupado/libre que el calendario normal de agendar."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_reagendar_cal', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(self.recepcion)
+        self.estudio = TipoEstudio.objects.create(nombre='RX reagendar cal')
+        # Un día laborable futuro para que ninguna hora quede "pasada" (el
+        # calendario no muestra domingos).
+        self.dia = timezone.localdate() + datetime.timedelta(days=1)
+        while self.dia.weekday() == 6:
+            self.dia += datetime.timedelta(days=1)
+        self.cita_ausente = crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, estado=Cita.ESTADO_AUSENTE,
+            fecha=self.dia, hora=datetime.time(8, 0),
+            paciente=crear_paciente(dpi='9990001112223'),
+        )
+        self.cita_ocupada = crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, estado=Cita.ESTADO_AGENDADA,
+            fecha=self.dia, hora=datetime.time(10, 0),
+            paciente=crear_paciente(dpi='9990001112224'),
+        )
+
+    def test_no_ofrece_reagendar_a_un_horario_ocupado(self):
+        respuesta = self.client.get(reverse('calendario_privado'), {
+            'semana': self.dia.isoformat(), 'reagendar': self.cita_ausente.id,
+        })
+        html = respuesta.content.decode('utf-8')
+        reagendar_url = reverse('confirmar_reagenda_privado', args=[self.cita_ausente.id])
+
+        self.assertIn('Ocupado', html)
+        self.assertNotIn(f'{reagendar_url}?fecha={self.dia.isoformat()}&hora=10:00', html)
+
+    def test_ofrece_reagendar_a_un_horario_libre(self):
+        respuesta = self.client.get(reverse('calendario_privado'), {
+            'semana': self.dia.isoformat(), 'reagendar': self.cita_ausente.id,
+        })
+        html = respuesta.content.decode('utf-8')
+        reagendar_url = reverse('confirmar_reagenda_privado', args=[self.cita_ausente.id])
+
+        self.assertIn(f'{reagendar_url}?fecha={self.dia.isoformat()}&hora=09:00', html)
+
+
 class ListaEstudiosTests(TestCase):
     """Lista de estudios del admin: buscador, filtro por categoría y
     paginación de 20 por hoja."""
@@ -3509,3 +3556,96 @@ class EliminarTurnoTests(TestCase):
         pantalla = self.client.get(reverse('pantalla_turnos'))
 
         self.assertContains(pantalla, reverse('eliminar_turno', args=[self.ticket.id]))
+
+
+class ReagendarYCancelarDesdeTurnoTests(TestCase):
+    """Desde la Pantalla de turnos, recepción puede reagendar o cancelar la
+    cita de un paciente que ya había marcado llegada pero no se va a poder
+    atender hoy -- sin esperar a que pase su hora ni pasar primero por
+    "Procesar citas" a marcarla ausente a mano."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_reagendar_turno', rol=Usuario.ROL_RECEPCIONISTA)
+        self.estudio = TipoEstudio.objects.create(nombre='Estudio reagendar turno')
+        self.cita = crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, estado=Cita.ESTADO_AGENDADA,
+            hora_llegada=timezone.now(),
+        )
+        self.ticket = Ticket.objects.create(
+            paciente=self.cita.paciente, cita=self.cita, servicio=Ticket.SERVICIO_PRIVADO,
+            registrado_por=self.recepcion,
+        )
+        self.client.force_login(self.recepcion)
+
+    def test_reagendar_saca_el_turno_marca_ausente_y_manda_al_calendario(self):
+        respuesta = self.client.post(reverse('reagendar_desde_turno', args=[self.ticket.id]))
+
+        self.assertRedirects(
+            respuesta, f"{reverse('calendario_privado')}?reagendar={self.cita.id}",
+        )
+        self.ticket.refresh_from_db()
+        self.cita.refresh_from_db()
+        self.assertEqual(self.ticket.estado, Ticket.ESTADO_AUSENTE)
+        self.assertEqual(self.cita.estado, Cita.ESTADO_AUSENTE)
+        self.assertIsNone(self.cita.hora_llegada)
+        self.assertTrue(
+            Bitacora.objects.filter(accion=Bitacora.ACCION_REAGENDAR_DESDE_TURNO).exists()
+        )
+
+    def test_reagendar_deja_la_cita_lista_para_el_flujo_normal_de_reagendar(self):
+        self.client.post(reverse('reagendar_desde_turno', args=[self.ticket.id]))
+
+        calendario = self.client.get(reverse('calendario_privado'), {
+            'semana': self.cita.fecha.isoformat(), 'reagendar': self.cita.id,
+        })
+        self.assertEqual(calendario.context['reagendar_cita'], self.cita)
+
+    def test_no_se_puede_reagendar_una_cita_que_ya_entro_al_flujo_de_trabajo(self):
+        OrdenTrabajo.objects.create(cita=self.cita, motivo='x', creada_por=self.recepcion)
+        self.cita.estado = Cita.ESTADO_EN_PROCESO
+        self.cita.save(update_fields=['estado'])
+
+        respuesta = self.client.post(reverse('reagendar_desde_turno', args=[self.ticket.id]))
+
+        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
+        self.ticket.refresh_from_db()
+        self.assertEqual(self.ticket.estado, Ticket.ESTADO_EN_ESPERA)
+
+    def test_no_se_puede_reagendar_un_turno_sin_cita(self):
+        ticket_emergencia = Ticket.objects.create(
+            paciente=crear_paciente(dpi='2220001112224'), servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
+            registrado_por=self.recepcion,
+        )
+
+        respuesta = self.client.post(reverse('reagendar_desde_turno', args=[ticket_emergencia.id]))
+
+        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
+        ticket_emergencia.refresh_from_db()
+        self.assertEqual(ticket_emergencia.estado, Ticket.ESTADO_EN_ESPERA)
+
+    def test_cancelar_elimina_la_cita_y_saca_el_turno(self):
+        respuesta = self.client.post(
+            reverse('eliminar_cita', args=[self.cita.id]),
+            {'volver': reverse('pantalla_turnos')},
+        )
+
+        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
+        self.assertFalse(Cita.objects.filter(id=self.cita.id).exists())
+        self.ticket.refresh_from_db()
+        self.assertEqual(self.ticket.estado, Ticket.ESTADO_AUSENTE)
+
+    def test_la_pantalla_de_turnos_ofrece_reagendar_y_cancelar(self):
+        pantalla = self.client.get(reverse('pantalla_turnos'))
+
+        self.assertContains(pantalla, reverse('reagendar_desde_turno', args=[self.ticket.id]))
+        self.assertContains(pantalla, reverse('eliminar_cita', args=[self.cita.id]))
+
+    def test_la_pantalla_no_ofrece_reagendar_ni_cancelar_si_ya_entro_al_flujo(self):
+        OrdenTrabajo.objects.create(cita=self.cita, motivo='x', creada_por=self.recepcion)
+        self.cita.estado = Cita.ESTADO_EN_PROCESO
+        self.cita.save(update_fields=['estado'])
+
+        pantalla = self.client.get(reverse('pantalla_turnos'))
+
+        self.assertNotContains(pantalla, reverse('reagendar_desde_turno', args=[self.ticket.id]))
+        self.assertNotContains(pantalla, reverse('eliminar_cita', args=[self.cita.id]))

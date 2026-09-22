@@ -221,6 +221,7 @@ urlpatterns = [
     path('turnos/<int:ticket_id>/mover/', views.mover_turno, name='mover_turno'),
     path('turnos/<int:ticket_id>/procesar/', views.procesar_turno, name='procesar_turno'),
     path('turnos/<int:ticket_id>/eliminar/', views.eliminar_turno, name='eliminar_turno'),
+    path('turnos/<int:ticket_id>/reagendar/', views.reagendar_desde_turno, name='reagendar_desde_turno'),
     path('notificaciones/pendientes/', views.notificaciones_pendientes, name='notificaciones_pendientes'),
     path(
         'notificaciones/<int:notificacion_id>/marcar-leida/',

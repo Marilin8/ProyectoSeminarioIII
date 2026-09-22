@@ -3705,6 +3705,47 @@ def eliminar_turno(request, ticket_id):
 @login_required
 @user_passes_test(es_recepcionista)
 @require_POST
+def reagendar_desde_turno(request, ticket_id):
+    """El paciente ya había marcado llegada (tiene turno en la fila) pero
+    no se va a poder atender hoy -- se fue, tuvo una emergencia, etc. -- y
+    quiere que se le reagende para otro día, sin esperar a que pase su
+    hora. Saca el turno de la fila, marca la cita como ausente (mismo
+    estado que ya usa el flujo normal de reagendar) y manda directo al
+    calendario a elegir la nueva fecha/hora."""
+    ticket = get_object_or_404(
+        Ticket.objects.select_related('paciente', 'cita'),
+        id=ticket_id, estado=Ticket.ESTADO_EN_ESPERA,
+    )
+    cita = ticket.cita
+    if cita is None or not cita.se_puede_eliminar:
+        messages.error(
+            request,
+            'Este turno ya no se puede reagendar: el estudio ya entró al flujo de trabajo '
+            '(técnico/caja). Si hace falta, gestionalo desde "Procesar citas".',
+        )
+        return redirect('pantalla_turnos')
+
+    ticket.estado = Ticket.ESTADO_AUSENTE
+    ticket.save(update_fields=['estado'])
+
+    cita.hora_llegada = None
+    cita.estado = Cita.ESTADO_AUSENTE
+    cita.save(update_fields=['hora_llegada', 'estado'])
+
+    Bitacora.registrar(
+        request=request, usuario=request.user,
+        accion=Bitacora.ACCION_REAGENDAR_DESDE_TURNO,
+        descripcion=(
+            f'Sacó de la fila de espera a {ticket.paciente} (turno {ticket.turno}) '
+            f'para reagendar la cita #{cita.id}.'
+        ),
+    )
+    return redirect(f"{reverse(f'calendario_{cita.convenio}')}?reagendar={cita.id}")
+
+
+@login_required
+@user_passes_test(es_recepcionista)
+@require_POST
 def procesar_turno(request, ticket_id):
     """Genera de una vez la orden de trabajo del turno y la manda al técnico.
     Para los turnos de COEX/Privado usa la cita que ya existe; los de
