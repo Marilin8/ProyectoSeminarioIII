@@ -22,13 +22,11 @@
                     {% if user.foto_perfil %}
                         <img src="{{ user.foto_perfil.url }}" alt="" style="width:100%;height:100%;object-fit:cover;">
                     {% else %}
-                        <svg width="18" height="18"><use href="#i-user"/></svg>
+                        <svg width="26" height="26"><use href="#i-user"/></svg>
                     {% endif %}
                 </span>
-                <span class="sidebar-user-info">
-                    <span class="sidebar-user-nombre">{{ user.get_full_name|default:user.username }}</span>
-                    <span class="sidebar-user-rol">{{ user.get_rol_display }}</span>
-                </span>
+                <span class="sidebar-user-nombre">{{ user.get_full_name|default:user.username }}</span>
+                <span class="sidebar-user-rol">{{ user.get_rol_display }}</span>
             </a>
         {% endif %}
         <nav>
