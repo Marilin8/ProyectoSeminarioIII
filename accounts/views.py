@@ -205,6 +205,17 @@ def mi_perfil(request):
             messages.success(request, 'Perfil actualizado correctamente.')
             return redirect('mi_perfil')
 
+    elif request.method == 'POST' and 'eliminar_foto_perfil' in request.POST:
+        if request.user.foto_perfil:
+            request.user.foto_perfil.delete(save=True)
+            Bitacora.registrar(
+                request=request, usuario=request.user,
+                accion=Bitacora.ACCION_EDITAR_USUARIO,
+                descripcion=f'"{request.user.username}" eliminó su foto de perfil.',
+            )
+            messages.success(request, 'Foto de perfil eliminada.')
+        return redirect('mi_perfil')
+
     elif request.method == 'POST' and 'cambiar_contrasena' in request.POST:
         password_form = CambiarContrasenaForm(user=request.user, data=request.POST)
         if password_form.is_valid():

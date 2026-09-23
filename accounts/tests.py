@@ -1039,6 +1039,32 @@ class MiPerfilFotoTests(TestCase):
         self.assertContains(respuesta, 'sidebar-user-avatar')
         self.assertNotContains(respuesta, 'fotos_perfil')
 
+    def test_elimina_la_foto_de_perfil(self):
+        self.usuario.foto_perfil = self._imagen()
+        self.usuario.save()
+
+        respuesta = self.client.post(reverse('mi_perfil'), {'eliminar_foto_perfil': '1'})
+
+        self.assertRedirects(respuesta, reverse('mi_perfil'))
+        self.usuario.refresh_from_db()
+        self.assertFalse(self.usuario.foto_perfil)
+
+    def test_eliminar_foto_sin_tener_una_no_falla(self):
+        respuesta = self.client.post(reverse('mi_perfil'), {'eliminar_foto_perfil': '1'})
+
+        self.assertRedirects(respuesta, reverse('mi_perfil'))
+        self.usuario.refresh_from_db()
+        self.assertFalse(self.usuario.foto_perfil)
+
+    def test_mi_perfil_ofrece_eliminar_solo_si_hay_foto(self):
+        sin_foto = self.client.get(reverse('mi_perfil'))
+        self.assertNotContains(sin_foto, 'eliminar_foto_perfil')
+
+        self.usuario.foto_perfil = self._imagen()
+        self.usuario.save()
+        con_foto = self.client.get(reverse('mi_perfil'))
+        self.assertContains(con_foto, 'eliminar_foto_perfil')
+
    
 
     
