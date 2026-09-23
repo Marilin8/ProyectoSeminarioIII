@@ -1,8 +1,12 @@
 import datetime
 import uuid
+from io import BytesIO
+
+from PIL import Image
 
 from django.contrib.auth import get_user_model
 from django.core import mail
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -982,6 +986,58 @@ class VerificacionBoletaTests(TestCase):
             self.assertEqual(r.estado, verificacion_boleta.ESTADO_NO_VERIFICABLE)
         finally:
             verificacion_boleta._leer_texto = original
+
+
+class MiPerfilFotoTests(TestCase):
+    """Cada usuario puede subir/editar su propia foto de perfil desde "Mi
+    perfil"; se muestra en la barra lateral (ver templates/base.html)."""
+
+    def setUp(self):
+        self.usuario = crear_usuario('user_foto_perfil')
+        self.client.force_login(self.usuario)
+
+    def _imagen(self, nombre='foto.png'):
+        buffer = BytesIO()
+        Image.new('RGB', (10, 10), color='blue').save(buffer, format='PNG')
+        buffer.seek(0)
+        return SimpleUploadedFile(nombre, buffer.read(), content_type='image/png')
+
+    def test_sube_la_foto_de_perfil(self):
+        respuesta = self.client.post(reverse('mi_perfil'), {
+            'guardar_perfil': '1',
+            'first_name': 'Nombre',
+            'last_name': 'Apellido',
+            'email': 'foto@example.com',
+            'foto_perfil': self._imagen(),
+        })
+
+        self.assertRedirects(respuesta, reverse('mi_perfil'))
+        self.usuario.refresh_from_db()
+        self.assertTrue(self.usuario.foto_perfil)
+
+    def test_la_barra_lateral_muestra_la_foto_ya_subida(self):
+        self.usuario.foto_perfil = self._imagen()
+        self.usuario.save()
+
+        respuesta = self.client.get(reverse('dashboard'))
+
+        self.assertContains(respuesta, self.usuario.foto_perfil.url)
+
+    def test_la_barra_lateral_muestra_nombre_y_rol(self):
+        self.usuario.first_name = 'Marilin'
+        self.usuario.last_name = 'Yaque'
+        self.usuario.save()
+
+        respuesta = self.client.get(reverse('dashboard'))
+
+        self.assertContains(respuesta, 'Marilin Yaque')
+        self.assertContains(respuesta, self.usuario.get_rol_display())
+
+    def test_sin_foto_muestra_el_icono_generico(self):
+        respuesta = self.client.get(reverse('dashboard'))
+
+        self.assertContains(respuesta, 'sidebar-user-avatar')
+        self.assertNotContains(respuesta, 'fotos_perfil')
 
    
 

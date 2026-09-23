@@ -246,8 +246,8 @@ class PerfilForm(forms.ModelForm):
 
     class Meta:
         model = Usuario
-        fields = ('first_name', 'last_name', 'email')
-        labels = {'first_name': 'Nombres', 'last_name': 'Apellidos'}
+        fields = ('first_name', 'last_name', 'email', 'foto_perfil')
+        labels = {'first_name': 'Nombres', 'last_name': 'Apellidos', 'foto_perfil': 'Foto de perfil'}
 
     def clean_first_name(self):
         valor = (self.cleaned_data.get('first_name') or '').strip()

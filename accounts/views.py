@@ -194,7 +194,7 @@ def mi_perfil(request):
     password_form = CambiarContrasenaForm(user=request.user)
 
     if request.method == 'POST' and 'guardar_perfil' in request.POST:
-        perfil_form = PerfilForm(request.POST, instance=request.user)
+        perfil_form = PerfilForm(request.POST, request.FILES, instance=request.user)
         if perfil_form.is_valid():
             perfil_form.save()
             Bitacora.registrar(

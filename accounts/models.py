@@ -50,6 +50,11 @@ class Usuario(AbstractUser):
         help_text='Solo para radiólogos: la sala donde atiende (ej. "Sala 1").',
     )
 
+    foto_perfil = models.ImageField(
+        upload_to='fotos_perfil/%Y/%m/', null=True, blank=True,
+        verbose_name='foto de perfil',
+    )
+
     # Sesión única por usuario: guarda la session_key de la sesión activa
     # más reciente. SesionUnicaMiddleware compara esto contra la sesión de
     # cada request y cierra cualquier sesión vieja en cuanto se detecta un
