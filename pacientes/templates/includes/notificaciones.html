@@ -95,6 +95,13 @@
         overflow: hidden;
         animation: notif-panel-entrada .12s ease-out;
     }
+    /* El display:flex de arriba tiene la misma especificidad que el estilo
+       por defecto del navegador para [hidden] (display:none) y, al venir
+       después en la hoja de estilos, le gana -- sin esto el panel queda
+       visible siempre, aunque tenga el atributo hidden. */
+    .notif-panel[hidden] {
+        display: none;
+    }
     @keyframes notif-panel-entrada {
         from { opacity: 0; transform: translateY(-4px); }
         to { opacity: 1; transform: translateY(0); }
