@@ -1,12 +1,14 @@
-<!-- Campanita de notificaciones: se incluye en toda pantalla con sesión
-     iniciada. Consulta {% url 'notificaciones_pendientes' %} cada 20s y
-     hace sonar un aviso cuando llega algo nuevo (cita asignada, orden
-     pendiente, estudio listo para informar o estudio completado). -->
+<!-- Campanita de notificaciones: vive en la barra lateral (un solo
+     include global en templates/base.html, no uno por pantalla).
+     Consulta {% url 'notificaciones_pendientes' %} cada 20s y hace sonar
+     un aviso cuando llega algo nuevo (cita asignada, orden pendiente,
+     estudio listo para informar o estudio completado). -->
 <div id="notif-campanita" class="notif-wrap">
     <button type="button" id="notif-boton" class="notif-boton" aria-label="Notificaciones" title="Notificaciones">
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
             <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2zm6-6v-5a6 6 0 0 0-4.5-5.8V4a1.5 1.5 0 0 0-3 0v1.2A6 6 0 0 0 6 11v5l-1.7 1.7A1 1 0 0 0 5 19h14a1 1 0 0 0 .7-1.7L18 16z"/>
         </svg>
+        <span>Notificaciones</span>
         <span id="notif-contador" class="notif-contador" hidden>0</span>
     </button>
     <div id="notif-panel" class="notif-panel" hidden>
@@ -23,30 +25,30 @@
 
 <style>
     .notif-wrap {
-        position: fixed;
-        top: 1rem;
-        right: 1rem;
-        z-index: 9999;
-        font-family: Arial, sans-serif;
+        position: relative;
     }
     .notif-boton {
-        position: relative;
-        width: 44px;
-        height: 44px;
-        border-radius: 50%;
-        border: none;
-        background: #1e293b;
-        color: #fff;
-        cursor: pointer;
+        width: 100%;
         display: flex;
         align-items: center;
-        justify-content: center;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, .25);
+        gap: 0.6rem;
+        padding: 0.6rem 1rem;
+        border: none;
+        border-left: 3px solid transparent;
+        background: none;
+        color: var(--sidebar-text);
+        cursor: pointer;
+        font-size: 0.82rem;
+        font-family: inherit;
+        text-align: left;
+        transition: background var(--transition), color var(--transition);
     }
     .notif-boton:hover {
-        background: #334155;
+        background: var(--sidebar-hover);
+        color: white;
     }
-    .notif-boton.notif-agitar {
+    .notif-boton span:first-of-type { flex: 1; }
+    .notif-boton.notif-agitar svg {
         animation: notif-agitar .5s ease;
     }
     @keyframes notif-agitar {
@@ -55,9 +57,6 @@
         40%, 80% { transform: rotate(15deg); }
     }
     .notif-contador {
-        position: absolute;
-        top: -4px;
-        right: -4px;
         background: #dc2626;
         color: #fff;
         border-radius: 999px;
@@ -67,11 +66,14 @@
         padding: .25rem .4rem;
         min-width: 1rem;
         text-align: center;
+        flex-shrink: 0;
     }
     .notif-panel {
-        position: absolute;
-        top: 52px;
-        right: 0;
+        /* fixed (no absolute) a propósito: el sidebar tiene overflow-y:
+           auto, y CSS fuerza overflow-x a auto también en ese caso, lo que
+           recortaría un panel absoluto que sobresale del ancho del
+           sidebar. La posición real la calcula el JS de más abajo. */
+        position: fixed;
         width: 320px;
         max-height: 420px;
         overflow-y: auto;
@@ -79,6 +81,7 @@
         border-radius: 8px;
         box-shadow: 0 8px 24px rgba(0, 0, 0, .2);
         border: 1px solid #e2e8f0;
+        z-index: 9999;
     }
     .notif-panel-cabecera {
         display: flex;
@@ -253,9 +256,23 @@
             .catch(function () { /* si falla el sondeo, se reintenta en el próximo ciclo */ });
     }
 
+    function posicionarPanel() {
+        var rect = boton.getBoundingClientRect();
+        var izquierda = rect.right + 8;
+        if (izquierda + 320 > window.innerWidth) {
+            izquierda = Math.max(8, window.innerWidth - 328);
+        }
+        panel.style.top = Math.max(8, rect.top) + 'px';
+        panel.style.left = izquierda + 'px';
+    }
+
     boton.addEventListener('click', function (evento) {
         evento.stopPropagation();
         panel.hidden = !panel.hidden;
+        if (!panel.hidden) { posicionarPanel(); }
+    });
+    window.addEventListener('resize', function () {
+        if (!panel.hidden) { posicionarPanel(); }
     });
     document.addEventListener('click', function (evento) {
         if (!panel.hidden && !panel.contains(evento.target) && evento.target !== boton) {

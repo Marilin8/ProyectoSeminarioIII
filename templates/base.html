@@ -32,6 +32,9 @@
             </div>
         {% endif %}
         <nav>
+            {% if user.is_authenticated %}
+                {% include 'includes/notificaciones.html' %}
+            {% endif %}
             <a href="{% url 'dashboard' %}" class="{% block nav_dashboard %}{% endblock %}">
                 <svg width="16" height="16"><use href="#i-home"/></svg> Panel principal
             </a>

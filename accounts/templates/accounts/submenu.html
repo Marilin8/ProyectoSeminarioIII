@@ -4,7 +4,6 @@
 {% block page_title %}{{ user.get_rol_display }} — {{ pantalla.nombre }}{% endblock %}
 
 {% block topbar_actions %}
-    {% include 'includes/notificaciones.html' %}
     <a class="btn btn-danger btn-sm" href="{% url 'dashboard' %}">
         <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
         Regresar
