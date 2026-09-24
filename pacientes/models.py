@@ -593,11 +593,18 @@ class Cita(models.Model):
         """Los TipoEstudio "reales" a trabajar en esta cita: los que
         componen el combo si tipo_estudio es un espejo de Combo (ver
         Combo.sincronizar_tipo_estudio), o el propio tipo_estudio si es un
-        estudio normal. El técnico sube imágenes y la radióloga adjunta
+        estudio normal -- más los EstudioExtra marcados `procesar_ahora`
+        (ver ese modelo). El técnico sube imágenes y la radióloga adjunta
         informe por cada uno de estos (ver OrdenTrabajo/ImagenEstudio/
         InformeEstudio)."""
         combo = getattr(self.tipo_estudio, 'combo_origen', None)
-        return list(combo.estudios.all()) if combo is not None else [self.tipo_estudio]
+        estudios = list(combo.estudios.all()) if combo is not None else [self.tipo_estudio]
+        ids_vistos = {e.id for e in estudios}
+        for extra in self.estudios_extra.filter(procesar_ahora=True).select_related('tipo_estudio'):
+            if extra.tipo_estudio_id not in ids_vistos:
+                estudios.append(extra.tipo_estudio)
+                ids_vistos.add(extra.tipo_estudio_id)
+        return estudios
 
     @property
     def esta_tarde(self):
@@ -662,10 +669,13 @@ class Cita(models.Model):
 
 
 class EstudioExtra(models.Model):
-    """Estudio adicional que el radiólogo detecta y realiza durante la
-    atención, aparte del que se agendó originalmente. Por ahora solo aplica
-    al convenio Privado (es al único que Caja le cobra directamente al
-    paciente): sube el total de la cita y le avisa a recepción."""
+    """Estudio adicional que el radiólogo detecta durante la atención,
+    aparte del que se agendó originalmente (Privado, COEX o Emergencia
+    IGSS): sube el total de la cita y le avisa a recepción para el cobro.
+    Por sí solo es solo un aviso/sugerencia -- si además queda marcado
+    `procesar_ahora`, entra a Cita.estudios y el técnico puede subirle
+    imágenes de inmediato, igual que un estudio de combo, sin esperar a
+    que el informe (ni el de este extra) esté subido."""
 
     cita = models.ForeignKey(Cita, on_delete=models.PROTECT, related_name='estudios_extra')
     tipo_estudio = models.ForeignKey(TipoEstudio, on_delete=models.PROTECT, related_name='+')
@@ -673,6 +683,14 @@ class EstudioExtra(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='estudios_extra_agregados',
     )
     notas = models.CharField(max_length=255, blank=True)
+    procesar_ahora = models.BooleanField(
+        default=False,
+        verbose_name='procesar ahora',
+        help_text=(
+            'El técnico puede subir las imágenes de este estudio ya mismo, '
+            'sin esperar a que se suba su informe (igual que un combo).'
+        ),
+    )
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:

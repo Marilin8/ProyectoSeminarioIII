@@ -790,6 +790,14 @@ class AgregarEstudioExtraForm(forms.Form):
         label='Notas (opcional)', max_length=255, required=False,
         widget=forms.TextInput(attrs={'placeholder': 'Ej.: se agregó contraste adicional'}),
     )
+    procesar_ahora = forms.BooleanField(
+        label='Procesar ahora',
+        required=False,
+        help_text=(
+            'El técnico va a poder subir las imágenes de este estudio ya mismo, '
+            'sin esperar a que subas el informe (igual que un combo).'
+        ),
+    )
 
 
 class GenerarOrdenForm(forms.Form):

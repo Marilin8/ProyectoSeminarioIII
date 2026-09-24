@@ -3102,8 +3102,14 @@ def adjuntar_informe(request, cita_id):
             if form_estudio_extra is not None:
                 _registrar_estudio_extra(request, cita, form_estudio_extra)
 
+            # cita.estudios (no `estudios`, que es el snapshot de antes de
+            # registrar el extra) para que un estudio extra recién marcado
+            # "procesar ahora" cuente como pendiente y la cita NO pase a
+            # PROCESADA hasta que también tenga su informe -- si no se
+            # marcó "procesar ahora" (o no se agregó ninguno), cita.estudios
+            # da exactamente lo mismo que `estudios` y no cambia nada.
             completos_ids = {i.tipo_estudio_id for i in orden.informes.all() if i.texto or i.archivo}
-            faltan = [e.nombre for e in estudios if e.id not in completos_ids]
+            faltan = [e.nombre for e in cita.estudios if e.id not in completos_ids]
             Bitacora.registrar(
                 request=request,
                 usuario=request.user,
@@ -3154,6 +3160,7 @@ def adjuntar_informe(request, cita_id):
         'bloques': bloques,
         'tiene_dicom_original': any(img.archivo_original for img in orden.imagenes.all()),
         'form_estudio_extra': form_estudio_extra,
+        'puede_agregar_extra': puede_agregar_extra,
         'estudios_extra': cita.estudios_extra.select_related('tipo_estudio', 'agregado_por').all(),
     })
 
@@ -3162,12 +3169,16 @@ def _registrar_estudio_extra(request, cita, form):
     """Crea el EstudioExtra a partir de un form ya validado, notifica a
     recepción y lo registra en la bitácora. Lo usan tanto
     agregar_estudio_extra (el endpoint viejo, standalone) como
-    adjuntar_informe (cuando se agrega en el mismo envío que el informe)."""
+    adjuntar_informe (cuando se agrega en el mismo envío que el informe).
+    Si queda marcado "procesar ahora", también avisa al técnico -- a partir
+    de acá entra a Cita.estudios (ver el modelo) y aparece como trabajo
+    pendiente en su pantalla, igual que un estudio de combo."""
     extra = EstudioExtra.objects.create(
         cita=cita,
         tipo_estudio=form.cleaned_data['tipo_estudio'],
         agregado_por=request.user,
         notas=form.cleaned_data['notas'],
+        procesar_ahora=form.cleaned_data['procesar_ahora'],
     )
     cobro, _ = Cobro.objects.get_or_create(cita=cita)
     if cobro.estado == Cobro.ESTADO_PAGADO:
@@ -3195,13 +3206,16 @@ def _registrar_estudio_extra(request, cita, form):
         cita=cita,
         url=reverse('pagos_pendientes'),
     )
+    if extra.procesar_ahora:
+        _notificar_orden_pendiente(cita)
     Bitacora.registrar(
         request=request,
         usuario=request.user,
         accion=Bitacora.ACCION_AGREGAR_ESTUDIO_EXTRA,
         descripcion=(
             f'Agregó el estudio extra "{extra.tipo_estudio.nombre}" (Q{extra.precio:.2f}) '
-            f'a la cita de {cita.paciente} (cita #{cita.id}).'
+            f'a la cita de {cita.paciente} (cita #{cita.id})'
+            + (', marcado para procesar ahora.' if extra.procesar_ahora else '.')
         ),
     )
     return extra

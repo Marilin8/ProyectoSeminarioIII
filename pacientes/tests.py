@@ -2774,6 +2774,7 @@ class EstudioExtraTests(TestCase):
     def setUp(self):
         self.recepcion = crear_usuario('recep_extra', rol=Usuario.ROL_RECEPCIONISTA)
         self.radiologo = crear_usuario('rad_extra', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.tecnico = crear_usuario('tec_extra', rol=Usuario.ROL_TECNICO_IMAGENES)
         self.estudio_agendado = TipoEstudio.objects.create(nombre='RX Torax agendado')
         PrecioEstudio.objects.create(
             tipo_estudio=self.estudio_agendado, convenio=Cita.CONVENIO_PRIVADO,
@@ -2906,6 +2907,102 @@ class EstudioExtraTests(TestCase):
 
         self.assertRedirects(respuesta, reverse('citas_procesadas'))
         self.assertFalse(EstudioExtra.objects.filter(cita=self.cita).exists())
+
+    def _subir_imagen(self, orden, tipo_estudio):
+        self.client.force_login(self.tecnico)
+        return self.client.post(
+            reverse('adjuntar_imagenes_lote', args=[orden.id]),
+            {
+                'tipo_estudio': tipo_estudio.id,
+                'imagenes': SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+            },
+        )
+
+    def test_sin_procesar_ahora_el_extra_no_entra_a_cita_estudios(self):
+        self._agregar()
+
+        self.assertEqual(self.cita.estudios, [self.estudio_agendado])
+
+    def test_procesar_ahora_agrega_el_estudio_a_cita_estudios(self):
+        self.client.force_login(self.radiologo)
+        self.client.post(
+            reverse('agregar_estudio_extra', args=[self.cita.id]),
+            {'tipo_estudio': self.estudio_extra.id, 'procesar_ahora': 'on'},
+        )
+
+        self.assertEqual(set(self.cita.estudios), {self.estudio_agendado, self.estudio_extra})
+
+    def test_procesar_ahora_notifica_al_tecnico(self):
+        self.client.force_login(self.radiologo)
+        self.client.post(
+            reverse('agregar_estudio_extra', args=[self.cita.id]),
+            {'tipo_estudio': self.estudio_extra.id, 'procesar_ahora': 'on'},
+        )
+
+        self.assertTrue(
+            Notificacion.objects.filter(
+                destinatario=self.tecnico, tipo=Notificacion.TIPO_ORDEN_PENDIENTE, cita=self.cita,
+            ).exists()
+        )
+
+    def test_sin_procesar_ahora_no_notifica_al_tecnico(self):
+        self._agregar()
+
+        self.assertFalse(
+            Notificacion.objects.filter(
+                destinatario=self.tecnico, tipo=Notificacion.TIPO_ORDEN_PENDIENTE, cita=self.cita,
+            ).exists()
+        )
+
+    def test_procesar_ahora_permite_que_el_tecnico_suba_imagenes_del_extra_sin_informe(self):
+        self.client.force_login(self.radiologo)
+        self.client.post(
+            reverse('agregar_estudio_extra', args=[self.cita.id]),
+            {'tipo_estudio': self.estudio_extra.id, 'procesar_ahora': 'on'},
+        )
+
+        respuesta = self._subir_imagen(self.cita.orden_trabajo, self.estudio_extra)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTrue(
+            ImagenEstudio.objects.filter(
+                orden=self.cita.orden_trabajo, tipo_estudio=self.estudio_extra,
+            ).exists()
+        )
+        # No hay ningún informe subido todavía -- ni del estudio agendado
+        # ni del extra -- y aun así se pudo subir la imagen del extra.
+        self.assertFalse(InformeEstudio.objects.filter(orden=self.cita.orden_trabajo).exists())
+
+    def test_procesar_ahora_deja_la_cita_en_proceso_hasta_completar_el_informe_del_extra(self):
+        """Igual que con un combo: si falta el informe de CUALQUIER estudio
+        de cita.estudios (acá, el extra marcado "procesar ahora"), la cita
+        no pasa a PROCESADA aunque el informe original ya esté completo."""
+        ImagenEstudio.objects.create(
+            orden=self.cita.orden_trabajo, tipo_estudio=self.cita.tipo_estudio, subida_por=self.radiologo,
+            archivo=SimpleUploadedFile('img.jpg', b'fake'),
+        )
+        self.client.force_login(self.radiologo)
+
+        respuesta = self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
+            f'texto_{self.cita.tipo_estudio_id}': 'Hallazgos sin complicaciones.',
+            'tipo_estudio': self.estudio_extra.id,
+            'procesar_ahora': 'on',
+        })
+
+        self.assertRedirects(respuesta, reverse('citas_procesadas'))
+        self.cita.refresh_from_db()
+        self.assertEqual(self.cita.estado, Cita.ESTADO_EN_PROCESO)
+
+        # Una vez el técnico sube la imagen del extra y se adjunta también
+        # su informe, ahí sí la cita pasa a PROCESADA.
+        self._subir_imagen(self.cita.orden_trabajo, self.estudio_extra)
+        self.client.force_login(self.radiologo)
+        respuesta = self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
+            f'texto_{self.estudio_extra.id}': 'Sin hallazgos en el extra.',
+        })
+        self.assertRedirects(respuesta, reverse('citas_procesadas'))
+        self.cita.refresh_from_db()
+        self.assertEqual(self.cita.estado, Cita.ESTADO_PROCESADA)
 
 
 class OrdenPagoTests(TestCase):

@@ -90,7 +90,7 @@
                 </div>
             {% endfor %}
 
-            {% if cita.convenio == 'privado' %}
+            {% if puede_agregar_extra %}
                 <div class="card" style="padding:1rem;margin-bottom:1.25rem;background:#f8fafc;">
                     <div style="font-weight:600;margin-bottom:0.5rem;">Estudios extra realizados</div>
                     {% if estudios_extra %}
@@ -98,6 +98,7 @@
                             {% for extra in estudios_extra %}
                                 <li>
                                     {{ extra.tipo_estudio.nombre }} — Q{{ extra.precio|floatformat:2 }}
+                                    {% if extra.procesar_ahora %}<span class="badge badge-info" style="margin-left:0.3rem;">Procesando</span>{% endif %}
                                     {% if extra.notas %}<span class="text-muted">({{ extra.notas }})</span>{% endif %}
                                 </li>
                             {% endfor %}
@@ -107,12 +108,29 @@
                     {% endif %}
 
                     {% if form_estudio_extra %}
-                        <label for="{{ form_estudio_extra.tipo_estudio.id_for_label }}">Notificar estudio extra realizado (opcional)</label>
-                        {{ form_estudio_extra.tipo_estudio }}
-                        {{ form_estudio_extra.tipo_estudio.errors }}
-                        {{ form_estudio_extra.notas }}
-                        {{ form_estudio_extra.notas.errors }}
-                        <p class="ayuda">Si elegís un estudio acá, se agrega y se le avisa a recepción al guardar el informe.</p>
+                        <label class="check-estudio-extra" style="display:flex;align-items:center;gap:0.5rem;font-weight:500;cursor:pointer;">
+                            <input type="checkbox" id="chk-mostrar-estudio-extra" style="width:auto;">
+                            ¿Se realizó un estudio extra?
+                        </label>
+                        <div id="bloque-estudio-extra" style="display:none;margin-top:0.6rem;">
+                            <label for="{{ form_estudio_extra.tipo_estudio.id_for_label }}">Estudio extra realizado</label>
+                            {{ form_estudio_extra.tipo_estudio }}
+                            {{ form_estudio_extra.tipo_estudio.errors }}
+                            {{ form_estudio_extra.notas }}
+                            {{ form_estudio_extra.notas.errors }}
+                            <p class="ayuda">
+                                Es solo un aviso: se agrega y se le notifica a recepción para el cobro al guardar el informe.
+                            </p>
+
+                            <label style="display:flex;align-items:flex-start;gap:0.5rem;margin-top:0.6rem;cursor:pointer;">
+                                {{ form_estudio_extra.procesar_ahora }}
+                                <span>
+                                    {{ form_estudio_extra.procesar_ahora.label }}
+                                    <span class="ayuda" style="display:block;margin-top:0.1rem;">{{ form_estudio_extra.procesar_ahora.help_text }}</span>
+                                </span>
+                            </label>
+                            {{ form_estudio_extra.procesar_ahora.errors }}
+                        </div>
                     {% endif %}
                 </div>
             {% endif %}
@@ -199,6 +217,27 @@
         }
 
         document.addEventListener('DOMContentLoaded', function () {
+            // El panel de "estudio extra" arranca escondido (casi nunca se
+            // usa) y se despliega al marcar la casilla; si la página se
+            // vuelve a renderizar con datos ya cargados (ej. el informe
+            // principal tenía un error y esto quedó con un estudio
+            // elegido), arranca visible para no esconder lo que el
+            // radiólogo ya había llenado.
+            var chkMostrarExtra = document.getElementById('chk-mostrar-estudio-extra');
+            var bloqueExtra = document.getElementById('bloque-estudio-extra');
+            if (chkMostrarExtra && bloqueExtra) {
+                var selectExtra = document.getElementById('id_tipo_estudio');
+                var notasExtra = document.getElementById('id_notas');
+                var teniaDatos = (selectExtra && selectExtra.value) || (notasExtra && notasExtra.value);
+                if (teniaDatos) {
+                    chkMostrarExtra.checked = true;
+                    bloqueExtra.style.display = '';
+                }
+                chkMostrarExtra.addEventListener('change', function () {
+                    bloqueExtra.style.display = chkMostrarExtra.checked ? '' : 'none';
+                });
+            }
+
             // "Ver JPG" se muestra en un <iframe> DENTRO de esta misma
             // página (en vez de abrir target="_blank" o window.open) porque
             // en algunos navegadores/entornos embebidos eso termina
