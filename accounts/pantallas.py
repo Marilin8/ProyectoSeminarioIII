@@ -20,7 +20,9 @@ PANTALLAS_POR_ROL = {
             ],
         },
         {'nombre': 'Estudios', 'url_name': 'lista_estudios'},
+        {'nombre': 'Modalidades', 'url_name': 'lista_modalidades'},
         {'nombre': 'Combos', 'url_name': 'lista_combos'},
+        {'nombre': 'Médicos tratantes', 'url_name': 'lista_medicos_tratantes'},
         {'nombre': 'Bitácora del sistema', 'url_name': 'bitacora'},
         {
             'nombre': 'Reportes diarios',
@@ -93,17 +95,39 @@ PANTALLAS_POR_ROL = {
 }
 
 
+def _identificador(pantalla):
+    """Lo que identifica a una pantalla para no duplicarla en el panel: la
+    'clave' si tiene submenú (placeholder /pantalla/<clave>/), si no el
+    nombre de la URL real."""
+    return pantalla.get('clave') or pantalla.get('url_name')
+
+
 def pantallas_de(usuario):
     if usuario.is_superuser and usuario.rol != Usuario.ROL_ADMINISTRADOR:
         pantallas = list(PANTALLAS_POR_ROL[Usuario.ROL_ADMINISTRADOR])
     else:
         pantallas = list(PANTALLAS_POR_ROL.get(usuario.rol, []))
+        # Roles adicionales (ver Usuario.tiene_rol/RolAdicional): un
+        # técnico al que también se le habilitó el rol de radiólogo ve,
+        # además de sus propios tiles, los de radiólogo -- sin duplicar
+        # los que ya tenía en común (ej. "Reportes diarios").
+        ya_vistas = {_identificador(p) for p in pantallas}
+        for extra in usuario.roles_adicionales.all():
+            for pantalla in PANTALLAS_POR_ROL.get(extra.rol, []):
+                identificador = _identificador(pantalla)
+                if identificador not in ya_vistas:
+                    pantallas.append(pantalla)
+                    ya_vistas.add(identificador)
     # Permiso aparte del rol (ver Usuario.puede_operar_caja): cualquier
-    # usuario con este permiso ve la pantalla de Caja, sin duplicarla si su
-    # rol ya la tuviera.
+    # usuario con este permiso ve la pantalla de Caja (y el acceso directo
+    # a Pagos IGSS), sin duplicarlas si su rol ya las tuviera.
     ya_tiene_caja = any(item.get('url_name') == 'pagos_pendientes' for item in pantallas)
-    if usuario.puede_operar_caja and not ya_tiene_caja:
-        pantallas.append({'nombre': 'Caja - pagos de estudios', 'url_name': 'pagos_pendientes'})
+    ya_tiene_pagos_igss = any(item.get('url_name') == 'pagos_pendientes_igss' for item in pantallas)
+    if usuario.puede_operar_caja:
+        if not ya_tiene_caja:
+            pantallas.append({'nombre': 'Caja - pagos de estudios', 'url_name': 'pagos_pendientes'})
+        if not ya_tiene_pagos_igss:
+            pantallas.append({'nombre': 'Pagos IGSS', 'url_name': 'pagos_pendientes_igss'})
     return pantallas
 
 

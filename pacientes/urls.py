@@ -21,6 +21,19 @@ urlpatterns = [
     path('combos/nuevo/', views.crear_combo, name='crear_combo'),
     path('combos/', views.lista_combos, name='lista_combos'),
     path('combos/<int:combo_id>/editar/', views.editar_combo, name='editar_combo'),
+    path('modalidades/', views.lista_modalidades, name='lista_modalidades'),
+    path('modalidades/nueva/', views.crear_modalidad, name='crear_modalidad'),
+    path('modalidades/<int:modalidad_id>/editar/', views.editar_modalidad, name='editar_modalidad'),
+    path('modalidades/<int:modalidad_id>/eliminar/', views.eliminar_modalidad, name='eliminar_modalidad'),
+    path('modalidades/historial/', views.historial_modalidades, name='historial_modalidades'),
+    path('modalidades/<int:modalidad_id>/activar/', views.activar_modalidad, name='activar_modalidad'),
+
+    path('medicos-tratantes/', views.lista_medicos_tratantes, name='lista_medicos_tratantes'),
+    path('medicos-tratantes/nuevo/', views.crear_medico_tratante, name='crear_medico_tratante'),
+    path('medicos-tratantes/<int:medico_id>/editar/', views.editar_medico_tratante, name='editar_medico_tratante'),
+    path('medicos-tratantes/<int:medico_id>/eliminar/', views.eliminar_medico_tratante, name='eliminar_medico_tratante'),
+    path('medicos-tratantes/<int:medico_id>/activar/', views.activar_medico_tratante, name='activar_medico_tratante'),
+
     # Visor web público del estudio (link estilo PACS que se manda por correo:
     # /visor/?studyId=<id>&tab=images&ac=<token base64>).
     path('visor/', views.visor_estudio, name='visor_estudio'),
@@ -29,7 +42,11 @@ urlpatterns = [
         views.visor_imagen,
         name='visor_imagen',
     ),
-    path('visor/<int:orden_id>/informe.pdf', views.visor_informe_pdf, name='visor_informe_pdf'),
+    path(
+        'visor/<int:orden_id>/informe/<int:informe_id>.pdf',
+        views.visor_informe_pdf,
+        name='visor_informe_pdf',
+    ),
     path('visor/<int:orden_id>/dicom.zip', views.visor_dicom, name='visor_dicom'),
     path('visor/<int:orden_id>/imagenes.zip', views.visor_jpg, name='visor_jpg'),
 
@@ -63,13 +80,20 @@ urlpatterns = [
         name='ingresar_correo_envio',
     ),
     path(
+        'pacientes/historial/<int:paciente_id>/contacto/',
+        views.editar_contacto_paciente,
+        name='editar_contacto_paciente',
+    ),
+    path(
         'pacientes/historial/estudio/<int:cita_id>/cobrar/',
         views.marcar_cobrado,
         name='marcar_cobrado',
     ),
     path('pagos/', views.pagos_pendientes, name='pagos_pendientes'),
+    path('pagos/igss/', views.pagos_pendientes_igss, name='pagos_pendientes_igss'),
     path('pagos/ordenes/nueva/', views.crear_orden_pago, name='crear_orden_pago'),
     path('pagos/ordenes/<int:orden_id>/pagar/', views.pagar_orden_pago, name='pagar_orden_pago'),
+    path('pagos/ordenes/<int:orden_id>/listado/', views.orden_pago_pdf, name='orden_pago_pdf'),
     path('pagos/<int:cobro_id>/boleta/', views.boleta_pago_pdf, name='boleta_pago_pdf'),
     path('pagos/<int:cobro_id>/constancia/', views.constancia_pago_pdf, name='constancia_pago_pdf'),
     path('pagos/<int:cobro_id>/comprobante-bancario/', views.comprobante_bancario, name='comprobante_bancario'),
@@ -219,6 +243,7 @@ urlpatterns = [
     path('turnos/<int:ticket_id>/mover/', views.mover_turno, name='mover_turno'),
     path('turnos/<int:ticket_id>/procesar/', views.procesar_turno, name='procesar_turno'),
     path('turnos/<int:ticket_id>/eliminar/', views.eliminar_turno, name='eliminar_turno'),
+    path('turnos/<int:ticket_id>/reagendar/', views.reagendar_desde_turno, name='reagendar_desde_turno'),
     path('notificaciones/pendientes/', views.notificaciones_pendientes, name='notificaciones_pendientes'),
     path(
         'notificaciones/<int:notificacion_id>/marcar-leida/',

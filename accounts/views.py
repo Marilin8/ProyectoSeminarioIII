@@ -36,7 +36,7 @@ from .pantallas import buscar_pantalla, pantallas_de
 
 
 def es_administrador(user):
-    return user.is_authenticated and (user.is_superuser or user.rol == Usuario.ROL_ADMINISTRADOR)
+    return user.is_authenticated and (user.is_superuser or user.tiene_rol(Usuario.ROL_ADMINISTRADOR))
 
 
 # Roles que se administran desde la pantalla "Usuarios activos". El nombre es
@@ -194,7 +194,7 @@ def mi_perfil(request):
     password_form = CambiarContrasenaForm(user=request.user)
 
     if request.method == 'POST' and 'guardar_perfil' in request.POST:
-        perfil_form = PerfilForm(request.POST, instance=request.user)
+        perfil_form = PerfilForm(request.POST, request.FILES, instance=request.user)
         if perfil_form.is_valid():
             perfil_form.save()
             Bitacora.registrar(
@@ -204,6 +204,17 @@ def mi_perfil(request):
             )
             messages.success(request, 'Perfil actualizado correctamente.')
             return redirect('mi_perfil')
+
+    elif request.method == 'POST' and 'eliminar_foto_perfil' in request.POST:
+        if request.user.foto_perfil:
+            request.user.foto_perfil.delete(save=True)
+            Bitacora.registrar(
+                request=request, usuario=request.user,
+                accion=Bitacora.ACCION_EDITAR_USUARIO,
+                descripcion=f'"{request.user.username}" eliminó su foto de perfil.',
+            )
+            messages.success(request, 'Foto de perfil eliminada.')
+        return redirect('mi_perfil')
 
     elif request.method == 'POST' and 'cambiar_contrasena' in request.POST:
         password_form = CambiarContrasenaForm(user=request.user, data=request.POST)
@@ -252,6 +263,7 @@ def crear_usuario(request):
             nuevo_usuario = form.save(commit=False)
             nuevo_usuario.is_active = False
             nuevo_usuario.save()
+            form._guardar_roles_adicionales()
             token = nuevo_usuario.generar_token_confirmacion_correo()
 
             error_envio = enviar_confirmacion_cuenta(request, nuevo_usuario, token)

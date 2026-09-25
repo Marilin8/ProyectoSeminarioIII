@@ -159,7 +159,6 @@
 {% endblock %}
 
 {% block topbar_actions %}
-    {% include 'includes/notificaciones.html' %}
     <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
         <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
         Volver al panel
@@ -232,8 +231,6 @@
                                     <span class="pasado">Pasado</span>
                                 {% elif celda.fuera_rango %}
                                     <span class="pasado">No disponible</span>
-                                {% elif reagendar_cita %}
-                                    <a class="slot" href="{% url reagendar_url_name cita_id=reagendar_cita.id %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}">{{ celda.cantidad }} cita{{ celda.cantidad|pluralize }}</a>
                                 {% elif celda.ocupado or celda.asignado %}
                                     <button type="button" class="slot-ocupado{% if celda.tiene_pendiente %} slot-pendiente{% endif %}"
                                             data-slot="{{ celda.dia|date:'Y-m-d' }}|{{ celda.hora|time:'H:i' }}"
@@ -242,6 +239,8 @@
                                         Ocupado · {{ celda.convenios }}
                                         {% if celda.tiene_pendiente %}<br><span class="etiqueta-pendiente">Pendiente</span>{% endif %}
                                     </button>
+                                {% elif reagendar_cita %}
+                                    <a class="slot-libre" href="{% url reagendar_url_name cita_id=reagendar_cita.id %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}">Libre</a>
                                 {% else %}
                                     <a class="slot-libre" href="{% url agendar_url_name %}?fecha={{ celda.dia|date:'Y-m-d' }}&hora={{ celda.hora|time:'H:i' }}{% if radiologo_seleccionado %}&radiologo={{ radiologo_seleccionado.id }}{% endif %}">Libre</a>
                                 {% endif %}
@@ -295,6 +294,49 @@
         var ELIMINAR_URL = "{% url 'eliminar_cita' cita_id=0 %}";
         var formEliminar = document.getElementById('cal-eliminar-form');
         var RADIOLOGO = "{% if radiologo_seleccionado %}{{ radiologo_seleccionado.id }}{% endif %}";
+        // Reagendando: un horario ocupado no se puede reutilizar (el
+        // servidor rechaza sin excepción cualquier cruce al reagendar, a
+        // diferencia de agendar que sí permite forzar una emergencia), así
+        // que el botón de "agendar otra" no aplica acá -- se oculta.
+        var REAGENDANDO = {% if reagendar_cita %}true{% else %}false{% endif %};
+        if (REAGENDANDO) { btnAgendar.style.display = 'none'; }
+
+        // Eliminar una cita agendada (el paciente ya no se va a hacer el
+        // estudio): pide confirmación en el mismo cuadro antes de enviar.
+        function filaEliminar(c) {
+            var fila = document.createElement('div');
+            fila.className = 'fila-eliminar';
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-outline btn-sm btn-eliminar';
+            btn.textContent = 'Eliminar cita';
+            btn.addEventListener('click', function () {
+                fila.innerHTML = '';
+                var pregunta = document.createElement('span');
+                pregunta.className = 'confirmar-eliminar';
+                pregunta.textContent = '¿Eliminar la cita de ' + c.paciente + '?';
+                var si = document.createElement('button');
+                si.type = 'button';
+                si.className = 'btn btn-danger btn-sm';
+                si.textContent = 'Sí, eliminar';
+                si.addEventListener('click', function () {
+                    formEliminar.action = ELIMINAR_URL.replace('/0/', '/' + c.id + '/');
+                    formEliminar.elements['volver'].value = window.location.pathname + window.location.search;
+                    formEliminar.submit();
+                });
+                var no = document.createElement('button');
+                no.type = 'button';
+                no.className = 'btn btn-outline btn-sm';
+                no.textContent = 'No';
+                no.addEventListener('click', function () {
+                    fila.innerHTML = '';
+                    fila.appendChild(btn);
+                });
+                fila.appendChild(pregunta); fila.appendChild(si); fila.appendChild(no);
+            });
+            fila.appendChild(btn);
+            return fila;
+        }
 
         // Eliminar una cita agendada (el paciente ya no se va a hacer el
         // estudio): pide confirmación en el mismo cuadro antes de enviar.

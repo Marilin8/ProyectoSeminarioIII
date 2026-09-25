@@ -20,7 +20,6 @@
 {% endblock %}
 
 {% block topbar_actions %}
-    {% include 'includes/notificaciones.html' %}
     <a href="{% url 'dashboard' %}" class="btn btn-outline btn-sm">
         <svg width="14" height="14"><use href="#i-arrow-left"/></svg> Volver al panel
     </a>
@@ -86,6 +85,15 @@
             {{ form.carnet_igss }}
             {{ form.carnet_igss.errors }}
 
+            <label for="{{ form.codigo_igss.id_for_label }}">Código IGSS</label>
+            {{ form.codigo_igss }}
+            <p class="ayuda">Código de orden/autorización que emite IGSS para este estudio.</p>
+            {{ form.codigo_igss.errors }}
+
+            <label for="{{ form.medico_tratante.id_for_label }}">Médico tratante</label>
+            {{ form.medico_tratante }}
+            {{ form.medico_tratante.errors }}
+
             <h2 style="font-size:0.95rem;color:var(--text);margin:1.5rem 0 0.25rem;border-bottom:1px solid var(--border-light);padding-bottom:0.3rem;font-weight:600;">Cita</h2>
 
             <div class="horario">
@@ -109,9 +117,9 @@
             {{ form.fecha }}
             {{ form.hora }}
 
-            <label for="{{ form.modalidad.id_for_label }}">Grupo de estudio</label>
+            <label for="{{ form.modalidad.id_for_label }}">Modalidad</label>
             {{ form.modalidad }}
-            <p class="ayuda">Elegí el grupo para que abajo aparezcan solo los estudios de ese tipo.</p>
+            <p class="ayuda">Elegí la modalidad para que abajo aparezcan solo los estudios de ese tipo.</p>
 
             <label for="{{ form.tipo_estudio.id_for_label }}">Tipo de estudio</label>
             {{ form.tipo_estudio }}
@@ -162,8 +170,8 @@
         var btnCambiar = document.getElementById('btn-cambiar-horario');
 
         var campos = ['dpi', 'nombre', 'apellido', 'sexo', 'fecha_nacimiento',
-                       'telefono', 'correo', 'carnet_igss', 'tipo_estudio',
-                       'radiologo', 'notas'];
+                       'telefono', 'correo', 'carnet_igss', 'codigo_igss',
+                       'medico_tratante', 'tipo_estudio', 'radiologo', 'notas'];
 
         function guardarDraft() {
             var data = {};
@@ -485,6 +493,8 @@
                 ['id_correo', 'Correo electrónico'],
                 ['id_fecha_nacimiento', 'Fecha de nacimiento'],
                 ['id_carnet_igss', 'Carné de afiliación IGSS'],
+                ['id_codigo_igss', 'Código IGSS'],
+                ['id_medico_tratante', 'Médico tratante'],
                 ['id_fecha', 'Fecha de la cita'],
                 ['id_hora', 'Hora de la cita'],
                 ['id_tipo_estudio', 'Tipo de estudio'],

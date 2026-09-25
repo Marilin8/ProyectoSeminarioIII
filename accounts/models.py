@@ -50,6 +50,11 @@ class Usuario(AbstractUser):
         help_text='Solo para radiólogos: la sala donde atiende (ej. "Sala 1").',
     )
 
+    foto_perfil = models.ImageField(
+        upload_to='fotos_perfil/%Y/%m/', null=True, blank=True,
+        verbose_name='foto de perfil',
+    )
+
     # Sesión única por usuario: guarda la session_key de la sesión activa
     # más reciente. SesionUnicaMiddleware compara esto contra la sesión de
     # cada request y cierra cualquier sesión vieja en cuanto se detecta un
@@ -125,6 +130,59 @@ class Usuario(AbstractUser):
         verbose_name = 'usuario'
         verbose_name_plural = 'usuarios'
 
+    def tiene_rol(self, rol):
+        """True si `rol` es el rol principal de este usuario o uno de sus
+        roles adicionales (ver RolAdicional) -- ej. un técnico al que
+        además se le habilitó el rol de radiólogo. Los `es_<rol>` de
+        accounts/pacientes.views usan esto en vez de comparar `self.rol`
+        directo, para que un usuario con roles adicionales vea también las
+        pantallas y tenga los permisos de esos roles (pantallas_de hace lo
+        mismo del lado de los tiles del panel).
+
+        No cambia nada de lo que depende del rol PRINCIPAL nada más (ej.
+        qué usuarios aparecen para asignar a TipoEstudio.radiologos): un
+        rol adicional no agrega a esas listas, hay que agregarlo a mano
+        ahí si corresponde."""
+        return self.rol == rol or self.roles_adicionales.filter(rol=rol).exists()
+
+
+class RolAdicional(models.Model):
+    """Rol extra que un usuario tiene ADEMÁS de su rol principal
+    (Usuario.rol) -- ej. un técnico al que también se le habilita el rol
+    de radiólogo. Ver Usuario.tiene_rol / accounts.pantallas.pantallas_de."""
+
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='roles_adicionales',
+    )
+    rol = models.CharField(max_length=25, choices=Usuario.ROL_CHOICES)
+
+    class Meta:
+        db_table = 'usuarios_roles_adicionales'
+        verbose_name = 'rol adicional'
+        verbose_name_plural = 'roles adicionales'
+        unique_together = ('usuario', 'rol')
+        ordering = ['usuario', 'rol']
+
+    def __str__(self):
+        return f'{self.usuario} · {self.get_rol_display()}'
+
+
+def _ip_real_del_visitante(request):
+    """IP del visitante para la bitácora.
+
+    Cuando el sitio se accede vía el Cloudflare Tunnel, la conexión le
+    llega a Django desde 'cloudflared' en esta misma máquina, así que
+    REMOTE_ADDR siempre da 127.0.0.1 — la bitácora no capturaba la IP
+    real de nadie que entrara por la web pública.
+
+    Cloudflare agrega el header CF-Connecting-IP con la IP real del
+    cliente en cada request que pasa por su borde (no se puede
+    falsificar: Cloudflare lo sobreescribe, ignora el que mande el
+    visitante). Si no viene (acceso directo por LAN sin pasar por el
+    túnel), se sigue usando REMOTE_ADDR como antes.
+    """
+    return request.META.get('HTTP_CF_CONNECTING_IP') or request.META.get('REMOTE_ADDR')
+
 
 def _ip_real_del_visitante(request):
     """IP del visitante para la bitácora.
@@ -182,6 +240,7 @@ class Bitacora(models.Model):
     ACCION_ELIMINAR_TURNO = 'eliminar_turno'
     ACCION_PROGRAMAR_CAMBIO_PRECIO = 'programar_cambio_precio'
     ACCION_CANCELAR_CAMBIO_PRECIO = 'cancelar_cambio_precio'
+    ACCION_REAGENDAR_DESDE_TURNO = 'reagendar_desde_turno'
 
     ACCION_CHOICES = [
         (ACCION_LOGIN_EXITOSO, 'Inicio de sesión'),
@@ -222,6 +281,7 @@ class Bitacora(models.Model):
         (ACCION_ELIMINAR_TURNO, 'Eliminación de un turno de la fila de espera'),
         (ACCION_PROGRAMAR_CAMBIO_PRECIO, 'Programó un cambio de estudio (nombre, modalidad, duración o precio)'),
         (ACCION_CANCELAR_CAMBIO_PRECIO, 'Canceló un cambio de estudio programado'),
+        (ACCION_REAGENDAR_DESDE_TURNO, 'Envío a reagendar desde la pantalla de turnos'),
     ]
 
     usuario = models.ForeignKey(

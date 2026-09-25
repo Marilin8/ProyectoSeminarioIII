@@ -4,7 +4,6 @@
 {% block page_title %}Crear usuario{% endblock %}
 
 {% block topbar_actions %}
-    {% include 'includes/notificaciones.html' %}
     <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
         <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
         Volver al panel
@@ -46,6 +45,11 @@
                 {{ form.rol }}
                 {{ form.rol.errors }}
 
+                <label style="margin-top:0.75rem;">{{ form.roles_adicionales.label }}</label>
+                {{ form.roles_adicionales }}
+                <p class="form-help">{{ form.roles_adicionales.help_text }}</p>
+                {{ form.roles_adicionales.errors }}
+
                 <label for="{{ form.fecha_ingreso.id_for_label }}">{{ form.fecha_ingreso.label }}</label>
                 {{ form.fecha_ingreso }}
                 <p class="form-help">{{ form.fecha_ingreso.help_text }}</p>
@@ -58,10 +62,12 @@
                 <p class="form-help">{{ form.puede_operar_caja.help_text }}</p>
                 {{ form.puede_operar_caja.errors }}
 
-                <label for="{{ form.sala.id_for_label }}">Sala / consultorio</label>
-                {{ form.sala }}
-                <p class="form-help">{{ form.sala.help_text }}</p>
-                {{ form.sala.errors }}
+                <div id="campo-sala">
+                    <label for="{{ form.sala.id_for_label }}">Sala / consultorio</label>
+                    {{ form.sala }}
+                    <p class="form-help">{{ form.sala.help_text }}</p>
+                    {{ form.sala.errors }}
+                </div>
 
                 <label for="{{ form.salario_base.id_for_label }}">Salario base mensual (Q)</label>
                 {{ form.salario_base }}
@@ -118,6 +124,20 @@
     </div>
 
     <script>
+        (function () {
+            // La sala/consultorio solo aplica a radiólogos: se oculta para
+            // cualquier otro rol elegido en el select.
+            var rol = document.getElementById('id_rol');
+            var campoSala = document.getElementById('campo-sala');
+            if (rol && campoSala) {
+                var actualizarCampoSala = function () {
+                    campoSala.hidden = rol.value !== 'medico_radiologo';
+                };
+                rol.addEventListener('change', actualizarCampoSala);
+                actualizarCampoSala();
+            }
+        })();
+
         (function () {
             var form = document.getElementById('form-crear-usuario');
             var modal = document.getElementById('modal-confirmar');

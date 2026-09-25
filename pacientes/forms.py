@@ -6,7 +6,9 @@ from django.utils import timezone
 from accounts.models import Usuario
 from clinica.validators import validar_correo_existente, validar_dominio_correo
 
-from .models import PRECIOS_ESTUDIO, Cita, Cobro, Combo, Paciente, TipoEstudio
+from .models import (
+    PRECIOS_ESTUDIO, Cita, Cobro, Combo, MedicoTratante, Modalidad, Paciente, TipoEstudio,
+)
 
 CONVENIOS_QUE_REQUIEREN_CARNET_IGSS = (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS)
 
@@ -209,10 +211,10 @@ class AgendarCitaForm(forms.Form):
         widget=TipoEstudioSelect(),
     )
     modalidad = forms.ChoiceField(
-        label='Grupo de estudio',
-        choices=[('', 'Todos los grupos')] + list(TipoEstudio.MODALIDAD_CHOICES),
+        label='Modalidad',
+        choices=[],
         required=False,
-        help_text='Elegí el grupo para ver solo los estudios de ese tipo.',
+        help_text='Elegí la modalidad para ver solo los estudios de ese tipo.',
     )
     radiologo = forms.ModelChoiceField(
         label='Radiólogo asignado',
@@ -225,6 +227,17 @@ class AgendarCitaForm(forms.Form):
         required=False,
         help_text='Médico externo que refiere al paciente (aparece en el reporte diario).',
     )
+    codigo_igss = forms.CharField(
+        label='Código IGSS',
+        max_length=50,
+        required=False,
+        help_text='Código de orden/autorización que emite IGSS para este estudio.',
+    )
+    medico_tratante = forms.ModelChoiceField(
+        label='Médico tratante',
+        required=False,
+        queryset=MedicoTratante.objects.filter(activo=True).order_by('nombre'),
+    )
     fecha = forms.DateField(widget=forms.DateInput(attrs={'type': 'date'}))
     hora = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}))
     notas = forms.CharField(widget=forms.Textarea, required=False)
@@ -235,9 +248,19 @@ class AgendarCitaForm(forms.Form):
 
     def __init__(self, *args, convenio=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields['modalidad'].choices = [
+            ('', 'Todas las modalidades')
+        ] + [
+            (m.codigo, m.nombre)
+            for m in Modalidad.objects.filter(
+                activo=True,
+                codigo__isnull=False
+            ).exclude(codigo='').order_by('nombre')
+        ]
+
         self.fields['fecha_nacimiento'].widget.attrs['max'] = timezone.localdate().isoformat()
         self.fields['tipo_estudio'].queryset = (
-            self.fields['tipo_estudio'].queryset.prefetch_related('precios', 'radiologos')
+        self.fields['tipo_estudio'].queryset.prefetch_related('precios', 'radiologos')
         )
         self.fields['tipo_estudio'].widget.detalles = _detalles_tipo_estudio(
             self.fields['tipo_estudio'].queryset, convenio,
@@ -341,10 +364,10 @@ class AgendarCitaPrivadoForm(forms.Form):
         widget=TipoEstudioSelect(),
     )
     modalidad = forms.ChoiceField(
-        label='Grupo de estudio',
-        choices=[('', 'Todos los grupos')] + list(TipoEstudio.MODALIDAD_CHOICES),
+        label='Modalidad',
+        choices=[],
         required=False,
-        help_text='Elegí el grupo para ver solo los estudios de ese tipo.',
+        help_text='Elegí la modalidad para ver solo los estudios de ese tipo.',
     )
     radiologo = forms.ModelChoiceField(
         label='Radiólogo asignado',
@@ -362,6 +385,15 @@ class AgendarCitaPrivadoForm(forms.Form):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields['modalidad'].choices = [
+            ('', 'Todas las modalidades')
+        ] + [
+            (m.codigo, m.nombre)
+            for m in Modalidad.objects.filter(
+                activo=True,
+                codigo__isnull=False
+            ).exclude(codigo='').order_by('nombre')
+        ]
         self.fields['fecha_nacimiento'].widget.attrs['max'] = timezone.localdate().isoformat()
         queryset = self.fields['tipo_estudio'].queryset.prefetch_related('precios')
         self.fields['tipo_estudio'].queryset = queryset
@@ -543,6 +575,29 @@ class IngresarCorreoEnvioForm(forms.Form):
         return correo
 
 
+class EditarContactoPacienteForm(forms.Form):
+    """Usado desde "Estudios realizados" para corregir el teléfono o el
+    correo de un paciente sin salir de esa pantalla -- por ejemplo cuando
+    el correo estaba mal escrito y por eso el envío (automático o manual)
+    no llegó. Ambos campos son opcionales: se puede corregir uno solo."""
+
+    telefono = forms.CharField(max_length=20, required=False, validators=[validar_telefono_pais])
+    correo = forms.EmailField(
+        label='Correo electrónico', max_length=254, required=False,
+        widget=forms.EmailInput(attrs={
+            'placeholder': 'paciente@correo.com',
+            'autocomplete': 'email',
+        }),
+    )
+
+    def clean_correo(self):
+        correo = self.cleaned_data.get('correo', '').strip().lower()
+        if correo:
+            validar_dominio_correo(correo)
+            validar_correo_existente(correo)
+        return correo
+
+
 class ProcesarTicketForm(forms.Form):
     """Convierte un ticket en espera directamente en una orden de trabajo
     para el técnico (se salta la revisión del radiólogo: el paciente ya
@@ -552,6 +607,17 @@ class ProcesarTicketForm(forms.Form):
         queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
         label='Tipo de estudio',
     )
+    codigo_igss = forms.CharField(
+        label='Código IGSS',
+        max_length=50,
+        required=False,
+        help_text='Código de orden/autorización que emite IGSS para este estudio.',
+    )
+    medico_tratante = forms.ModelChoiceField(
+        label='Médico tratante',
+        required=False,
+        queryset=MedicoTratante.objects.filter(activo=True).order_by('nombre'),
+    )
     motivo = forms.CharField(
         label='Motivo / indicación clínica',
         widget=forms.Textarea(attrs={'rows': 4}),
@@ -560,21 +626,39 @@ class ProcesarTicketForm(forms.Form):
 
 
 class CrearTipoEstudioForm(forms.ModelForm):
+    modalidad = forms.ChoiceField(
+        label='Modalidad',
+        choices=[],
+    )
+
     class Meta:
         model = TipoEstudio
         fields = ('nombre', 'modalidad', 'duracion_minutos')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        self.fields['modalidad'].choices = [
+            (m.codigo, m.nombre)
+            for m in Modalidad.objects.filter(
+                activo=True,
+                codigo__isnull=False
+            ).exclude(codigo='').order_by('nombre')
+        ]
+
         actuales = {}
         if self.instance and self.instance.pk:
             actuales = {
                 (p.convenio, p.horario_habil): p.precio
                 for p in self.instance.precios.all()
             }
+
         for campo, convenio, habil, etiqueta in PRECIOS_ESTUDIO:
             self.fields[campo] = forms.DecimalField(
-                label=f'Precio {etiqueta}', max_digits=8, decimal_places=2, min_value=0,
+                label=f'Precio {etiqueta}',
+                max_digits=8,
+                decimal_places=2,
+                min_value=0,
                 initial=actuales.get((convenio, habil), 0),
             )
 
@@ -677,15 +761,28 @@ class SubirConstanciaFirmadaForm(forms.Form):
 
 
 class CrearOrdenPagoForm(forms.Form):
-    combo = forms.ModelChoiceField(
-        queryset=Combo.objects.filter(activo=True).order_by('nombre'),
-        required=False,
-        label='Combo o tarifa preferencial',
+    """Agrupa TODOS los estudios pendientes de cobro de un convenio dentro
+    de un rango de fechas en una sola orden de pago -- para liquidaciones
+    institucionales (COEX/Emergencia IGSS) que cubren muchos pacientes a la
+    vez, no una sola visita de un mismo paciente (ver crear_orden_pago)."""
+
+    convenio = forms.ChoiceField(
+        choices=[(Cita.CONVENIO_COEX, 'COEX'), (Cita.CONVENIO_EMERGENCIA_IGSS, 'Emergencia IGSS')],
+        label='Convenio',
     )
+    desde = forms.DateField(label='Desde', widget=forms.DateInput(attrs={'type': 'date'}))
+    hasta = forms.DateField(label='Hasta', widget=forms.DateInput(attrs={'type': 'date'}))
     notas = forms.CharField(
         label='Notas', max_length=255, required=False,
         widget=forms.Textarea(attrs={'rows': 2}),
     )
+
+    def clean(self):
+        cleaned = super().clean()
+        desde, hasta = cleaned.get('desde'), cleaned.get('hasta')
+        if desde and hasta and desde > hasta:
+            raise forms.ValidationError('La fecha "desde" no puede ser posterior a "hasta".')
+        return cleaned
 
 
 class AgregarEstudioExtraForm(forms.Form):
@@ -702,6 +799,14 @@ class AgregarEstudioExtraForm(forms.Form):
     notas = forms.CharField(
         label='Notas (opcional)', max_length=255, required=False,
         widget=forms.TextInput(attrs={'placeholder': 'Ej.: se agregó contraste adicional'}),
+    )
+    procesar_ahora = forms.BooleanField(
+        label='Procesar ahora',
+        required=False,
+        help_text=(
+            'El técnico va a poder subir las imágenes de este estudio ya mismo, '
+            'sin esperar a que subas el informe (igual que un combo).'
+        ),
     )
 
 
@@ -811,6 +916,10 @@ class AdjuntarImagenesForm(forms.Form):
         ),
         widget=MultipleFileInput(attrs={'webkitdirectory': True, 'directory': True}),
     )
+    # A cuál estudio de la cita corresponde esta carga (uno solo si no es
+    # combo, ver Cita.estudios) -- oculto en el template cuando hay uno
+    # solo, visible por bloque cuando hay varios.
+    tipo_estudio = forms.ModelChoiceField(queryset=TipoEstudio.objects.all(), widget=forms.HiddenInput)
 
     def clean_imagenes(self):
         archivos = self.cleaned_data['imagenes']
@@ -825,23 +934,37 @@ class AdjuntarImagenesForm(forms.Form):
 
 
 class AdjuntarInformeForm(forms.Form):
-    informe_texto = forms.CharField(
-        label='Informe (texto)',
-        widget=forms.Textarea(attrs={'rows': 8}),
-        required=False,
-    )
-    informe_archivo = forms.FileField(
-        label='Informe (PDF)',
-        required=False,
-    )
+    """Un textarea + un archivo PDF por cada estudio de la cita (uno solo
+    si no es un combo, ver Cita.estudios) -- campos `texto_<tipo_estudio.id>`
+    / `archivo_<tipo_estudio.id>`. Se puede guardar el informe de un solo
+    estudio a la vez: no hace falta completar los demás en el mismo envío
+    (la orden solo se puede enviar al paciente cuando están todos, ver
+    OrdenTrabajo.tiene_informe)."""
+
+    def __init__(self, *args, estudios, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.estudios = list(estudios)
+        for estudio in self.estudios:
+            self.fields[f'texto_{estudio.id}'] = forms.CharField(
+                label='Informe (texto)', widget=forms.Textarea(attrs={'rows': 8}), required=False,
+            )
+            self.fields[f'archivo_{estudio.id}'] = forms.FileField(label='Informe (PDF)', required=False)
+
+    def valores_para(self, estudio):
+        return self.cleaned_data.get(f'texto_{estudio.id}'), self.cleaned_data.get(f'archivo_{estudio.id}')
 
     def clean(self):
         cleaned = super().clean()
-        if not cleaned.get('informe_texto') and not cleaned.get('informe_archivo'):
+        algo_completo = False
+        for estudio in self.estudios:
+            texto = cleaned.get(f'texto_{estudio.id}')
+            archivo = cleaned.get(f'archivo_{estudio.id}')
+            if texto or archivo:
+                algo_completo = True
+            if archivo and not archivo.name.lower().endswith('.pdf'):
+                self.add_error(f'archivo_{estudio.id}', 'El archivo adjunto debe ser un PDF.')
+        if not algo_completo:
             raise forms.ValidationError(
-                'Escribe el informe, adjunta un archivo, o ambos.'
+                'Escribe el informe de al menos un estudio, adjunta un archivo, o ambos.'
             )
-        archivo = cleaned.get('informe_archivo')
-        if archivo and not archivo.name.lower().endswith('.pdf'):
-            raise forms.ValidationError('El archivo adjunto debe ser un PDF.')
         return cleaned

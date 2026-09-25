@@ -4,23 +4,27 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from accounts.models import Bitacora
+from accounts.models import Bitacora, RolAdicional
 from pacientes import horarios
+from pacientes.correos import enviar_resultados
 from pacientes.forms import AgendarCitaForm, RegistrarTicketForm, validar_telefono_pais
 from pacientes.models import (
     CambioEstudioProgramado,
     Cita,
     Cobro,
     Combo,
-    DetalleOrdenPago,
     EstudioExtra,
     HistorialPrecioEstudio,
     ImagenEstudio,
+    InformeEstudio,
+    MedicoTratante,
+    Modalidad,
     Notificacion,
     OrdenPago,
     OrdenTrabajo,
@@ -302,10 +306,13 @@ class VisorEstudioTests(TestCase):
         )
         self.orden = OrdenTrabajo.objects.create(
             cita=self.cita, motivo='x', creada_por=self.recepcionista,
-            informe_texto='Sin hallazgos.', resultados_enviados_en=timezone.now(),
+            resultados_enviados_en=timezone.now(),
+        )
+        self.informe = InformeEstudio.objects.create(
+            orden=self.orden, tipo_estudio=self.estudio, texto='Sin hallazgos.',
         )
         self.imagen = ImagenEstudio.objects.create(
-            orden=self.orden, subida_por=self.tecnico, seleccionada=True,
+            orden=self.orden, tipo_estudio=self.estudio, subida_por=self.tecnico, seleccionada=True,
             archivo=SimpleUploadedFile('img.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
         )
         token = self.orden.asegurar_token_publico()
@@ -469,8 +476,9 @@ class OrdenTrabajoModelTests(TestCase):
 
     def test_tiene_informe_es_verdadero_con_texto(self):
         orden = OrdenTrabajo.objects.create(
-            cita=self.cita, motivo='Dolor torácico', creada_por=self.usuario, informe_texto='Sin hallazgos.',
+            cita=self.cita, motivo='Dolor torácico', creada_por=self.usuario,
         )
+        InformeEstudio.objects.create(orden=orden, tipo_estudio=self.cita.tipo_estudio, texto='Sin hallazgos.')
         self.assertTrue(orden.tiene_informe)
 
     def test_tiene_imagenes_refleja_las_imagenes_asociadas(self):
@@ -552,6 +560,53 @@ class CalendarioRadiologoTests(TestCase):
         self.assertEqual(radiologos, {'Radiologo Uno', 'Radiologo Dos'})
         clave = f"{self.dia.isoformat()}|08:00"
         self.assertIn(clave, r.context['slots_detalle'])
+
+
+class CalendarioReagendarTests(TestCase):
+    """Bug: al reagendar, el calendario mostraba TODOS los horarios futuros
+    como si estuvieran libres (la rama del template usaba `celda.cantidad`,
+    un campo que ya no existe en el contexto), sin fijarse si ya había una
+    cita ahí. Ahora la vista de reagendar usa la misma distinción
+    ocupado/libre que el calendario normal de agendar."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_reagendar_cal', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(self.recepcion)
+        self.estudio = TipoEstudio.objects.create(nombre='RX reagendar cal')
+        # Un día laborable futuro para que ninguna hora quede "pasada" (el
+        # calendario no muestra domingos).
+        self.dia = timezone.localdate() + datetime.timedelta(days=1)
+        while self.dia.weekday() == 6:
+            self.dia += datetime.timedelta(days=1)
+        self.cita_ausente = crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, estado=Cita.ESTADO_AUSENTE,
+            fecha=self.dia, hora=datetime.time(8, 0),
+            paciente=crear_paciente(dpi='9990001112223'),
+        )
+        self.cita_ocupada = crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, estado=Cita.ESTADO_AGENDADA,
+            fecha=self.dia, hora=datetime.time(10, 0),
+            paciente=crear_paciente(dpi='9990001112224'),
+        )
+
+    def test_no_ofrece_reagendar_a_un_horario_ocupado(self):
+        respuesta = self.client.get(reverse('calendario_privado'), {
+            'semana': self.dia.isoformat(), 'reagendar': self.cita_ausente.id,
+        })
+        html = respuesta.content.decode('utf-8')
+        reagendar_url = reverse('confirmar_reagenda_privado', args=[self.cita_ausente.id])
+
+        self.assertIn('Ocupado', html)
+        self.assertNotIn(f'{reagendar_url}?fecha={self.dia.isoformat()}&hora=10:00', html)
+
+    def test_ofrece_reagendar_a_un_horario_libre(self):
+        respuesta = self.client.get(reverse('calendario_privado'), {
+            'semana': self.dia.isoformat(), 'reagendar': self.cita_ausente.id,
+        })
+        html = respuesta.content.decode('utf-8')
+        reagendar_url = reverse('confirmar_reagenda_privado', args=[self.cita_ausente.id])
+
+        self.assertIn(f'{reagendar_url}?fecha={self.dia.isoformat()}&hora=09:00', html)
 
 
 class ListaEstudiosTests(TestCase):
@@ -1310,6 +1365,34 @@ class HistorialPacientesBusquedaTests(TestCase):
         self.assertContains(respuesta, f'Expediente: {self.paciente.expediente}')
 
 
+class RolAdicionalAccesoAPantallasTests(TestCase):
+    """Un usuario con un rol adicional (ver accounts.models.RolAdicional)
+    puede entrar de verdad a las pantallas de ese rol, no solo verlas
+    listadas en el panel."""
+
+    def setUp(self):
+        self.tecnico = crear_usuario('tec_rol_extra', rol=Usuario.ROL_TECNICO_IMAGENES)
+        self.client.force_login(self.tecnico)
+
+    def test_sin_rol_adicional_no_puede_ver_solicitudes_de_radiologo(self):
+        respuesta = self.client.get(reverse('solicitudes_pendientes'))
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_con_rol_adicional_de_radiologo_puede_ver_solicitudes(self):
+        RolAdicional.objects.create(usuario=self.tecnico, rol=Usuario.ROL_MEDICO_RADIOLOGO)
+
+        respuesta = self.client.get(reverse('solicitudes_pendientes'))
+
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_sigue_pudiendo_ver_sus_propias_ordenes_pendientes_de_tecnico(self):
+        RolAdicional.objects.create(usuario=self.tecnico, rol=Usuario.ROL_MEDICO_RADIOLOGO)
+
+        respuesta = self.client.get(reverse('ordenes_pendientes'))
+
+        self.assertEqual(respuesta.status_code, 200)
+
+
 class BuscarPacientePorDpiViewTests(TestCase):
     """Endpoint que usan Agendar cita y Registrar Ticket para autocompletar
     los datos del paciente por DPI, en vez de volver a escribirlos."""
@@ -1509,6 +1592,23 @@ class AgendarCitaViewTests(TestCase):
             1,
         )
         self.assertContains(respuesta, 'ya tiene agendado ese mismo estudio')
+
+    def test_guarda_codigo_igss_y_medico_tratante(self):
+        medico = MedicoTratante.objects.create(nombre='Dr. Juan Pérez')
+        datos = dict(self.datos_formulario, codigo_igss='ORD-12345', medico_tratante=medico.id)
+
+        self.client.post(self._url(), datos)
+
+        cita = Cita.objects.get(paciente__dpi='2020202020202')
+        self.assertEqual(cita.codigo_igss, 'ORD-12345')
+        self.assertEqual(cita.medico_tratante, medico)
+
+    def test_codigo_igss_y_medico_tratante_son_opcionales(self):
+        self.client.post(self._url(), self.datos_formulario)
+
+        cita = Cita.objects.get(paciente__dpi='2020202020202')
+        self.assertEqual(cita.codigo_igss, '')
+        self.assertIsNone(cita.medico_tratante)
 
 
 class PantallaTurnosViewTests(TestCase):
@@ -1887,6 +1987,22 @@ class ProcesarTicketEmergenciaViewTests(TestCase):
         self.assertEqual(len(ordenes), 1)
         self.assertEqual(ordenes[0].cita.paciente, self.paciente)
 
+    def test_guarda_codigo_igss_y_medico_tratante(self):
+        medico = MedicoTratante.objects.create(nombre='Dra. Ana López')
+
+        self.client.post(
+            reverse('procesar_ticket_emergencia', args=[self.ticket.id]),
+            {
+                'tipo_estudio': self.tipo_estudio.id, 'motivo': 'Control.',
+                'codigo_igss': 'IGSS-999', 'medico_tratante': medico.id,
+            },
+        )
+
+        self.ticket.refresh_from_db()
+        cita = self.ticket.cita
+        self.assertEqual(cita.codigo_igss, 'IGSS-999')
+        self.assertEqual(cita.medico_tratante, medico)
+
     def test_no_se_puede_procesar_dos_veces_el_mismo_ticket(self):
         self.client.post(
             reverse('procesar_ticket_emergencia', args=[self.ticket.id]),
@@ -2029,7 +2145,10 @@ class NotificacionesTests(TestCase):
 
         self.client.post(
             reverse('adjuntar_imagenes', args=[orden.id]),
-            {'imagenes': [SimpleUploadedFile('foto.jpg', b'contenido', content_type='image/jpeg')]},
+            {
+                'tipo_estudio': cita.tipo_estudio_id,
+                'imagenes': [SimpleUploadedFile('foto.jpg', b'contenido', content_type='image/jpeg')],
+            },
         )
 
         notificacion = Notificacion.objects.get(destinatario=self.radiologo, cita=cita)
@@ -2043,7 +2162,10 @@ class NotificacionesTests(TestCase):
 
         self.client.post(
             reverse('adjuntar_imagenes', args=[orden.id]),
-            {'imagenes': [SimpleUploadedFile('foto.jpg', b'contenido', content_type='image/jpeg')]},
+            {
+                'tipo_estudio': cita.tipo_estudio_id,
+                'imagenes': [SimpleUploadedFile('foto.jpg', b'contenido', content_type='image/jpeg')],
+            },
         )
 
         for radiologo in (self.radiologo, otro_radiologo):
@@ -2058,7 +2180,7 @@ class NotificacionesTests(TestCase):
         cita = crear_cita(self.recepcionista, radiologo=self.radiologo, estado=Cita.ESTADO_EN_PROCESO)
         orden = OrdenTrabajo.objects.create(cita=cita, motivo='Control.', creada_por=self.recepcionista, validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO)
         ImagenEstudio.objects.create(
-            orden=orden,
+            orden=orden, tipo_estudio=cita.tipo_estudio,
             archivo=SimpleUploadedFile('foto.jpg', b'contenido', content_type='image/jpeg'),
             subida_por=self.tecnico,
         )
@@ -2066,7 +2188,7 @@ class NotificacionesTests(TestCase):
 
         self.client.post(
             reverse('adjuntar_informe', args=[cita.id]),
-            {'informe_texto': 'Sin hallazgos patológicos.'},
+            {f'texto_{cita.tipo_estudio_id}': 'Sin hallazgos patológicos.'},
         )
 
         for recepcionista in (self.recepcionista, otro_recepcionista):
@@ -2198,6 +2320,63 @@ class ComboModelTests(TestCase):
         combo.estudios.set([self.e1])
         self.assertEqual(combo.precio_referencia, Decimal('200.00'))
 
+    def test_sincronizar_tipo_estudio_crea_modalidad_y_tipo_estudio_espejo(self):
+        combo = Combo.objects.create(nombre='Combo espejo')
+        combo.estudios.set([self.e1, self.e2])
+
+        tipo_estudio = combo.sincronizar_tipo_estudio()
+
+        modalidad = Modalidad.objects.get(codigo='combo')
+        self.assertEqual(modalidad.nombre, 'Combo')
+        self.assertEqual(tipo_estudio.nombre, 'Combo espejo')
+        self.assertEqual(tipo_estudio.modalidad, 'combo')
+        self.assertEqual(
+            tipo_estudio.precio_para(Cita.CONVENIO_PRIVADO, True), Decimal('500.00'),
+        )
+        combo.refresh_from_db()
+        self.assertEqual(combo.tipo_estudio_generado_id, tipo_estudio.id)
+
+    def test_sincronizar_tipo_estudio_es_idempotente_y_recalcula_el_precio(self):
+        combo = Combo.objects.create(
+            nombre='Combo recalculo', aplica_descuento=True, porcentaje_descuento=Decimal('10'),
+        )
+        combo.estudios.set([self.e1, self.e2])
+        primero = combo.sincronizar_tipo_estudio()
+
+        combo.porcentaje_descuento = Decimal('20')
+        combo.save()
+        segundo = combo.sincronizar_tipo_estudio()
+
+        self.assertEqual(primero.id, segundo.id)
+        self.assertEqual(TipoEstudio.objects.filter(nombre='Combo recalculo').count(), 1)
+        self.assertEqual(
+            segundo.precio_para(Cita.CONVENIO_PRIVADO, True), Decimal('400.00'),
+        )
+
+    def test_sincronizar_tipo_estudio_asigna_la_interseccion_de_radiologos(self):
+        dra_ambos = crear_usuario('dra_ambos_combo', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        dra_solo_e1 = crear_usuario('dra_solo_e1_combo', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.e1.radiologos.set([dra_ambos, dra_solo_e1])
+        self.e2.radiologos.set([dra_ambos])
+
+        combo = Combo.objects.create(nombre='Combo radiólogos')
+        combo.estudios.set([self.e1, self.e2])
+        tipo_estudio = combo.sincronizar_tipo_estudio()
+
+        self.assertEqual(list(tipo_estudio.radiologos.all()), [dra_ambos])
+
+    def test_sincronizar_tipo_estudio_sin_radiologo_en_comun_deja_la_lista_vacia(self):
+        dra_solo_e1 = crear_usuario('dra_solo_e1_vacio', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        dra_solo_e2 = crear_usuario('dra_solo_e2_vacio', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.e1.radiologos.set([dra_solo_e1])
+        self.e2.radiologos.set([dra_solo_e2])
+
+        combo = Combo.objects.create(nombre='Combo sin radiólogo en común')
+        combo.estudios.set([self.e1, self.e2])
+        tipo_estudio = combo.sincronizar_tipo_estudio()
+
+        self.assertEqual(list(tipo_estudio.radiologos.all()), [])
+
 
 class ComboViewTests(TestCase):
     """Los combos (catálogo) se administran íntegro por un administrador,
@@ -2225,12 +2404,178 @@ class ComboViewTests(TestCase):
             'activo': 'on', 'aplica_descuento': '', 'porcentaje_descuento': '0',
         })
         self.assertRedirects(respuesta, reverse('lista_combos'))
-        self.assertTrue(Combo.objects.filter(nombre='Combo nuevo').exists())
+        combo = Combo.objects.get(nombre='Combo nuevo')
+        self.assertTrue(combo.tipo_estudio_generado_id)
+        self.assertEqual(combo.tipo_estudio_generado.modalidad, 'combo')
+
+    def test_crear_combo_avisa_si_no_hay_radiologo_que_haga_todos_los_estudios(self):
+        otro_estudio = TipoEstudio.objects.create(nombre='RX combo view 2')
+        dra1 = crear_usuario('dra_combo_view_1', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        dra2 = crear_usuario('dra_combo_view_2', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.estudio.radiologos.set([dra1])
+        otro_estudio.radiologos.set([dra2])
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.post(reverse('crear_combo'), {
+            'nombre': 'Combo sin radiólogo en común',
+            'estudios': [self.estudio.id, otro_estudio.id],
+            'activo': 'on', 'aplica_descuento': '', 'porcentaje_descuento': '0',
+        }, follow=True)
+
+        self.assertContains(respuesta, 'Ningún radiólogo hace todos los estudios')
+
+    def test_crear_combo_no_avisa_si_hay_radiologo_en_comun(self):
+        dra = crear_usuario('dra_combo_view_comun', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.estudio.radiologos.set([dra])
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.post(reverse('crear_combo'), {
+            'nombre': 'Combo con radiólogo en común', 'estudios': [self.estudio.id],
+            'activo': 'on', 'aplica_descuento': '', 'porcentaje_descuento': '0',
+        }, follow=True)
+
+        self.assertNotContains(respuesta, 'Ningún radiólogo hace todos los estudios')
 
     def test_recepcionista_no_puede_crear_combo(self):
         self.client.force_login(self.recep)
         respuesta = self.client.get(reverse('crear_combo'))
         self.assertNotEqual(respuesta.status_code, 200)
+
+
+class ComboFlujoCompletoTests(TestCase):
+    """Una cita de un combo (ver Combo.sincronizar_tipo_estudio) trae
+    imágenes e informe por separado para cada estudio que lo compone: el
+    técnico sube y la radióloga informa uno por uno, y el estudio solo se
+    puede enviar al paciente cuando están completos todos (ver
+    OrdenTrabajo.tiene_informe/imagenes_completas)."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_combo_flujo', rol=Usuario.ROL_RECEPCIONISTA)
+        self.tecnico = crear_usuario('tec_combo_flujo', rol=Usuario.ROL_TECNICO_IMAGENES)
+        self.radiologo = crear_usuario('rad_combo_flujo', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.torax = TipoEstudio.objects.create(nombre='Tórax combo flujo')
+        self.columna = TipoEstudio.objects.create(nombre='Columna combo flujo')
+        for estudio, precio in ((self.torax, 100), (self.columna, 150)):
+            estudio.radiologos.add(self.radiologo)
+            PrecioEstudio.objects.create(
+                tipo_estudio=estudio, convenio=Cita.CONVENIO_PRIVADO,
+                horario_habil=True, precio=Decimal(precio),
+            )
+        self.combo = Combo.objects.create(nombre='Combo tórax-columna flujo')
+        self.combo.estudios.set([self.torax, self.columna])
+        self.tipo_estudio_combo = self.combo.sincronizar_tipo_estudio()
+
+        self.paciente = crear_paciente(dpi='7778889990001', correo='paciente-combo@correo.com')
+        self.cita = crear_cita(
+            self.recepcion, paciente=self.paciente, tipo_estudio=self.tipo_estudio_combo,
+            estado=Cita.ESTADO_EN_PROCESO, radiologo=self.radiologo,
+        )
+        self.orden = OrdenTrabajo.objects.create(
+            cita=self.cita, motivo='Control combo', creada_por=self.recepcion,
+            validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO,
+        )
+
+    def _subir(self, tipo_estudio):
+        self.client.force_login(self.tecnico)
+        return self.client.post(
+            reverse('adjuntar_imagenes_lote', args=[self.orden.id]),
+            {
+                'tipo_estudio': tipo_estudio.id,
+                'imagenes': SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+            },
+        )
+
+    def test_el_combo_trae_los_dos_estudios(self):
+        self.assertEqual(set(self.cita.estudios), {self.torax, self.columna})
+
+    def test_la_orden_sigue_pendiente_hasta_subir_las_imagenes_de_los_dos_estudios(self):
+        self._subir(self.torax)
+        respuesta = self.client.get(reverse('ordenes_pendientes'))
+        self.assertIn(self.orden, respuesta.context['ordenes'])
+        self.assertFalse(self.orden.imagenes_completas)
+
+        self._subir(self.columna)
+        self.orden.refresh_from_db()
+        self.assertTrue(self.orden.imagenes_completas)
+        respuesta = self.client.get(reverse('ordenes_pendientes'))
+        self.assertNotIn(self.orden, respuesta.context['ordenes'])
+
+    def test_finalizar_solo_redirige_cuando_estan_las_imagenes_de_todo_el_combo(self):
+        self._subir(self.torax)
+        respuesta = self.client.post(
+            reverse('adjuntar_imagenes_finalizar', args=[self.orden.id]), {'tipo_estudio': self.torax.id},
+        )
+        self.assertEqual(respuesta.json()['completo'], False)
+        self.assertIsNone(respuesta.json()['redirect_url'])
+
+        self._subir(self.columna)
+        respuesta = self.client.post(
+            reverse('adjuntar_imagenes_finalizar', args=[self.orden.id]), {'tipo_estudio': self.columna.id},
+        )
+        self.assertEqual(respuesta.json()['completo'], True)
+        self.assertEqual(respuesta.json()['redirect_url'], reverse('ordenes_pendientes'))
+
+    def test_el_informe_se_guarda_por_estudio_y_la_cita_no_avanza_hasta_completarlos(self):
+        self._subir(self.torax)
+        self._subir(self.columna)
+        self.client.force_login(self.radiologo)
+
+        self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
+            f'texto_{self.torax.id}': 'Tórax sin hallazgos.',
+        })
+        self.cita.refresh_from_db()
+        self.assertEqual(self.cita.estado, Cita.ESTADO_EN_PROCESO)
+        self.assertTrue(InformeEstudio.objects.filter(orden=self.orden, tipo_estudio=self.torax).exists())
+
+        self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
+            f'texto_{self.columna.id}': 'Columna sin hallazgos.',
+        })
+        self.cita.refresh_from_db()
+        self.assertEqual(self.cita.estado, Cita.ESTADO_PROCESADA)
+        self.orden.refresh_from_db()
+        self.assertTrue(self.orden.tiene_informe)
+
+    def test_enviar_estudio_bloqueado_hasta_completar_el_informe_del_combo(self):
+        self._subir(self.torax)
+        self._subir(self.columna)
+        self.client.force_login(self.radiologo)
+        self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
+            f'texto_{self.torax.id}': 'Tórax sin hallazgos.',
+        })
+
+        # La cita sigue EN_PROCESO (no PROCESADA): enviar_estudio, que exige
+        # ESTADO_PROCESADA, ni siquiera encuentra la cita.
+        self.client.force_login(self.recepcion)
+        respuesta = self.client.post(reverse('enviar_estudio', args=[self.cita.id]))
+        self.assertEqual(respuesta.status_code, 404)
+
+        self.client.force_login(self.radiologo)
+        self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
+            f'texto_{self.columna.id}': 'Columna sin hallazgos.',
+        })
+        self.client.force_login(self.recepcion)
+        with override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend'):
+            respuesta = self.client.post(reverse('enviar_estudio', args=[self.cita.id]))
+        self.assertEqual(respuesta.status_code, 302)
+        self.orden.refresh_from_db()
+        self.assertIsNotNone(self.orden.resultados_enviados_en)
+
+    def test_el_correo_adjunta_un_pdf_por_cada_estudio_del_combo(self):
+        InformeEstudio.objects.create(
+            orden=self.orden, tipo_estudio=self.torax, texto='x',
+            archivo=SimpleUploadedFile('torax.pdf', b'%PDF-1.4 fake', content_type='application/pdf'),
+        )
+        InformeEstudio.objects.create(
+            orden=self.orden, tipo_estudio=self.columna, texto='x',
+            archivo=SimpleUploadedFile('columna.pdf', b'%PDF-1.4 fake', content_type='application/pdf'),
+        )
+
+        with override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend'):
+            error = enviar_resultados(self.orden)
+
+        self.assertEqual(error, '')
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(len(mail.outbox[0].attachments), 2)
 
 
 class CajaTests(TestCase):
@@ -2469,7 +2814,7 @@ class CajaTests(TestCase):
         html = self.client.get(
             reverse('historial_paciente', args=[paciente.id])
         ).content.decode('utf-8')
-        self.assertIn('Cobro pendiente', html)
+        self.assertIn('Pendiente de pago', html)
         self.assertIn('tiene un cobro pendiente', html)
         self.assertIn('<button type="button" class="btn btn-primary btn-sm" disabled', html)
         self.assertNotIn(f"{reverse('enviar_estudio', args=[cita.id])}", html)
@@ -2491,6 +2836,226 @@ class CajaTests(TestCase):
         self.assertFalse(_cobro_bloquea_envio(cita))
 
 
+class HistorialConEstudiosEnProcesoTests(TestCase):
+    """"Estudios realizados" ahora también incluye los que todavía están en
+    proceso, con etiquetas de qué les falta (pago, imágenes, informe), para
+    que recepción les pueda hacer seguimiento sin esperar a que se
+    completen (ver ESTADOS_HISTORIAL en views.py)."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_en_proceso', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(self.recepcion)
+
+    def test_cita_en_proceso_aparece_en_el_listado_de_pacientes(self):
+        paciente = crear_paciente(dpi='6006006006001')
+        crear_cita(self.recepcion, paciente=paciente, estado=Cita.ESTADO_EN_PROCESO)
+
+        respuesta = self.client.get(reverse('historial_pacientes'))
+        encontrados = [p.id for p in respuesta.context['pacientes']]
+        self.assertIn(paciente.id, encontrados)
+
+    def test_cita_en_proceso_muestra_las_etiquetas_de_lo_que_falta_y_oculta_el_envio(self):
+        paciente = crear_paciente(dpi='6006006006002')
+        cita = crear_cita(self.recepcion, paciente=paciente, estado=Cita.ESTADO_EN_PROCESO)
+        OrdenTrabajo.objects.create(
+            cita=cita, motivo='x', creada_por=self.recepcion,
+            validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO,
+        )
+
+        html = self.client.get(reverse('historial_paciente', args=[paciente.id])).content.decode('utf-8')
+
+        self.assertIn('Pendiente de informe', html)
+        self.assertIn('Pendiente de imágenes', html)
+        self.assertIn('Estudio en proceso: todavía no se puede enviar.', html)
+        self.assertNotIn(f"{reverse('enviar_estudio', args=[cita.id])}", html)
+
+    def test_cita_procesada_no_muestra_informe_pendiente_ni_imagenes_pendientes(self):
+        paciente = crear_paciente(dpi='6006006006003')
+        cita = crear_cita(self.recepcion, paciente=paciente, estado=Cita.ESTADO_PROCESADA)
+        orden = OrdenTrabajo.objects.create(
+            cita=cita, motivo='x', creada_por=self.recepcion,
+            validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO,
+        )
+        ImagenEstudio.objects.create(
+            orden=orden, tipo_estudio=cita.tipo_estudio,
+            archivo=SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+            subida_por=self.recepcion,
+        )
+
+        html = self.client.get(reverse('historial_paciente', args=[paciente.id])).content.decode('utf-8')
+
+        self.assertNotIn('Pendiente de informe', html)
+        self.assertNotIn('Pendiente de imágenes', html)
+
+
+class EditarContactoPacienteTests(TestCase):
+    """Desde "Estudios realizados" se puede corregir el teléfono y/o el
+    correo del paciente sin salir de esa pantalla -- por ejemplo cuando el
+    correo estaba mal escrito y por eso no llegó el envío."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_contacto', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(self.recepcion)
+        self.paciente = crear_paciente(
+            dpi='8008008008001', telefono='55551234', correo='viejo@example.com',
+        )
+
+    def test_actualiza_telefono_y_correo(self):
+        respuesta = self.client.post(
+            reverse('editar_contacto_paciente', args=[self.paciente.id]),
+            {'telefono': '55559999', 'correo': 'nuevo@example.com'},
+        )
+
+        self.assertRedirects(respuesta, reverse('historial_paciente', args=[self.paciente.id]))
+        self.paciente.refresh_from_db()
+        self.assertEqual(self.paciente.telefono, '55559999')
+        self.assertEqual(self.paciente.correo, 'nuevo@example.com')
+
+    def test_se_puede_corregir_solo_el_correo(self):
+        self.client.post(
+            reverse('editar_contacto_paciente', args=[self.paciente.id]),
+            {'telefono': '', 'correo': 'corregido@example.com'},
+        )
+
+        self.paciente.refresh_from_db()
+        self.assertEqual(self.paciente.telefono, '55551234')
+        self.assertEqual(self.paciente.correo, 'corregido@example.com')
+
+    def test_correo_con_dominio_invalido_no_se_guarda(self):
+        respuesta = self.client.post(
+            reverse('editar_contacto_paciente', args=[self.paciente.id]),
+            {'telefono': '', 'correo': 'roto@dominio-invalido'},
+            follow=True,
+        )
+
+        self.paciente.refresh_from_db()
+        self.assertEqual(self.paciente.correo, 'viejo@example.com')
+        mensajes = [str(m) for m in respuesta.context['messages']]
+        self.assertTrue(any('correo' in m.lower() for m in mensajes))
+
+    def test_el_formulario_aparece_en_estudios_realizados(self):
+        crear_cita(self.recepcion, paciente=self.paciente, estado=Cita.ESTADO_EN_PROCESO)
+
+        html = self.client.get(
+            reverse('historial_paciente', args=[self.paciente.id])
+        ).content.decode('utf-8')
+
+        self.assertIn(reverse('editar_contacto_paciente', args=[self.paciente.id]), html)
+
+
+class EnvioAutomaticoEstudioTests(TestCase):
+    """Para convenio privado, con correo ya registrado, el estudio se envía
+    solo apenas se cumplen las 3 condiciones -- pago, imágenes e informe --
+    sin que recepción tenga que apretar "Enviar estudio" a mano (ver
+    _intentar_envio_automatico en views.py)."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_auto', rol=Usuario.ROL_RECEPCIONISTA)
+        self.caja = crear_usuario('caja_auto', rol=Usuario.ROL_RECEPCIONISTA, puede_operar_caja=True)
+        self.radiologo = crear_usuario('rad_auto', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+
+    def _preparar_cita(self, dpi, correo='paciente@example.com', convenio=Cita.CONVENIO_PRIVADO):
+        paciente = crear_paciente(dpi=dpi, correo=correo)
+        cita = crear_cita(
+            self.recepcion, paciente=paciente, convenio=convenio, estado=Cita.ESTADO_EN_PROCESO,
+        )
+        orden = OrdenTrabajo.objects.create(
+            cita=cita, motivo='x', creada_por=self.recepcion,
+            validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO,
+        )
+        ImagenEstudio.objects.create(
+            orden=orden, tipo_estudio=cita.tipo_estudio,
+            archivo=SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+            subida_por=self.recepcion,
+        )
+        return cita, orden
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_se_envia_solo_al_completar_el_informe_si_ya_estaba_pagado(self):
+        cita, orden = self._preparar_cita(dpi='7007007007001')
+        Cobro.objects.create(cita=cita).marcar_pagado(self.caja)
+
+        self.client.force_login(self.radiologo)
+        self.client.post(reverse('adjuntar_informe', args=[cita.id]), {
+            f'texto_{cita.tipo_estudio.id}': 'Sin hallazgos.',
+        })
+
+        cita.refresh_from_db()
+        orden.refresh_from_db()
+        self.assertEqual(cita.estado, Cita.ESTADO_PROCESADA)
+        self.assertIsNotNone(orden.resultados_enviados_en)
+        self.assertEqual(len(mail.outbox), 1)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_se_envia_solo_al_marcar_cobrado_si_el_informe_ya_estaba_completo(self):
+        cita, orden = self._preparar_cita(dpi='7007007007002')
+        Cobro.objects.create(cita=cita)
+
+        self.client.force_login(self.radiologo)
+        self.client.post(reverse('adjuntar_informe', args=[cita.id]), {
+            f'texto_{cita.tipo_estudio.id}': 'Sin hallazgos.',
+        })
+        orden.refresh_from_db()
+        self.assertIsNone(orden.resultados_enviados_en)  # completo, pero todavía no pagado
+
+        self.client.force_login(self.caja)
+        self.client.post(reverse('marcar_cobrado', args=[cita.id]), {
+            'forma_pago': Cobro.FORMA_EFECTIVO, 'numero_boleta': 'B-100', 'notas': '',
+        })
+
+        orden.refresh_from_db()
+        self.assertIsNotNone(orden.resultados_enviados_en)
+        self.assertEqual(len(mail.outbox), 1)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_no_se_envia_si_el_paciente_no_tiene_correo(self):
+        cita, orden = self._preparar_cita(dpi='7007007007003', correo='')
+        Cobro.objects.create(cita=cita).marcar_pagado(self.caja)
+
+        self.client.force_login(self.radiologo)
+        self.client.post(reverse('adjuntar_informe', args=[cita.id]), {
+            f'texto_{cita.tipo_estudio.id}': 'Sin hallazgos.',
+        })
+
+        orden.refresh_from_db()
+        self.assertIsNone(orden.resultados_enviados_en)
+        self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_no_se_envia_automatico_para_convenio_coex(self):
+        cita, orden = self._preparar_cita(dpi='7007007007004', convenio=Cita.CONVENIO_COEX)
+        Cobro.objects.create(cita=cita).marcar_pagado(self.caja)
+
+        self.client.force_login(self.radiologo)
+        self.client.post(reverse('adjuntar_informe', args=[cita.id]), {
+            f'texto_{cita.tipo_estudio.id}': 'Sin hallazgos.',
+        })
+
+        orden.refresh_from_db()
+        self.assertIsNone(orden.resultados_enviados_en)
+        self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_no_reenvia_si_ya_estaba_enviado(self):
+        from django.test import RequestFactory
+
+        from pacientes.views import _intentar_envio_automatico
+
+        cita, orden = self._preparar_cita(dpi='7007007007005')
+        cita.estado = Cita.ESTADO_PROCESADA
+        cita.save(update_fields=['estado'])
+        orden.resultados_enviados_en = timezone.now()
+        orden.save(update_fields=['resultados_enviados_en'])
+        Cobro.objects.create(cita=cita).marcar_pagado(self.caja)
+
+        request = RequestFactory().get('/')
+        request.user = self.caja
+        enviado = _intentar_envio_automatico(request, cita)
+
+        self.assertFalse(enviado)
+        self.assertEqual(len(mail.outbox), 0)
+
+
 class EstudioExtraTests(TestCase):
     """El radiólogo avisa que le realizó al paciente un estudio extra al
     agendado (solo aplica a Privado): sube el total que ve Caja y le
@@ -2499,6 +3064,7 @@ class EstudioExtraTests(TestCase):
     def setUp(self):
         self.recepcion = crear_usuario('recep_extra', rol=Usuario.ROL_RECEPCIONISTA)
         self.radiologo = crear_usuario('rad_extra', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.tecnico = crear_usuario('tec_extra', rol=Usuario.ROL_TECNICO_IMAGENES)
         self.estudio_agendado = TipoEstudio.objects.create(nombre='RX Torax agendado')
         PrecioEstudio.objects.create(
             tipo_estudio=self.estudio_agendado, convenio=Cita.CONVENIO_PRIVADO,
@@ -2593,13 +3159,13 @@ class EstudioExtraTests(TestCase):
         """El estudio extra ya no tiene su propio botón: se agrega al mismo
         tiempo que se guarda el informe, en un solo envío."""
         ImagenEstudio.objects.create(
-            orden=self.cita.orden_trabajo, subida_por=self.radiologo,
+            orden=self.cita.orden_trabajo, tipo_estudio=self.cita.tipo_estudio, subida_por=self.radiologo,
             archivo=SimpleUploadedFile('img.jpg', b'fake'),
         )
         self.client.force_login(self.radiologo)
 
         respuesta = self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
-            'informe_texto': 'Hallazgos sin complicaciones.',
+            f'texto_{self.cita.tipo_estudio_id}': 'Hallazgos sin complicaciones.',
             'tipo_estudio': self.estudio_extra.id,
             'notas': 'agregado junto con el informe',
         })
@@ -2620,20 +3186,121 @@ class EstudioExtraTests(TestCase):
         """Elegir un estudio extra es opcional: guardar el informe sin
         tocar ese campo no debe exigirlo ni crear nada."""
         ImagenEstudio.objects.create(
-            orden=self.cita.orden_trabajo, subida_por=self.radiologo,
+            orden=self.cita.orden_trabajo, tipo_estudio=self.cita.tipo_estudio, subida_por=self.radiologo,
             archivo=SimpleUploadedFile('img.jpg', b'fake'),
         )
         self.client.force_login(self.radiologo)
 
         respuesta = self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
-            'informe_texto': 'Hallazgos sin complicaciones.',
+            f'texto_{self.cita.tipo_estudio_id}': 'Hallazgos sin complicaciones.',
         })
 
         self.assertRedirects(respuesta, reverse('citas_procesadas'))
         self.assertFalse(EstudioExtra.objects.filter(cita=self.cita).exists())
 
+    def _subir_imagen(self, orden, tipo_estudio):
+        self.client.force_login(self.tecnico)
+        return self.client.post(
+            reverse('adjuntar_imagenes_lote', args=[orden.id]),
+            {
+                'tipo_estudio': tipo_estudio.id,
+                'imagenes': SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+            },
+        )
+
+    def test_sin_procesar_ahora_el_extra_no_entra_a_cita_estudios(self):
+        self._agregar()
+
+        self.assertEqual(self.cita.estudios, [self.estudio_agendado])
+
+    def test_procesar_ahora_agrega_el_estudio_a_cita_estudios(self):
+        self.client.force_login(self.radiologo)
+        self.client.post(
+            reverse('agregar_estudio_extra', args=[self.cita.id]),
+            {'tipo_estudio': self.estudio_extra.id, 'procesar_ahora': 'on'},
+        )
+
+        self.assertEqual(set(self.cita.estudios), {self.estudio_agendado, self.estudio_extra})
+
+    def test_procesar_ahora_notifica_al_tecnico(self):
+        self.client.force_login(self.radiologo)
+        self.client.post(
+            reverse('agregar_estudio_extra', args=[self.cita.id]),
+            {'tipo_estudio': self.estudio_extra.id, 'procesar_ahora': 'on'},
+        )
+
+        self.assertTrue(
+            Notificacion.objects.filter(
+                destinatario=self.tecnico, tipo=Notificacion.TIPO_ORDEN_PENDIENTE, cita=self.cita,
+            ).exists()
+        )
+
+    def test_sin_procesar_ahora_no_notifica_al_tecnico(self):
+        self._agregar()
+
+        self.assertFalse(
+            Notificacion.objects.filter(
+                destinatario=self.tecnico, tipo=Notificacion.TIPO_ORDEN_PENDIENTE, cita=self.cita,
+            ).exists()
+        )
+
+    def test_procesar_ahora_permite_que_el_tecnico_suba_imagenes_del_extra_sin_informe(self):
+        self.client.force_login(self.radiologo)
+        self.client.post(
+            reverse('agregar_estudio_extra', args=[self.cita.id]),
+            {'tipo_estudio': self.estudio_extra.id, 'procesar_ahora': 'on'},
+        )
+
+        respuesta = self._subir_imagen(self.cita.orden_trabajo, self.estudio_extra)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTrue(
+            ImagenEstudio.objects.filter(
+                orden=self.cita.orden_trabajo, tipo_estudio=self.estudio_extra,
+            ).exists()
+        )
+        # No hay ningún informe subido todavía -- ni del estudio agendado
+        # ni del extra -- y aun así se pudo subir la imagen del extra.
+        self.assertFalse(InformeEstudio.objects.filter(orden=self.cita.orden_trabajo).exists())
+
+    def test_procesar_ahora_deja_la_cita_en_proceso_hasta_completar_el_informe_del_extra(self):
+        """Igual que con un combo: si falta el informe de CUALQUIER estudio
+        de cita.estudios (acá, el extra marcado "procesar ahora"), la cita
+        no pasa a PROCESADA aunque el informe original ya esté completo."""
+        ImagenEstudio.objects.create(
+            orden=self.cita.orden_trabajo, tipo_estudio=self.cita.tipo_estudio, subida_por=self.radiologo,
+            archivo=SimpleUploadedFile('img.jpg', b'fake'),
+        )
+        self.client.force_login(self.radiologo)
+
+        respuesta = self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
+            f'texto_{self.cita.tipo_estudio_id}': 'Hallazgos sin complicaciones.',
+            'tipo_estudio': self.estudio_extra.id,
+            'procesar_ahora': 'on',
+        })
+
+        self.assertRedirects(respuesta, reverse('citas_procesadas'))
+        self.cita.refresh_from_db()
+        self.assertEqual(self.cita.estado, Cita.ESTADO_EN_PROCESO)
+
+        # Una vez el técnico sube la imagen del extra y se adjunta también
+        # su informe, ahí sí la cita pasa a PROCESADA.
+        self._subir_imagen(self.cita.orden_trabajo, self.estudio_extra)
+        self.client.force_login(self.radiologo)
+        respuesta = self.client.post(reverse('adjuntar_informe', args=[self.cita.id]), {
+            f'texto_{self.estudio_extra.id}': 'Sin hallazgos en el extra.',
+        })
+        self.assertRedirects(respuesta, reverse('citas_procesadas'))
+        self.cita.refresh_from_db()
+        self.assertEqual(self.cita.estado, Cita.ESTADO_PROCESADA)
+
 
 class OrdenPagoTests(TestCase):
+    """Una orden de pago agrupada cubre un convenio (COEX/Emergencia IGSS) y
+    un rango de fechas -- no un solo paciente: puede juntar estudios de
+    muchos pacientes distintos, como la liquidación semanal de un convenio
+    institucional (ver crear_orden_pago)."""
+
     def setUp(self):
         self.caja = crear_usuario('caja_orden', rol=Usuario.ROL_RECEPCIONISTA, puede_operar_caja=True)
         self.paciente = crear_paciente(dpi='7776665554443')
@@ -2644,26 +3311,33 @@ class OrdenPagoTests(TestCase):
                 tipo_estudio=estudio, convenio=Cita.CONVENIO_COEX,
                 horario_habil=True, precio=Decimal(precio),
             )
+        self.fecha = timezone.localdate()
         self.cita_a = crear_cita(
             self.caja, paciente=self.paciente, tipo_estudio=self.estudio_a,
             convenio=Cita.CONVENIO_COEX, estado=Cita.ESTADO_EN_PROCESO,
-            hora=datetime.time(9, 0),
+            fecha=self.fecha, hora=datetime.time(9, 0),
         )
         self.cita_b = crear_cita(
             self.caja, paciente=self.paciente, tipo_estudio=self.estudio_b,
             convenio=Cita.CONVENIO_COEX, estado=Cita.ESTADO_EN_PROCESO,
-            hora=datetime.time(9, 30),
+            fecha=self.fecha, hora=datetime.time(9, 30),
         )
         for cita in (self.cita_a, self.cita_b):
             OrdenTrabajo.objects.create(cita=cita, motivo='demo HU-058', creada_por=self.caja, validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO)
             Cobro.objects.create(cita=cita)
         self.client.force_login(self.caja)
 
-    def test_crea_orden_agrupada_para_mismo_paciente_y_convenio(self):
-        respuesta = self.client.post(reverse('crear_orden_pago'), {
-            'cita_ids': [self.cita_a.id, self.cita_b.id],
-            'notas': 'Orden global COEX',
-        })
+    def _crear_orden(self, **extra):
+        datos = {
+            'convenio': Cita.CONVENIO_COEX,
+            'desde': self.fecha.isoformat(),
+            'hasta': self.fecha.isoformat(),
+        }
+        datos.update(extra)
+        return self.client.post(reverse('crear_orden_pago'), datos)
+
+    def test_crea_orden_agrupada_por_convenio_y_rango_de_fechas(self):
+        respuesta = self._crear_orden(notas='Orden global COEX')
 
         self.assertRedirects(respuesta, reverse('pagos_pendientes'))
         orden = OrdenPago.objects.get()
@@ -2673,10 +3347,50 @@ class OrdenPagoTests(TestCase):
         self.assertEqual(orden.total, Decimal('180.00'))
         self.assertEqual(orden.detalles.count(), 2)
 
+    def test_permite_agrupar_estudios_de_pacientes_distintos(self):
+        otro = crear_cita(
+            self.caja, paciente=crear_paciente(dpi='7776665554444'),
+            tipo_estudio=self.estudio_a, convenio=Cita.CONVENIO_COEX,
+            estado=Cita.ESTADO_EN_PROCESO, fecha=self.fecha, hora=datetime.time(10, 0),
+        )
+        OrdenTrabajo.objects.create(cita=otro, motivo='demo HU-058', creada_por=self.caja, validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO)
+        Cobro.objects.create(cita=otro)
+
+        respuesta = self._crear_orden()
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
+        orden = OrdenPago.objects.get()
+        self.assertIsNone(orden.paciente)
+        self.assertEqual(orden.detalles.count(), 3)
+        pacientes = {d.cita.paciente_id for d in orden.detalles.all()}
+        self.assertEqual(pacientes, {self.paciente.id, otro.paciente_id})
+
+    def test_no_agrupa_estudios_fuera_del_rango_de_fechas(self):
+        fuera_de_rango = crear_cita(
+            self.caja, paciente=self.paciente, tipo_estudio=self.estudio_a,
+            convenio=Cita.CONVENIO_COEX, estado=Cita.ESTADO_EN_PROCESO,
+            fecha=self.fecha + datetime.timedelta(days=5), hora=datetime.time(9, 0),
+        )
+        OrdenTrabajo.objects.create(cita=fuera_de_rango, motivo='x', creada_por=self.caja, validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO)
+        Cobro.objects.create(cita=fuera_de_rango)
+
+        self._crear_orden()
+
+        orden = OrdenPago.objects.get()
+        self.assertEqual(orden.detalles.count(), 2)
+        self.assertFalse(orden.detalles.filter(cita=fuera_de_rango).exists())
+
+    def test_no_crea_orden_sin_estudios_pendientes_en_el_rango(self):
+        respuesta = self._crear_orden(
+            desde=(self.fecha + datetime.timedelta(days=10)).isoformat(),
+            hasta=(self.fecha + datetime.timedelta(days=10)).isoformat(),
+        )
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
+        self.assertFalse(OrdenPago.objects.exists())
+
     def test_pagar_orden_agrupada_liquida_todos_los_cobros(self):
-        self.client.post(reverse('crear_orden_pago'), {
-            'cita_ids': [self.cita_a.id, self.cita_b.id],
-        })
+        self._crear_orden()
         orden = OrdenPago.objects.get()
         boleta = SimpleUploadedFile('boleta-global.pdf', b'pdf demo', content_type='application/pdf')
         respuesta = self.client.post(
@@ -2696,27 +3410,21 @@ class OrdenPagoTests(TestCase):
         self.assertTrue(Cobro.objects.get(cita=self.cita_a).pagado)
         self.assertTrue(Cobro.objects.get(cita=self.cita_b).pagado)
 
-    def test_no_permite_mezclar_pacientes_en_orden_agrupada(self):
-        otro = crear_cita(
-            self.caja, paciente=crear_paciente(dpi='7776665554444'),
-            tipo_estudio=self.estudio_a, convenio=Cita.CONVENIO_COEX,
-            estado=Cita.ESTADO_EN_PROCESO, hora=datetime.time(10, 0),
-        )
-        OrdenTrabajo.objects.create(cita=otro, motivo='demo HU-058', creada_por=self.caja, validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO)
-        Cobro.objects.create(cita=otro)
-
-        respuesta = self.client.post(reverse('crear_orden_pago'), {
-            'cita_ids': [self.cita_a.id, otro.id],
-        })
-
-        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
-        self.assertFalse(OrdenPago.objects.exists())
-
     def test_orden_pendiente_mantiene_bloqueado_el_envio(self):
-        self.client.post(reverse('crear_orden_pago'), {'cita_ids': [self.cita_a.id]})
+        self._crear_orden()
         from pacientes.views import _cobro_bloquea_envio
 
         self.assertTrue(_cobro_bloquea_envio(self.cita_a))
+
+    def test_listado_pdf_de_la_orden(self):
+        self._crear_orden()
+        orden = OrdenPago.objects.get()
+
+        respuesta = self.client.get(reverse('orden_pago_pdf', args=[orden.id]))
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta['Content-Type'], 'application/pdf')
+        self.assertTrue(respuesta.content.startswith(b'%PDF'))
 
 
 class VerificacionDelTecnicoTests(TestCase):
@@ -2754,7 +3462,10 @@ class VerificacionDelTecnicoTests(TestCase):
     def _subir_imagen(self):
         return self.client.post(
             reverse('adjuntar_imagenes_lote', args=[self.orden.id]),
-            {'imagenes': SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg')},
+            {
+                'tipo_estudio': self.cita.tipo_estudio_id,
+                'imagenes': SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+            },
         )
 
     def _pagar(self):
@@ -3049,11 +3760,12 @@ class VerificacionDelTecnicoTests(TestCase):
     def test_una_orden_agrupada_solo_incluye_estudios_confirmados(self):
         estudio = TipoEstudio.objects.create(nombre='COEX verificacion')
         paciente = crear_paciente(dpi='7770001112223')
+        fecha = timezone.localdate()
         citas = []
         for hora in (datetime.time(12, 0), datetime.time(12, 30)):
             cita = crear_cita(
                 self.caja, paciente=paciente, tipo_estudio=estudio, convenio=Cita.CONVENIO_COEX,
-                estado=Cita.ESTADO_EN_PROCESO, hora=hora,
+                estado=Cita.ESTADO_EN_PROCESO, fecha=fecha, hora=hora,
             )
             OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.caja)
             Cobro.objects.create(cita=cita)
@@ -3064,14 +3776,18 @@ class VerificacionDelTecnicoTests(TestCase):
         )
         self.client.force_login(self.caja)
 
-        pantalla = self.client.get(reverse('pagos_pendientes'))
-        ofrecidos = [c.cita_id for c in pantalla.context['cobros_para_orden']]
-        self.assertEqual(ofrecidos, [confirmada.id])
+        pantalla = self.client.get(reverse('pagos_pendientes'), {
+            'orden_convenio': Cita.CONVENIO_COEX,
+            'orden_desde': fecha.isoformat(), 'orden_hasta': fecha.isoformat(),
+        })
+        self.assertEqual(pantalla.context['resumen_orden_rango']['cantidad'], 1)
 
-        self.client.post(reverse('crear_orden_pago'), {'cita_ids': [confirmada.id, sin_confirmar.id]})
-        self.assertFalse(OrdenPago.objects.exists())
-        self.client.post(reverse('crear_orden_pago'), {'cita_ids': [confirmada.id]})
-        self.assertEqual(OrdenPago.objects.count(), 1)
+        self.client.post(reverse('crear_orden_pago'), {
+            'convenio': Cita.CONVENIO_COEX, 'desde': fecha.isoformat(), 'hasta': fecha.isoformat(),
+        })
+        orden = OrdenPago.objects.get()
+        self.assertEqual(orden.detalles.count(), 1)
+        self.assertEqual(orden.detalles.first().cita_id, confirmada.id)
 
     def test_lista_del_tecnico_muestra_el_estado_de_verificacion(self):
         self.client.force_login(self.tecnico)
@@ -3312,3 +4028,164 @@ class EliminarTurnoTests(TestCase):
         pantalla = self.client.get(reverse('pantalla_turnos'))
 
         self.assertContains(pantalla, reverse('eliminar_turno', args=[self.ticket.id]))
+
+
+class ReagendarYCancelarDesdeTurnoTests(TestCase):
+    """Desde la Pantalla de turnos, recepción puede reagendar o cancelar la
+    cita de un paciente que ya había marcado llegada pero no se va a poder
+    atender hoy -- sin esperar a que pase su hora ni pasar primero por
+    "Procesar citas" a marcarla ausente a mano."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_reagendar_turno', rol=Usuario.ROL_RECEPCIONISTA)
+        self.estudio = TipoEstudio.objects.create(nombre='Estudio reagendar turno')
+        self.cita = crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, estado=Cita.ESTADO_AGENDADA,
+            hora_llegada=timezone.now(),
+        )
+        self.ticket = Ticket.objects.create(
+            paciente=self.cita.paciente, cita=self.cita, servicio=Ticket.SERVICIO_PRIVADO,
+            registrado_por=self.recepcion,
+        )
+        self.client.force_login(self.recepcion)
+
+    def test_reagendar_saca_el_turno_marca_ausente_y_manda_al_calendario(self):
+        respuesta = self.client.post(reverse('reagendar_desde_turno', args=[self.ticket.id]))
+
+        self.assertRedirects(
+            respuesta, f"{reverse('calendario_privado')}?reagendar={self.cita.id}",
+        )
+        self.ticket.refresh_from_db()
+        self.cita.refresh_from_db()
+        self.assertEqual(self.ticket.estado, Ticket.ESTADO_AUSENTE)
+        self.assertEqual(self.cita.estado, Cita.ESTADO_AUSENTE)
+        self.assertIsNone(self.cita.hora_llegada)
+        self.assertTrue(
+            Bitacora.objects.filter(accion=Bitacora.ACCION_REAGENDAR_DESDE_TURNO).exists()
+        )
+
+    def test_reagendar_deja_la_cita_lista_para_el_flujo_normal_de_reagendar(self):
+        self.client.post(reverse('reagendar_desde_turno', args=[self.ticket.id]))
+
+        calendario = self.client.get(reverse('calendario_privado'), {
+            'semana': self.cita.fecha.isoformat(), 'reagendar': self.cita.id,
+        })
+        self.assertEqual(calendario.context['reagendar_cita'], self.cita)
+
+    def test_no_se_puede_reagendar_una_cita_que_ya_entro_al_flujo_de_trabajo(self):
+        OrdenTrabajo.objects.create(cita=self.cita, motivo='x', creada_por=self.recepcion)
+        self.cita.estado = Cita.ESTADO_EN_PROCESO
+        self.cita.save(update_fields=['estado'])
+
+        respuesta = self.client.post(reverse('reagendar_desde_turno', args=[self.ticket.id]))
+
+        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
+        self.ticket.refresh_from_db()
+        self.assertEqual(self.ticket.estado, Ticket.ESTADO_EN_ESPERA)
+
+    def test_no_se_puede_reagendar_un_turno_sin_cita(self):
+        ticket_emergencia = Ticket.objects.create(
+            paciente=crear_paciente(dpi='2220001112224'), servicio=Ticket.SERVICIO_EMERGENCIA_IGSS,
+            registrado_por=self.recepcion,
+        )
+
+        respuesta = self.client.post(reverse('reagendar_desde_turno', args=[ticket_emergencia.id]))
+
+        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
+        ticket_emergencia.refresh_from_db()
+        self.assertEqual(ticket_emergencia.estado, Ticket.ESTADO_EN_ESPERA)
+
+    def test_cancelar_elimina_la_cita_y_saca_el_turno(self):
+        respuesta = self.client.post(
+            reverse('eliminar_cita', args=[self.cita.id]),
+            {'volver': reverse('pantalla_turnos')},
+        )
+
+        self.assertRedirects(respuesta, reverse('pantalla_turnos'))
+        self.assertFalse(Cita.objects.filter(id=self.cita.id).exists())
+        self.ticket.refresh_from_db()
+        self.assertEqual(self.ticket.estado, Ticket.ESTADO_AUSENTE)
+
+    def test_la_pantalla_de_turnos_ofrece_reagendar_y_cancelar(self):
+        pantalla = self.client.get(reverse('pantalla_turnos'))
+
+        self.assertContains(pantalla, reverse('reagendar_desde_turno', args=[self.ticket.id]))
+        self.assertContains(pantalla, reverse('eliminar_cita', args=[self.cita.id]))
+
+    def test_la_pantalla_no_ofrece_reagendar_ni_cancelar_si_ya_entro_al_flujo(self):
+        OrdenTrabajo.objects.create(cita=self.cita, motivo='x', creada_por=self.recepcion)
+        self.cita.estado = Cita.ESTADO_EN_PROCESO
+        self.cita.save(update_fields=['estado'])
+
+        pantalla = self.client.get(reverse('pantalla_turnos'))
+
+        self.assertNotContains(pantalla, reverse('reagendar_desde_turno', args=[self.ticket.id]))
+        self.assertNotContains(pantalla, reverse('eliminar_cita', args=[self.cita.id]))
+
+
+class MedicoTratanteTests(TestCase):
+    """Catálogo administrable de médicos tratantes: el admin los crea/edita/
+    desactiva, y quedan disponibles para elegir al agendar COEX/Emergencia
+    IGSS o procesar un ticket de Emergencia IGSS."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_medicos', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.client.force_login(self.admin)
+
+    def test_crea_un_medico_tratante(self):
+        respuesta = self.client.post(reverse('crear_medico_tratante'), {'nombre': 'Dr. Mario Solís'})
+
+        self.assertRedirects(respuesta, reverse('lista_medicos_tratantes'))
+        self.assertTrue(MedicoTratante.objects.filter(nombre='Dr. Mario Solís', activo=True).exists())
+
+    def test_no_permite_nombres_duplicados(self):
+        MedicoTratante.objects.create(nombre='Dr. Mario Solís')
+
+        self.client.post(reverse('crear_medico_tratante'), {'nombre': 'Dr. Mario Solís'})
+
+        self.assertEqual(MedicoTratante.objects.filter(nombre='Dr. Mario Solís').count(), 1)
+
+    def test_edita_el_nombre(self):
+        medico = MedicoTratante.objects.create(nombre='Dr. Viejo Nombre')
+
+        respuesta = self.client.post(
+            reverse('editar_medico_tratante', args=[medico.id]), {'nombre': 'Dr. Nombre Corregido'},
+        )
+
+        self.assertRedirects(respuesta, reverse('lista_medicos_tratantes'))
+        medico.refresh_from_db()
+        self.assertEqual(medico.nombre, 'Dr. Nombre Corregido')
+
+    def test_desactivar_y_reactivar(self):
+        medico = MedicoTratante.objects.create(nombre='Dr. Activo')
+
+        self.client.post(reverse('eliminar_medico_tratante', args=[medico.id]))
+        medico.refresh_from_db()
+        self.assertFalse(medico.activo)
+
+        self.client.post(reverse('activar_medico_tratante', args=[medico.id]))
+        medico.refresh_from_db()
+        self.assertTrue(medico.activo)
+
+    def test_solo_admin_puede_administrar_medicos_tratantes(self):
+        recepcion = crear_usuario('recep_medicos', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(recepcion)
+
+        respuesta = self.client.get(reverse('lista_medicos_tratantes'))
+
+        self.assertNotEqual(respuesta.status_code, 200)
+
+    def test_solo_medicos_activos_se_ofrecen_al_agendar(self):
+        activo = MedicoTratante.objects.create(nombre='Dr. Activo')
+        MedicoTratante.objects.create(nombre='Dr. Inactivo', activo=False)
+        recepcion = crear_usuario('recep_medicos_2', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(recepcion)
+        tipo_estudio = TipoEstudio.objects.create(nombre='RX médico tratante')
+        manana = timezone.localdate() + datetime.timedelta(days=1)
+
+        respuesta = self.client.get(
+            f"{reverse('agendar_cita_coex')}?fecha={manana}&hora=10:00",
+        )
+
+        opciones = list(respuesta.context['form'].fields['medico_tratante'].queryset)
+        self.assertEqual(opciones, [activo])

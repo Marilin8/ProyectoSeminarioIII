@@ -45,7 +45,6 @@
 {% endblock %}
 
 {% block topbar_actions %}
-    {% include 'includes/notificaciones.html' %}
     <a class="btn btn-outline btn-sm" href="{{ volver_url }}">
         <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
         Volver a los estudios del paciente
@@ -84,19 +83,28 @@
                 <p class="vacio">Este estudio no tiene imágenes adjuntas.</p>
             {% endif %}
 
-            <div class="section-title">Informe</div>
-            {% if orden.informe_texto %}
-                <div class="informe-texto">{{ orden.informe_texto }}</div>
-            {% endif %}
-            {% if orden.informe_archivo %}
-                <p>
-                    <a class="btn btn-primary" href="{{ orden.informe_archivo.url }}" target="_blank">
-                        <svg width="14" height="14"><use href="#i-file-medical"/></svg>
-                        Ver informe (archivo)
-                    </a>
-                </p>
-            {% endif %}
-            {% if not orden.informe_texto and not orden.informe_archivo %}
+            {% if informes %}
+                {% for informe in informes %}
+                    <div class="section-title">
+                        Informe{% if informes|length > 1 %} — {{ informe.tipo_estudio.nombre }}{% endif %}
+                    </div>
+                    {% if informe.texto %}
+                        <div class="informe-texto">{{ informe.texto }}</div>
+                    {% endif %}
+                    {% if informe.archivo %}
+                        <p>
+                            <a class="btn btn-primary" href="{{ informe.archivo.url }}" target="_blank">
+                                <svg width="14" height="14"><use href="#i-file-medical"/></svg>
+                                Ver informe (archivo)
+                            </a>
+                        </p>
+                    {% endif %}
+                    {% if not informe.texto and not informe.archivo %}
+                        <p class="vacio">Este estudio no tiene informe adjunto.</p>
+                    {% endif %}
+                {% endfor %}
+            {% else %}
+                <div class="section-title">Informe</div>
                 <p class="vacio">Este estudio no tiene informe adjunto.</p>
             {% endif %}
         </div>

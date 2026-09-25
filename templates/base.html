@@ -1,4 +1,4 @@
-{% load static %}
+{% load static roles %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -16,7 +16,25 @@
             <h1>&#9764; Clínica de Imágenes</h1>
             <small>Sistema de Gestión Médica</small>
         </div>
+        {% if user.is_authenticated %}
+            <div class="sidebar-user">
+                {% if user.foto_perfil %}
+                    <button type="button" class="sidebar-user-avatar" id="btn-ver-foto-perfil" title="Ver foto más grande">
+                        <img src="{{ user.foto_perfil.url }}" alt="" style="width:100%;height:100%;object-fit:cover;">
+                    </button>
+                {% else %}
+                    <span class="sidebar-user-avatar">
+                        <svg width="26" height="26"><use href="#i-user"/></svg>
+                    </span>
+                {% endif %}
+                <span class="sidebar-user-nombre">{{ user.get_full_name|default:user.username }}</span>
+                <span class="sidebar-user-rol">{{ user.get_rol_display }}</span>
+            </div>
+        {% endif %}
         <nav>
+            {% if user.is_authenticated %}
+                {% include 'includes/notificaciones.html' %}
+            {% endif %}
             <a href="{% url 'dashboard' %}" class="{% block nav_dashboard %}{% endblock %}">
                 <svg width="16" height="16"><use href="#i-home"/></svg> Panel principal
             </a>
@@ -25,7 +43,7 @@
                     <svg width="16" height="16"><use href="#i-user"/></svg> Mi perfil
                 </a>
             {% endif %}
-            {% if user.is_superuser or user.rol == 'administrador' %}
+            {% if user.is_superuser or user|tiene_rol:'administrador' %}
                 <a href="{% url 'pantalla_placeholder' clave='usuarios_activos' %}" class="{% block nav_usuarios %}{% endblock %}">
                     <svg width="16" height="16"><use href="#i-users"/></svg> Usuarios activos
                 </a>
@@ -43,6 +61,28 @@
         </form>
         <div class="sidebar-footer">v1.0 · Clínica de Imágenes</div>
     </aside>
+
+    {% if user.is_authenticated and user.foto_perfil %}
+        <div class="modal-overlay lightbox-foto-perfil" id="lightbox-foto-perfil">
+            <img src="{{ user.foto_perfil.url }}" alt="">
+        </div>
+        <script>
+        (function () {
+            var boton = document.getElementById('btn-ver-foto-perfil');
+            var lightbox = document.getElementById('lightbox-foto-perfil');
+            if (!boton || !lightbox) return;
+            boton.addEventListener('click', function () {
+                lightbox.classList.add('abierto');
+            });
+            lightbox.addEventListener('click', function () {
+                lightbox.classList.remove('abierto');
+            });
+            document.addEventListener('keydown', function (evento) {
+                if (evento.key === 'Escape') { lightbox.classList.remove('abierto'); }
+            });
+        })();
+        </script>
+    {% endif %}
 
     <div class="main">
         <div class="topbar">

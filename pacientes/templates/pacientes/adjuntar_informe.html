@@ -5,6 +5,8 @@
 
 {% block extra_css %}
     <style>
+        .bloque-informe { border: 1px solid var(--border-light); border-radius: var(--radius); padding: 1rem; margin-bottom: 1.25rem; }
+        .bloque-titulo { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.75rem; font-size: 1rem; }
         .acciones-imagenes { display: flex; gap: 0.75rem; margin-bottom: 1.25rem; }
         .acciones-imagenes a { flex: 1; }
         .modal-icono {
@@ -68,57 +70,50 @@
             </p>
         {% endif %}
 
-        {% if cita.convenio == 'privado' %}
-            <div class="card" style="padding:1rem;margin-bottom:1.25rem;background:#f8fafc;">
-                <div style="font-weight:600;margin-bottom:0.5rem;">Estudios extra realizados</div>
-                {% if estudios_extra %}
-                    <ul style="margin:0 0 0.75rem 0;padding-left:1.1rem;font-size:0.85rem;">
-                        {% for extra in estudios_extra %}
-                            <li>
-                                {{ extra.tipo_estudio.nombre }} — Q{{ extra.precio|floatformat:2 }}
-                                {% if extra.notas %}<span class="text-muted">({{ extra.notas }})</span>{% endif %}
-                            </li>
-                        {% endfor %}
-                    </ul>
-                {% else %}
-                    <p class="ayuda" style="margin-bottom:0.75rem;">Todavía no se agregó ningún estudio extra.</p>
-                {% endif %}
-
-                {% if form_estudio_extra %}
-                    <form method="post" action="{% url 'agregar_estudio_extra' cita.id %}">
-                        {% csrf_token %}
-                        <label for="{{ form_estudio_extra.tipo_estudio.id_for_label }}">Notificar estudio extra realizado</label>
-                        {{ form_estudio_extra.tipo_estudio }}
-                        {{ form_estudio_extra.notas }}
-                        <button type="submit" class="btn btn-outline btn-sm mt-1">
-                            <svg width="14" height="14"><use href="#i-plus"/></svg>
-                            Agregar y notificar a recepción
-                        </button>
-                    </form>
-                {% endif %}
-            </div>
-        {% endif %}
-
-        {% if orden.imagenes.all %}
-            <div class="acciones-imagenes">
-                <button type="button" class="btn btn-outline" id="btn-ver-jpg" data-url="{% url 'ver_imagenes_jpg' orden_id=orden.id %}">
-                    <svg width="14" height="14"><use href="#i-image"/></svg> Ver JPG
-                </button>
-                {% if tiene_dicom_original %}
-                    <a class="btn btn-outline" href="{% url 'descargar_dicom_orden' orden_id=orden.id %}" target="_blank" rel="noopener noreferrer">
-                        <svg width="14" height="14"><use href="#i-download"/></svg> Descargar DICOM
-                    </a>
-                {% endif %}
-            </div>
-        {% else %}
-            <div class="alert alert-info">Este estudio no tiene imágenes adjuntas.</div>
-        {% endif %}
-
         <form method="post" enctype="multipart/form-data" id="form-informe">
             {% csrf_token %}
             {{ form.non_field_errors }}
 
-            {% if cita.convenio == 'privado' %}
+            {% for bloque in bloques %}
+                <div class="bloque-informe">
+                    {% if bloques|length > 1 %}
+                        <h3 class="bloque-titulo">
+                            {{ bloque.tipo_estudio.nombre }}
+                            {% if bloque.informe.tiene_contenido %}
+                                <span class="badge badge-success">Completo</span>
+                            {% elif not bloque.tiene_imagenes %}
+                                <span class="badge badge-muted">Esperando imágenes del técnico</span>
+                            {% else %}
+                                <span class="badge badge-warning">Pendiente</span>
+                            {% endif %}
+                        </h3>
+                    {% endif %}
+
+                    {% if bloque.tiene_imagenes %}
+                        <div class="acciones-imagenes">
+                            <button type="button" class="btn btn-outline btn-ver-jpg"
+                                    data-url="{% url 'ver_imagenes_jpg' orden_id=orden.id %}?tipo_estudio={{ bloque.tipo_estudio.id }}">
+                                <svg width="14" height="14"><use href="#i-image"/></svg> Ver JPG
+                            </button>
+                            {% if tiene_dicom_original %}
+                                <a class="btn btn-outline" href="{% url 'descargar_dicom_orden' orden_id=orden.id %}" target="_blank" rel="noopener noreferrer">
+                                    <svg width="14" height="14"><use href="#i-download"/></svg> Descargar DICOM
+                                </a>
+                            {% endif %}
+                        </div>
+
+                        <label for="{{ bloque.campo_archivo.id_for_label }}">{{ bloque.campo_archivo.label }}</label>
+                        {{ bloque.campo_archivo }}
+                        <p class="ayuda">Adjuntá el informe en PDF.</p>
+                        {{ bloque.campo_archivo.errors }}
+                        {{ bloque.campo_texto.errors }}
+                    {% else %}
+                        <div class="alert alert-info">Este estudio todavía no tiene imágenes adjuntas.</div>
+                    {% endif %}
+                </div>
+            {% endfor %}
+
+            {% if puede_agregar_extra %}
                 <div class="card" style="padding:1rem;margin-bottom:1.25rem;background:#f8fafc;">
                     <div style="font-weight:600;margin-bottom:0.5rem;">Estudios extra realizados</div>
                     {% if estudios_extra %}
@@ -126,6 +121,7 @@
                             {% for extra in estudios_extra %}
                                 <li>
                                     {{ extra.tipo_estudio.nombre }} — Q{{ extra.precio|floatformat:2 }}
+                                    {% if extra.procesar_ahora %}<span class="badge badge-info" style="margin-left:0.3rem;">Procesando</span>{% endif %}
                                     {% if extra.notas %}<span class="text-muted">({{ extra.notas }})</span>{% endif %}
                                 </li>
                             {% endfor %}
@@ -135,20 +131,32 @@
                     {% endif %}
 
                     {% if form_estudio_extra %}
-                        <label for="{{ form_estudio_extra.tipo_estudio.id_for_label }}">Notificar estudio extra realizado (opcional)</label>
-                        {{ form_estudio_extra.tipo_estudio }}
-                        {{ form_estudio_extra.tipo_estudio.errors }}
-                        {{ form_estudio_extra.notas }}
-                        {{ form_estudio_extra.notas.errors }}
-                        <p class="ayuda">Si elegís un estudio acá, se agrega y se le avisa a recepción al guardar el informe.</p>
+                        <label class="check-estudio-extra" style="display:flex;align-items:center;gap:0.5rem;font-weight:500;cursor:pointer;">
+                            <input type="checkbox" id="chk-mostrar-estudio-extra" style="width:auto;">
+                            ¿Se realizó un estudio extra?
+                        </label>
+                        <div id="bloque-estudio-extra" style="display:none;margin-top:0.6rem;">
+                            <label for="{{ form_estudio_extra.tipo_estudio.id_for_label }}">Estudio extra realizado</label>
+                            {{ form_estudio_extra.tipo_estudio }}
+                            {{ form_estudio_extra.tipo_estudio.errors }}
+                            {{ form_estudio_extra.notas }}
+                            {{ form_estudio_extra.notas.errors }}
+                            <p class="ayuda">
+                                Es solo un aviso: se agrega y se le notifica a recepción para el cobro al guardar el informe.
+                            </p>
+
+                            <label style="display:flex;align-items:flex-start;gap:0.5rem;margin-top:0.6rem;cursor:pointer;">
+                                {{ form_estudio_extra.procesar_ahora }}
+                                <span>
+                                    {{ form_estudio_extra.procesar_ahora.label }}
+                                    <span class="ayuda" style="display:block;margin-top:0.1rem;">{{ form_estudio_extra.procesar_ahora.help_text }}</span>
+                                </span>
+                            </label>
+                            {{ form_estudio_extra.procesar_ahora.errors }}
+                        </div>
                     {% endif %}
                 </div>
             {% endif %}
-
-            <label for="{{ form.informe_archivo.id_for_label }}">{{ form.informe_archivo.label }}</label>
-            {{ form.informe_archivo }}
-            <p class="ayuda">Adjuntá el informe en PDF.</p>
-            {{ form.informe_archivo.errors }}
 
             <button type="submit" class="btn btn-primary btn-block btn-lg mt-2" id="btn-guardar-informe">
                 <svg width="14" height="14"><use href="#i-save"/></svg> Guardar informe
@@ -217,11 +225,14 @@
         // el radiólogo confirma el envío de verdad (ver botonConfirmar más
         // abajo), no con el primer clic en "Guardar informe" (ese solo abre
         // el modal de confirmación).
-        var informeInput = document.getElementById('id_informe_archivo');
+        var informeInputs = document.querySelectorAll('#form-informe input[type="file"]');
         var enviandoInforme = false;
-        if (informeInput) {
+        if (informeInputs.length) {
             window.addEventListener('beforeunload', function (evento) {
-                if (!enviandoInforme && informeInput.files && informeInput.files.length > 0) {
+                var hayAlgunoElegido = Array.prototype.some.call(informeInputs, function (input) {
+                    return input.files && input.files.length > 0;
+                });
+                if (!enviandoInforme && hayAlgunoElegido) {
                     evento.preventDefault();
                     evento.returnValue = '';
                 }
@@ -229,6 +240,27 @@
         }
 
         document.addEventListener('DOMContentLoaded', function () {
+            // El panel de "estudio extra" arranca escondido (casi nunca se
+            // usa) y se despliega al marcar la casilla; si la página se
+            // vuelve a renderizar con datos ya cargados (ej. el informe
+            // principal tenía un error y esto quedó con un estudio
+            // elegido), arranca visible para no esconder lo que el
+            // radiólogo ya había llenado.
+            var chkMostrarExtra = document.getElementById('chk-mostrar-estudio-extra');
+            var bloqueExtra = document.getElementById('bloque-estudio-extra');
+            if (chkMostrarExtra && bloqueExtra) {
+                var selectExtra = document.getElementById('id_tipo_estudio');
+                var notasExtra = document.getElementById('id_notas');
+                var teniaDatos = (selectExtra && selectExtra.value) || (notasExtra && notasExtra.value);
+                if (teniaDatos) {
+                    chkMostrarExtra.checked = true;
+                    bloqueExtra.style.display = '';
+                }
+                chkMostrarExtra.addEventListener('change', function () {
+                    bloqueExtra.style.display = chkMostrarExtra.checked ? '' : 'none';
+                });
+            }
+
             // "Ver JPG" se muestra en un <iframe> DENTRO de esta misma
             // página (en vez de abrir target="_blank" o window.open) porque
             // en algunos navegadores/entornos embebidos eso termina
@@ -238,18 +270,19 @@
             // recarga; ningún JS puede recuperar eso una vez que ya pasó).
             // Con el iframe, la página de "arriba" nunca navega, así que el
             // archivo elegido queda intacto pase lo que pase adentro.
-            var botonVerJpg = document.getElementById('btn-ver-jpg');
+            var botonesVerJpg = document.querySelectorAll('.btn-ver-jpg');
             var modalVerJpg = document.getElementById('modal-ver-jpg');
             var iframeVerJpg = document.getElementById('iframe-ver-jpg');
             var botonCerrarVerJpg = document.getElementById('btn-cerrar-ver-jpg');
-            if (botonVerJpg && modalVerJpg && iframeVerJpg && botonCerrarVerJpg) {
-                botonVerJpg.addEventListener('click', function () {
-                    // Carga perezosa: recién pone el src la primera vez que
-                    // se abre, no en cada carga de la página.
-                    if (!iframeVerJpg.src) {
-                        iframeVerJpg.src = botonVerJpg.dataset.url;
-                    }
-                    modalVerJpg.classList.add('abierto');
+            if (botonesVerJpg.length && modalVerJpg && iframeVerJpg && botonCerrarVerJpg) {
+                botonesVerJpg.forEach(function (boton) {
+                    boton.addEventListener('click', function () {
+                        // Un combo tiene un botón por estudio, cada uno con su
+                        // propia galería filtrada -- siempre se refresca el
+                        // src al abrir (no hay carga perezosa única).
+                        iframeVerJpg.src = boton.dataset.url;
+                        modalVerJpg.classList.add('abierto');
+                    });
                 });
                 botonCerrarVerJpg.addEventListener('click', function () {
                     modalVerJpg.classList.remove('abierto');

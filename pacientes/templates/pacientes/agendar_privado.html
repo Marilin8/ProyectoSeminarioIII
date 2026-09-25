@@ -15,7 +15,6 @@
 {% endblock %}
 
 {% block topbar_actions %}
-    {% include 'includes/notificaciones.html' %}
     <a href="{% url 'calendario_privado' %}" class="btn btn-outline btn-sm">
         <svg width="14" height="14"><use href="#i-calendar"/></svg> Calendario
     </a>
@@ -75,8 +74,9 @@
 
             <div class="seccion-titulo">Cita</div>
 
-            <label for="{{ form.modalidad.id_for_label }}">Grupo de estudio</label>
+            <label for="{{ form.modalidad.id_for_label }}">Modalidad</label>
             {{ form.modalidad }}
+            <p class="ayuda">Elegí la modalidad para ver solo los estudios de ese tipo.</p>
 
             <label for="{{ form.tipo_estudio.id_for_label }}">Tipo de estudio</label>
             {{ form.tipo_estudio }}

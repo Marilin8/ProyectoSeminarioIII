@@ -4,7 +4,6 @@
 {% block page_title %}Procesar ticket {{ ticket.turno }}{% endblock %}
 
 {% block topbar_actions %}
-    {% include 'includes/notificaciones.html' %}
     <a class="btn btn-outline btn-sm" href="{{ volver_url }}">
         <svg><use href="#i-arrow-left"/></svg>
         Volver a la pantalla de turnos
@@ -26,6 +25,15 @@
                 <label for="{{ form.tipo_estudio.id_for_label }}">{{ form.tipo_estudio.label }}</label>
                 {{ form.tipo_estudio }}
                 {{ form.tipo_estudio.errors }}
+
+                <label for="{{ form.codigo_igss.id_for_label }}">{{ form.codigo_igss.label }}</label>
+                {{ form.codigo_igss }}
+                <p class="form-help">{{ form.codigo_igss.help_text }}</p>
+                {{ form.codigo_igss.errors }}
+
+                <label for="{{ form.medico_tratante.id_for_label }}">{{ form.medico_tratante.label }}</label>
+                {{ form.medico_tratante }}
+                {{ form.medico_tratante.errors }}
 
                 <label for="{{ form.motivo.id_for_label }}">{{ form.motivo.label }}</label>
                 {{ form.motivo }}

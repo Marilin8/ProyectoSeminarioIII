@@ -18,7 +18,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('nombre', models.CharField(max_length=120)),
-                ('modalidad', models.CharField(choices=[('rx', 'Rayos X'), ('rx_contraste', 'Rayos X con contraste / fluoroscopía'), ('tac', 'Tomografía (TAC)'), ('usg', 'Ultrasonido / Doppler'), ('mamo_densit', 'Mamografía / Densitometría')], max_length=20)),
+                ('modalidad', models.CharField(max_length=30)),
                 ('duracion_minutos', models.PositiveIntegerField()),
                 ('precio_coex_habil', models.DecimalField(decimal_places=2, max_digits=8)),
                 ('precio_privado_habil', models.DecimalField(decimal_places=2, max_digits=8)),

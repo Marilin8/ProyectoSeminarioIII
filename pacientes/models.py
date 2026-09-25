@@ -112,6 +112,105 @@ class Paciente(models.Model):
             años -= 1
         return años
 
+class Modalidad(models.Model):
+    codigo = models.CharField(
+        max_length=30,
+        unique=True,
+        null=True,
+        blank=True,
+        verbose_name='código'
+    )
+    nombre = models.CharField(
+        max_length=120,
+        unique=True,
+        verbose_name='nombre'
+    )
+    activo = models.BooleanField(
+        default=True,
+        verbose_name='activo'
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'modalidades'
+        verbose_name = 'modalidad'
+        verbose_name_plural = 'modalidades'
+        ordering = ['nombre']
+
+    def __str__(self):
+        return self.nombre
+
+
+class HistorialModalidad(models.Model):
+    ACCION_CREAR = 'crear'
+    ACCION_EDITAR = 'editar'
+    ACCION_ELIMINAR = 'eliminar'
+
+    ACCION_CHOICES = [
+        (ACCION_CREAR, 'Creada'),
+        (ACCION_EDITAR, 'Editada'),
+        (ACCION_ELIMINAR, 'Desactivada'),
+    ]
+
+    modalidad = models.ForeignKey(
+        Modalidad,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='historial'
+    )
+    nombre = models.CharField(max_length=120)
+    nombre_anterior = models.CharField(max_length=120, blank=True)
+    accion = models.CharField(max_length=20, choices=ACCION_CHOICES)
+    realizado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='cambios_modalidades_realizados'
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'historial_modalidades'
+        verbose_name = 'historial de modalidad'
+        verbose_name_plural = 'historial de modalidades'
+        ordering = ['-creado_en']
+
+    def __str__(self):
+        return f'{self.nombre} - {self.get_accion_display()}'
+
+
+
+class MedicoTratante(models.Model):
+    """Catálogo administrable de médicos tratantes (COEX / Emergencia IGSS),
+    para elegir uno al agendar en vez de escribirlo a mano cada vez. El
+    administrador lo mantiene desde "Médicos tratantes" en su panel."""
+
+    nombre = models.CharField(max_length=150, unique=True, verbose_name='nombre')
+    activo = models.BooleanField(default=True, verbose_name='activo')
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'medicos_tratantes'
+        verbose_name = 'médico tratante'
+        verbose_name_plural = 'médicos tratantes'
+        ordering = ['nombre']
+
+    def __str__(self):
+        return self.nombre
+
+
+def nombre_modalidad(codigo):
+    """Nombre legible de un código de modalidad: busca primero en el
+    catálogo administrable Modalidad y, si no está ahí (una de las 5
+    modalidades históricas hardcodeadas, o un código que ya no existe),
+    cae a TipoEstudio.MODALIDAD_CHOICES."""
+    modalidad = Modalidad.objects.filter(codigo=codigo).first()
+    if modalidad:
+        return modalidad.nombre
+    return dict(TipoEstudio.MODALIDAD_CHOICES).get(codigo, codigo)
+
 
 class TipoEstudio(models.Model):
     MODALIDAD_RX = 'rx'
@@ -130,7 +229,8 @@ class TipoEstudio(models.Model):
 
     nombre = models.CharField(max_length=120, unique=True)
     modalidad = models.CharField(
-        max_length=20, choices=MODALIDAD_CHOICES, default=MODALIDAD_RX,
+        max_length=30,
+        default=MODALIDAD_RX,
         help_text='Agrupa el estudio por equipo/sala y define qué técnico y radiólogo pueden atenderlo.',
     )
     duracion_minutos = models.PositiveIntegerField(
@@ -138,6 +238,10 @@ class TipoEstudio(models.Model):
         verbose_name='duración (minutos)',
         help_text='Cuánto tiempo ocupa este estudio en el calendario de citas.',
     )
+
+    def get_modalidad_display(self):
+        return nombre_modalidad(self.modalidad)
+
     activo = models.BooleanField(default=True)
     radiologos = models.ManyToManyField(
         settings.AUTH_USER_MODEL, blank=True, related_name='tipos_estudio_asignados',
@@ -307,7 +411,7 @@ class CambioEstudioProgramado(models.Model):
         TipoEstudio, on_delete=models.CASCADE, related_name='cambios_programados',
     )
     nombre = models.CharField(max_length=120)
-    modalidad = models.CharField(max_length=20, choices=TipoEstudio.MODALIDAD_CHOICES)
+    modalidad = models.CharField(max_length=30)
     duracion_minutos = models.PositiveIntegerField()
     precio_coex_habil = models.DecimalField(max_digits=8, decimal_places=2)
     precio_privado_habil = models.DecimalField(max_digits=8, decimal_places=2)
@@ -347,10 +451,8 @@ class CambioEstudioProgramado(models.Model):
         if estudio.nombre != self.nombre:
             diferencias.append(f'Nombre: {estudio.nombre} → {self.nombre}')
         if estudio.modalidad != self.modalidad:
-            nombres_modalidad = dict(TipoEstudio.MODALIDAD_CHOICES)
             diferencias.append(
-                f'Modalidad: {nombres_modalidad.get(estudio.modalidad, estudio.modalidad)} → '
-                f'{nombres_modalidad.get(self.modalidad, self.modalidad)}'
+                f'Modalidad: {nombre_modalidad(estudio.modalidad)} → {nombre_modalidad(self.modalidad)}'
             )
         if estudio.duracion_minutos != self.duracion_minutos:
             diferencias.append(f'Duración: {estudio.duracion_minutos} → {self.duracion_minutos} min')
@@ -436,12 +538,74 @@ class Combo(models.Model):
         verbose_name='% de descuento',
         help_text='Solo se usa si "aplicar descuento" está marcado.',
     )
+    # TipoEstudio "espejo" (modalidad Combo) que permite agendar este combo
+    # como un solo estudio -- una sola cita, orden de trabajo e informe. Se
+    # crea/actualiza en sincronizar_tipo_estudio() al guardar el combo desde
+    # crear_combo/editar_combo; no se usa para nada más (los cobros/boletas
+    # ya agrupados siguen calculándose con total_para).
+    tipo_estudio_generado = models.OneToOneField(
+        'TipoEstudio', on_delete=models.SET_NULL, null=True, blank=True,
+        editable=False, related_name='combo_origen',
+    )
 
     class Meta:
         db_table = 'combos'
         verbose_name = 'combo'
         verbose_name_plural = 'combos'
         ordering = ['nombre']
+
+    MODALIDAD_CODIGO = 'combo'
+
+    def sincronizar_tipo_estudio(self):
+        """Crea o actualiza el TipoEstudio espejo de este combo, con
+        modalidad "Combo", para que se pueda elegir al agendar una cita
+        igual que cualquier otro estudio. El precio de cada celda
+        (convenio × horario) se recalcula ahora mismo con total_para: si
+        después cambian los estudios del combo o su descuento, hay que
+        volver a guardarlo (o correr el comando sincronizar_combos) para
+        que se refleje acá."""
+        modalidad, _ = Modalidad.objects.get_or_create(
+            codigo=self.MODALIDAD_CODIGO, defaults={'nombre': 'Combo'},
+        )
+        duracion = sum((e.duracion_minutos for e in self.estudios.all()), 0) or 30
+
+        tipo_estudio = self.tipo_estudio_generado
+        if tipo_estudio is None:
+            tipo_estudio = TipoEstudio.objects.create(
+                nombre=self.nombre, modalidad=modalidad.codigo,
+                duracion_minutos=duracion, activo=self.activo,
+            )
+            self.tipo_estudio_generado = tipo_estudio
+            Combo.objects.filter(pk=self.pk).update(tipo_estudio_generado=tipo_estudio)
+        else:
+            tipo_estudio.nombre = self.nombre
+            tipo_estudio.modalidad = modalidad.codigo
+            tipo_estudio.duracion_minutos = duracion
+            tipo_estudio.activo = self.activo
+            tipo_estudio.save(update_fields=['nombre', 'modalidad', 'duracion_minutos', 'activo'])
+
+        for convenio, horario_habil in (
+            (CONVENIO_COEX, True),
+            (CONVENIO_PRIVADO, True),
+            (CONVENIO_PRIVADO, False),
+            (CONVENIO_EMERGENCIA_IGSS, True),
+            (CONVENIO_EMERGENCIA_IGSS, False),
+        ):
+            PrecioEstudio.objects.update_or_create(
+                tipo_estudio=tipo_estudio, convenio=convenio, horario_habil=horario_habil,
+                defaults={'precio': self.total_para(convenio, horario_habil)},
+            )
+
+        # El radiólogo que atienda el combo tiene que poder hacer TODOS sus
+        # estudios: se asignan al espejo los que están asignados a la vez a
+        # cada uno de ellos (intersección), no la unión.
+        radiologos_ids = None
+        for estudio in self.estudios.all():
+            ids = set(estudio.radiologos.values_list('id', flat=True))
+            radiologos_ids = ids if radiologos_ids is None else (radiologos_ids & ids)
+        tipo_estudio.radiologos.set(radiologos_ids or set())
+
+        return tipo_estudio
 
     def __str__(self):
         return self.nombre
@@ -512,6 +676,15 @@ class Cita(models.Model):
         verbose_name='médico referente',
         help_text='Nombre del médico externo que refiere al paciente (para el reporte diario).',
     )
+    codigo_igss = models.CharField(
+        max_length=50, blank=True,
+        verbose_name='código IGSS',
+        help_text='Código de orden/autorización que emite IGSS para este estudio (COEX / Emergencia IGSS).',
+    )
+    medico_tratante = models.ForeignKey(
+        'MedicoTratante', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='citas', verbose_name='médico tratante',
+    )
     fecha_sugerida = models.DateField(null=True, blank=True)
     hora_sugerida = models.TimeField(null=True, blank=True)
     hora_llegada = models.DateTimeField(null=True, blank=True)
@@ -555,6 +728,24 @@ class Cita(models.Model):
             and not hasattr(self, 'orden_trabajo')
             and not hasattr(self, 'cobro')
         )
+
+    @property
+    def estudios(self):
+        """Los TipoEstudio "reales" a trabajar en esta cita: los que
+        componen el combo si tipo_estudio es un espejo de Combo (ver
+        Combo.sincronizar_tipo_estudio), o el propio tipo_estudio si es un
+        estudio normal -- más los EstudioExtra marcados `procesar_ahora`
+        (ver ese modelo). El técnico sube imágenes y la radióloga adjunta
+        informe por cada uno de estos (ver OrdenTrabajo/ImagenEstudio/
+        InformeEstudio)."""
+        combo = getattr(self.tipo_estudio, 'combo_origen', None)
+        estudios = list(combo.estudios.all()) if combo is not None else [self.tipo_estudio]
+        ids_vistos = {e.id for e in estudios}
+        for extra in self.estudios_extra.filter(procesar_ahora=True).select_related('tipo_estudio'):
+            if extra.tipo_estudio_id not in ids_vistos:
+                estudios.append(extra.tipo_estudio)
+                ids_vistos.add(extra.tipo_estudio_id)
+        return estudios
 
     @property
     def esta_tarde(self):
@@ -619,10 +810,13 @@ class Cita(models.Model):
 
 
 class EstudioExtra(models.Model):
-    """Estudio adicional que el radiólogo detecta y realiza durante la
-    atención, aparte del que se agendó originalmente. Por ahora solo aplica
-    al convenio Privado (es al único que Caja le cobra directamente al
-    paciente): sube el total de la cita y le avisa a recepción."""
+    """Estudio adicional que el radiólogo detecta durante la atención,
+    aparte del que se agendó originalmente (Privado, COEX o Emergencia
+    IGSS): sube el total de la cita y le avisa a recepción para el cobro.
+    Por sí solo es solo un aviso/sugerencia -- si además queda marcado
+    `procesar_ahora`, entra a Cita.estudios y el técnico puede subirle
+    imágenes de inmediato, igual que un estudio de combo, sin esperar a
+    que el informe (ni el de este extra) esté subido."""
 
     cita = models.ForeignKey(Cita, on_delete=models.PROTECT, related_name='estudios_extra')
     tipo_estudio = models.ForeignKey(TipoEstudio, on_delete=models.PROTECT, related_name='+')
@@ -630,6 +824,14 @@ class EstudioExtra(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='estudios_extra_agregados',
     )
     notas = models.CharField(max_length=255, blank=True)
+    procesar_ahora = models.BooleanField(
+        default=False,
+        verbose_name='procesar ahora',
+        help_text=(
+            'El técnico puede subir las imágenes de este estudio ya mismo, '
+            'sin esperar a que se suba su informe (igual que un combo).'
+        ),
+    )
     creado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -744,7 +946,10 @@ class Cobro(models.Model):
 
 class OrdenPago(models.Model):
     """Orden agrupada para convenios que liquidan varios estudios con una
-    boleta global (COEX y Emergencia IGSS)."""
+    boleta global (COEX y Emergencia IGSS). Agrupa por convenio y rango de
+    fechas (ver crear_orden_pago), no por paciente: puede cubrir estudios de
+    muchos pacientes distintos, como la liquidación semanal de un convenio
+    institucional."""
 
     ESTADO_PENDIENTE = 'pendiente'
     ESTADO_PAGADA = 'pagada'
@@ -756,7 +961,12 @@ class OrdenPago(models.Model):
     ]
 
     convenio = models.CharField(max_length=20, choices=CONVENIO_CHOICES)
-    paciente = models.ForeignKey(Paciente, on_delete=models.PROTECT, related_name='ordenes_pago')
+    # Nulo cuando la orden agrupa estudios de más de un paciente (el caso
+    # normal ahora); se sigue completando cuando por casualidad todos los
+    # estudios del rango elegido resultan ser del mismo paciente.
+    paciente = models.ForeignKey(
+        Paciente, on_delete=models.PROTECT, null=True, blank=True, related_name='ordenes_pago',
+    )
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=ESTADO_PENDIENTE)
     subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     descuento = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -895,20 +1105,12 @@ class OrdenTrabajo(models.Model):
     )
     creada_en = models.DateTimeField(auto_now_add=True)
 
-    informe_texto = models.TextField(blank=True, verbose_name='informe (texto)')
-    informe_archivo = models.FileField(
-        upload_to='informes/%Y/%m/', blank=True, null=True, verbose_name='informe (archivo)'
-    )
-    informe_creado_por = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
-        related_name='informes_creados',
-    )
-    informe_creado_en = models.DateTimeField(null=True, blank=True)
-
-    # El envío de resultados al paciente ya no ocurre automáticamente cuando
-    # la radióloga adjunta el informe: ahora lo dispara la recepcionista
-    # manualmente desde "Estudios realizados" (botón "Enviar estudio").
-    # Este campo queda null hasta que efectivamente se envía.
+    # Para convenio privado con correo ya registrado, el envío se dispara
+    # solo apenas se cumplen pago + imágenes + informe completos (ver
+    # _intentar_envio_automatico en views.py); para los demás casos (u
+    # otros convenios) lo sigue disparando la recepcionista a mano desde
+    # "Estudios realizados" (botón "Enviar estudio"). Este campo queda
+    # null hasta que efectivamente se envía.
     resultados_enviados_en = models.DateTimeField(null=True, blank=True)
 
     # Token opaco para el visor web público del estudio (se manda en el
@@ -925,11 +1127,37 @@ class OrdenTrabajo(models.Model):
 
     @property
     def tiene_informe(self):
-        return bool(self.informe_texto or self.informe_archivo)
+        """True cuando hay informe (texto o archivo) para TODOS los
+        estudios de la cita -- uno solo para un estudio normal, uno por
+        cada estudio del combo (ver Cita.estudios/InformeEstudio). Recién
+        ahí la cita puede pasar a PROCESADA y el estudio se puede enviar
+        al paciente."""
+        requeridos = {e.id for e in self.cita.estudios}
+        if not requeridos:
+            return False
+        completos = {i.tipo_estudio_id for i in self.informes.all() if i.texto or i.archivo}
+        return requeridos.issubset(completos)
 
     @property
     def tiene_imagenes(self):
+        """Al menos una imagen subida, de cualquiera de los estudios de la
+        cita -- es el gate para poder empezar a informar (ver
+        adjuntar_informe). No exige que estén todos los estudios del combo
+        completos; para eso ver imagenes_completas."""
         return self.imagenes.exists()
+
+    @property
+    def imagenes_completas(self):
+        """True cuando hay al menos una imagen por CADA estudio de la cita
+        -- recién ahí la orden sale de "Órdenes pendientes" del técnico
+        (ver ordenes_pendientes)."""
+        requeridos = {e.id for e in self.cita.estudios}
+        if not requeridos:
+            return False
+        con_imagen = set(
+            self.imagenes.exclude(tipo_estudio__isnull=True).values_list('tipo_estudio_id', flat=True)
+        )
+        return requeridos.issubset(con_imagen)
 
     @property
     def esta_verificada(self):
@@ -951,6 +1179,13 @@ class OrdenTrabajo(models.Model):
 
 class ImagenEstudio(models.Model):
     orden = models.ForeignKey(OrdenTrabajo, on_delete=models.CASCADE, related_name='imagenes')
+    # A cuál de los estudios de la cita pertenece esta imagen -- para un
+    # estudio normal es el único que tiene la cita; para un combo, el
+    # estudio puntual del combo que el técnico eligió al subirla (ver
+    # Cita.estudios). Nullable solo por compatibilidad con filas viejas.
+    tipo_estudio = models.ForeignKey(
+        TipoEstudio, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
+    )
     archivo = models.FileField(upload_to='imagenes_estudio/%Y/%m/')
     # Cuando el técnico sube un DICOM, "archivo" queda con el JPG ya
     # convertido (para poder mostrarlo en el navegador) y acá se conserva el
@@ -978,6 +1213,40 @@ class ImagenEstudio(models.Model):
 
     def __str__(self):
         return f'Imagen #{self.id} - Orden #{self.orden_id}'
+
+
+class InformeEstudio(models.Model):
+    """Informe médico de UNO de los estudios de una orden de trabajo: para
+    un estudio normal hay exactamente uno (tipo_estudio = el de la cita);
+    para un combo, uno por cada estudio que lo compone (ver
+    Cita.estudios). El envío del estudio al paciente se bloquea hasta que
+    estén todos completos (ver OrdenTrabajo.tiene_informe)."""
+
+    orden = models.ForeignKey(OrdenTrabajo, on_delete=models.CASCADE, related_name='informes')
+    tipo_estudio = models.ForeignKey(TipoEstudio, on_delete=models.PROTECT, related_name='+')
+    texto = models.TextField(blank=True, verbose_name='informe (texto)')
+    archivo = models.FileField(
+        upload_to='informes/%Y/%m/', blank=True, null=True, verbose_name='informe (archivo)',
+    )
+    creado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='informes_creados',
+    )
+    creado_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'informes_estudio'
+        verbose_name = 'informe de estudio'
+        verbose_name_plural = 'informes de estudio'
+        unique_together = ('orden', 'tipo_estudio')
+        ordering = ['tipo_estudio__nombre']
+
+    def __str__(self):
+        return f'Informe de {self.tipo_estudio} — Orden #{self.orden_id}'
+
+    @property
+    def tiene_contenido(self):
+        return bool(self.texto or self.archivo)
 
 
 class Ticket(models.Model):

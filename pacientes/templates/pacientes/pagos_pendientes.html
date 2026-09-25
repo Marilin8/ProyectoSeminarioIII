@@ -4,7 +4,6 @@
 {% block page_title %}Caja — Pagos de estudios{% endblock %}
 
 {% block topbar_actions %}
-    {% include 'includes/notificaciones.html' %}
     <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
         <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
         Volver al panel
@@ -22,15 +21,11 @@
         .orden-agrupada-cabecera { display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; margin-bottom:1rem; }
         .orden-agrupada h3 { margin:0.15rem 0 0.25rem; }
         .orden-agrupada .eyebrow { color:var(--primary); font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
-        .orden-agrupada-lista { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:.55rem; max-height:18rem; overflow:auto; padding:.25rem; }
-        .estudio-seleccionable { display:flex; gap:.65rem; align-items:flex-start; padding:.7rem; border:1px solid #e2e8f0; border-radius:var(--radius); background:#fff; cursor:pointer; }
-        .estudio-seleccionable:hover { border-color:var(--primary); box-shadow:0 2px 8px rgba(30,64,175,.08); }
-        .estudio-seleccionable small { display:block; color:var(--text-muted); margin-top:.2rem; }
-        .orden-agrupada-opciones { display:grid; grid-template-columns:minmax(12rem,1fr) minmax(16rem,2fr) auto; gap:.7rem; align-items:end; margin-top:1rem; }
-        .orden-agrupada-opciones label { display:flex; flex-direction:column; gap:.3rem; font-size:.76rem; font-weight:600; color:var(--text-muted); }
+        .orden-agrupada-opciones { display:flex; flex-wrap:wrap; gap:.7rem; align-items:end; margin-top:1rem; }
+        .orden-agrupada-opciones label { display:flex; flex-direction:column; gap:.3rem; font-size:.76rem; font-weight:600; color:var(--text-muted); min-width:9rem; }
         .orden-resumen { margin-top:1rem; padding:.8rem 1rem; border-radius:var(--radius); background:#eff6ff; border:1px solid #bfdbfe; color:#1e3a8a; }
         .orden-resumen div { margin-top:.25rem; font-size:.85rem; }
-        @media (max-width: 800px) { .orden-agrupada-opciones { grid-template-columns:1fr; } .orden-agrupada-cabecera { flex-direction:column; } }
+        @media (max-width: 800px) { .orden-agrupada-cabecera { flex-direction:column; } }
     </style>
 {% endblock %}
 
@@ -48,15 +43,19 @@
                 <option value="" {% if not estado %}selected{% endif %}>Todos</option>
             </select>
         </div>
-        <div style="display:flex;flex-direction:column;gap:0.2rem;">
-            <label for="convenio" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Convenio</label>
-            <select name="convenio" id="convenio">
-                <option value="">Todos</option>
-                {% for valor, etiqueta in convenios %}
-                    <option value="{{ valor }}" {% if convenio == valor %}selected{% endif %}>{{ etiqueta }}</option>
-                {% endfor %}
-            </select>
-        </div>
+        {% if convenio == 'emergencia_igss' %}
+            <div style="display:flex;flex-direction:column;gap:0.2rem;">
+                <label for="convenio" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Convenio</label>
+                <select name="convenio" id="convenio">
+                    <option value="">Todos</option>
+                    {% for valor, etiqueta in convenios %}
+                        {% if valor != 'privado' %}
+                            <option value="{{ valor }}" {% if convenio == valor %}selected{% endif %}>{{ etiqueta }}</option>
+                        {% endif %}
+                    {% endfor %}
+                </select>
+            </div>
+        {% endif %}
         <div style="display:flex;flex-direction:column;gap:0.2rem;">
             <label for="combo" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Combo</label>
             <select name="combo" id="combo">
@@ -86,61 +85,83 @@
         <button type="submit" class="btn btn-primary btn-sm">
             <svg width="14" height="14"><use href="#i-search"/></svg> Filtrar
         </button>
-        <a class="btn btn-outline btn-sm" href="{% url 'pagos_pendientes' %}">Limpiar</a>
+        <a class="btn btn-outline btn-sm" href="{% if convenio == 'emergencia_igss' %}{% url 'pagos_pendientes_igss' %}{% else %}{% url 'pagos_pendientes' %}{% endif %}">Limpiar</a>
     </form>
 
-    <form method="post" action="{% url 'crear_orden_pago' %}" class="card mb-2 orden-agrupada">
-        {% csrf_token %}
-        <input type="hidden" name="combo" id="combo-seleccionado" value="">
-        <div class="orden-agrupada-cabecera">
-            <div>
-                <span class="eyebrow">Cobro por convenio</span>
-                <h3>Crear orden agrupada</h3>
-                <p class="text-muted text-sm">Agrupe estudios del mismo paciente y convenio para adjuntar una sola boleta global.</p>
+    {% if convenio == 'emergencia_igss' or convenio == 'coex' %}
+        <div class="card mb-2 orden-agrupada">
+            <div class="orden-agrupada-cabecera">
+                <div>
+                    <span class="eyebrow">Cobro por convenio</span>
+                    <h3>Crear orden agrupada</h3>
+                    <p class="text-muted text-sm">
+                        Agrupa TODOS los estudios pendientes de cobro de un convenio (COEX o Emergencia IGSS)
+                        en un rango de fechas en una sola orden de pago — por ejemplo, la liquidación semanal
+                        de un convenio institucional que cubre muchos pacientes distintos.
+                    </p>
+                </div>
             </div>
-            <span class="badge badge-info">COEX · Emergencia IGSS</span>
+            <form method="get" class="orden-agrupada-opciones">
+                <label>Convenio
+                    <select name="orden_convenio">
+                        <option value="coex" {% if orden_convenio == 'coex' %}selected{% endif %}>COEX</option>
+                        <option value="emergencia_igss" {% if orden_convenio == 'emergencia_igss' %}selected{% endif %}>Emergencia IGSS</option>
+                    </select>
+                </label>
+                <label>Desde
+                    <input type="date" name="orden_desde" value="{{ orden_desde|date:'Y-m-d' }}">
+                </label>
+                <label>Hasta
+                    <input type="date" name="orden_hasta" value="{{ orden_hasta|date:'Y-m-d' }}">
+                </label>
+                <button type="submit" class="btn btn-outline">Ver estudios a agrupar</button>
+            </form>
+            <div id="resumen-orden" class="orden-resumen">
+                {% if resumen_orden_rango %}
+                    {% if resumen_orden_rango.cantidad %}
+                        <div>
+                            <strong>{{ resumen_orden_rango.cantidad }}</strong> estudio{{ resumen_orden_rango.cantidad|pluralize }}
+                            de <strong>{{ resumen_orden_rango.pacientes }}</strong> paciente{{ resumen_orden_rango.pacientes|pluralize }}
+                            — Total: <strong>Q{{ resumen_orden_rango.total|floatformat:2 }}</strong>
+                        </div>
+                        <form method="post" action="{% url 'crear_orden_pago' %}" style="margin-top:0.6rem;"
+                              data-confirmar="¿Crear una orden de pago agrupando {{ resumen_orden_rango.cantidad }} estudio{{ resumen_orden_rango.cantidad|pluralize }} de {{ resumen_orden_rango.pacientes }} paciente{{ resumen_orden_rango.pacientes|pluralize }} por un total de Q{{ resumen_orden_rango.total|floatformat:2 }}?">
+                            {% csrf_token %}
+                            <input type="hidden" name="convenio" value="{{ orden_convenio }}">
+                            <input type="hidden" name="desde" value="{{ orden_desde|date:'Y-m-d' }}">
+                            <input type="hidden" name="hasta" value="{{ orden_hasta|date:'Y-m-d' }}">
+                            <div class="orden-agrupada-opciones" style="margin-top:0;">
+                                <label>Notas
+                                    <input type="text" name="notas" placeholder="Opcional: se completa solo con el convenio y las fechas">
+                                </label>
+                                <button type="submit" class="btn btn-primary">Crear orden de pago</button>
+                            </div>
+                        </form>
+                    {% else %}
+                        <div class="text-muted text-sm">No hay estudios pendientes para agrupar con ese convenio y rango de fechas.</div>
+                    {% endif %}
+                {% else %}
+                    <div class="text-muted text-sm">Elegí convenio y rango de fechas, y hacé clic en "Ver estudios a agrupar".</div>
+                {% endif %}
+            </div>
         </div>
-        <div class="orden-agrupada-lista">
-            {% for cobro in cobros_para_orden %}
-                    <label class="estudio-seleccionable"
-                           data-tipo-estudio="{{ cobro.cita.tipo_estudio_id }}"
-                           data-precio="{{ cobro.cita.precio }}"
-                           data-convenio="{{ cobro.cita.convenio }}">
-                        <input type="checkbox" name="cita_ids" value="{{ cobro.cita_id }}">
-                        <span>
-                            <strong>{{ cobro.cita.paciente.nombre }} {{ cobro.cita.paciente.apellido }}</strong>
-                            <small>{{ cobro.cita.tipo_estudio.nombre }} · {{ cobro.cita.get_convenio_display }} · Q{{ cobro.cita.precio|floatformat:2 }}</small>
-                        </span>
-                    </label>
-            {% empty %}
-                <span class="text-muted">No hay estudios pendientes para agrupar.</span>
-            {% endfor %}
-        </div>
-        <div id="resumen-orden" class="orden-resumen" hidden>
-            <strong>Resumen de la orden</strong>
-            <div id="resumen-estudios"></div>
-            <div id="resumen-totales"></div>
-        </div>
-        <div class="orden-agrupada-opciones">
-            <label>Notas
-                <input type="text" name="notas" placeholder="Ej.: pago global de convenio">
-            </label>
-            <button type="submit" class="btn btn-primary" id="crear-orden">Crear orden de pago</button>
-        </div>
-    </form>
+    {% endif %}
 
     {% if ordenes_pago %}
         <div class="card mb-2" style="padding:1rem;">
             <h3 style="margin-top:0;">Órdenes agrupadas pendientes de boleta</h3>
             {% for orden in ordenes_pago %}
                 <div style="border-top:1px solid var(--border);padding:0.75rem 0;">
-                    <strong>Orden #{{ orden.id }} · {{ orden.paciente.nombre }} {{ orden.paciente.apellido }}</strong>
-                    <div class="meta">{{ orden.get_convenio_display }} · Total Q{{ orden.total|floatformat:2 }}{% if orden.combo %} · {{ orden.combo.nombre }}{% endif %}</div>
-                    <div class="meta">
-                        {% for detalle in orden.detalles.all %}
-                            {{ detalle.tipo_estudio.nombre }} (Q{{ detalle.total|floatformat:2 }}){% if not forloop.last %}, {% endif %}
-                        {% endfor %}
-                    </div>
+                    <strong>
+                        Orden #{{ orden.id }} ·
+                        {% if orden.paciente %}{{ orden.paciente.nombre }} {{ orden.paciente.apellido }}{% else %}Varios pacientes{% endif %}
+                    </strong>
+                    <div class="meta">{{ orden.get_convenio_display }} · {{ orden.detalles.count }} estudio{{ orden.detalles.count|pluralize }} · Total Q{{ orden.total|floatformat:2 }}{% if orden.combo %} · {{ orden.combo.nombre }}{% endif %}</div>
+                    {% if orden.notas %}<div class="meta">{{ orden.notas }}</div>{% endif %}
+                    <a class="btn btn-outline btn-sm" style="margin-top:0.4rem;" href="{% url 'orden_pago_pdf' orden_id=orden.id %}" target="_blank" rel="noopener">
+                        <svg width="14" height="14"><use href="#i-file-text"/></svg>
+                        Ver listado
+                    </a>
                     <form method="post" action="{% url 'pagar_orden_pago' orden_id=orden.id %}" enctype="multipart/form-data" class="form-cobrar" style="margin-top:0.5rem;">
                         {% csrf_token %}
                         <select name="forma_pago" required>
@@ -231,23 +252,29 @@
                     {% elif not cobro.listo_para_cobrar %}
                         <span class="text-muted text-sm">Se habilita cuando el técnico confirme el estudio.</span>
                     {% elif cobro.cita.convenio == 'privado' %}
-                        <form method="post" action="{% url 'marcar_cobrado' cita_id=cobro.cita_id %}" class="form-cobrar" enctype="multipart/form-data">
+                        <form method="post" action="{% url 'marcar_cobrado' cita_id=cobro.cita_id %}" class="form-cobrar form-cobrar-efectivo" enctype="multipart/form-data" data-precio="{{ cobro.cita.precio }}">
                             {% csrf_token %}
-                            <select name="forma_pago" required>
+                            <select name="forma_pago" class="campo-forma-pago" required>
                                 <option value="">Forma de pago</option>
                                 <option value="efectivo">Efectivo</option>
                                 <option value="tarjeta">Tarjeta</option>
                                 <option value="transferencia">Transferencia</option>
                             </select>
-                            <input type="text" name="numero_boleta" placeholder="Boleta / referencia">
-                            <input type="file" name="comprobante_bancario" accept=".pdf,.jpg,.jpeg,.png">
+                            <input type="text" name="numero_boleta" class="campo-no-efectivo" placeholder="Boleta / referencia">
+                            <input type="file" name="comprobante_bancario" class="campo-no-efectivo" accept=".pdf,.jpg,.jpeg,.png">
+                            <span class="campo-efectivo" style="display:none;">
+                                <input type="number" step="0.01" min="0" class="campo-monto-recibido" placeholder="Cantidad recibida (Q)">
+                                <span class="texto-vuelto"></span>
+                            </span>
                             <button type="submit" class="btn btn-primary btn-sm">
                                 <svg width="14" height="14"><use href="#i-check"/></svg>
                                 Marcar pagado
                             </button>
                         </form>
                     {% else %}
-                        <span class="badge badge-warning">Pendiente de orden agrupada</span>
+                        <span class="text-muted text-sm">
+                            Se agrupa con "Crear orden agrupada" arriba (por convenio y rango de fechas).
+                        </span>
                     {% endif %}
                 </div>
             </div>
@@ -275,67 +302,61 @@
         </div>
     {% endif %}
 
-    {{ combos_preview|json_script:"combos-preview" }}
     <script>
-        (function () {
-            var form = document.querySelector('form.orden-agrupada');
-            var tarjetas = form ? form.querySelectorAll('.estudio-seleccionable') : [];
-            var resumen = document.getElementById('resumen-orden');
-            var resumenEstudios = document.getElementById('resumen-estudios');
-            var resumenTotales = document.getElementById('resumen-totales');
-            var comboSeleccionado = document.getElementById('combo-seleccionado');
-            var confirmada = false;
-            var combos = JSON.parse(document.getElementById('combos-preview').textContent || '[]');
+        // Confirmación antes de crear la orden agrupada (ver data-confirmar
+        // en el formulario de "Crear orden agrupada" arriba).
+        document.querySelectorAll('form[data-confirmar]').forEach(function (f) {
+            f.addEventListener('submit', function (e) {
+                if (!window.confirm(f.getAttribute('data-confirmar'))) { e.preventDefault(); }
+            });
+        });
 
-            function actualizarResumen() {
-                var seleccionados = Array.prototype.filter.call(tarjetas, function (tarjeta) {
-                    return tarjeta.querySelector('input').checked;
-                });
-                if (!seleccionados.length) {
-                    resumen.hidden = true;
-                    comboSeleccionado.value = '';
+        // Al marcar un pago en Efectivo no tiene sentido pedir "boleta /
+        // referencia" (eso es de tarjeta/transferencia) ni el comprobante
+        // bancario: en su lugar se pide cuánto entregó el paciente en
+        // efectivo, y se calcula solo el vuelto contra el precio del
+        // estudio — para que Caja no tenga que sacar la cuenta a mano.
+        document.querySelectorAll('.form-cobrar-efectivo').forEach(function (form) {
+            var precio = parseFloat(form.dataset.precio) || 0;
+            var selectFormaPago = form.querySelector('.campo-forma-pago');
+            var camposNoEfectivo = form.querySelectorAll('.campo-no-efectivo');
+            var campoEfectivo = form.querySelector('.campo-efectivo');
+            var inputMonto = form.querySelector('.campo-monto-recibido');
+            var textoVuelto = form.querySelector('.texto-vuelto');
+
+            function actualizarVuelto() {
+                var monto = parseFloat(inputMonto.value);
+                if (isNaN(monto)) {
+                    textoVuelto.textContent = '';
                     return;
                 }
-                var tipos = seleccionados.map(function (tarjeta) {
-                    return Number(tarjeta.dataset.tipoEstudio);
-                });
-                var combo = combos.find(function (opcion) {
-                    return opcion.estudios.every(function (id) { return tipos.indexOf(id) !== -1; });
-                });
-                var subtotal = seleccionados.reduce(function (total, tarjeta) {
-                    return total + Number(tarjeta.dataset.precio || 0);
-                }, 0);
-                var descuento = combo ? subtotal * combo.porcentaje / 100 : 0;
-                comboSeleccionado.value = combo ? combo.id : '';
-                resumen.hidden = false;
-                resumenEstudios.textContent = seleccionados.length + ' estudio(s) seleccionado(s)'
-                    + (combo ? ' · ' + combo.nombre : ' · Sin combo aplicable');
-                resumenTotales.textContent =
-                    'Subtotal: Q' + subtotal.toFixed(2)
-                    + ' · Descuento: Q' + descuento.toFixed(2)
-                    + ' · Total: Q' + (subtotal - descuento).toFixed(2);
+                var diferencia = monto - precio;
+                if (diferencia < 0) {
+                    textoVuelto.style.color = 'var(--danger)';
+                    textoVuelto.textContent = 'Falta Q' + Math.abs(diferencia).toFixed(2);
+                } else {
+                    textoVuelto.style.color = 'var(--success)';
+                    textoVuelto.textContent = 'Vuelto: Q' + diferencia.toFixed(2);
+                }
             }
-            Array.prototype.forEach.call(tarjetas, function (tarjeta) {
-                tarjeta.querySelector('input').addEventListener('change', actualizarResumen);
-            });
-            form.addEventListener('submit', function (evento) {
-                if (confirmada) return;
-                var seleccionados = Array.prototype.filter.call(tarjetas, function (tarjeta) {
-                    return tarjeta.querySelector('input').checked;
+
+            function aplicarFormaPago() {
+                var esEfectivo = selectFormaPago.value === 'efectivo';
+                camposNoEfectivo.forEach(function (campo) {
+                    campo.style.display = esEfectivo ? 'none' : '';
+                    campo.disabled = esEfectivo;
                 });
-                if (!seleccionados.length) {
-                    evento.preventDefault();
-                    window.alert('Seleccione al menos un estudio para crear la orden.');
-                    return;
+                campoEfectivo.style.display = esEfectivo ? '' : 'none';
+                inputMonto.disabled = !esEfectivo;
+                if (!esEfectivo) {
+                    inputMonto.value = '';
+                    textoVuelto.textContent = '';
                 }
-                var mensaje = resumenTotales.textContent + '\n\n'
-                    + resumenEstudios.textContent + '\n\n¿Desea crear esta orden de pago?';
-                if (!window.confirm(mensaje)) {
-                    evento.preventDefault();
-                    return;
-                }
-                confirmada = true;
-            });
-        })();
+            }
+
+            selectFormaPago.addEventListener('change', aplicarFormaPago);
+            inputMonto.addEventListener('input', actualizarVuelto);
+            aplicarFormaPago();
+        });
     </script>
 {% endblock %}
