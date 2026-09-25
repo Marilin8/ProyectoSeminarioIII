@@ -41,6 +41,7 @@ from .forms import (
     CrearTipoEstudioForm,
     CrearOrdenPagoForm,
     EXTENSIONES_IMAGEN_DIRECTA,
+    FechaVigenciaProgramadaForm,
     GenerarOrdenForm,
     IngresarCorreoEnvioForm,
     NOMBRES_IGNORADOS_EN_CARPETA,
@@ -62,6 +63,7 @@ from .horarios import (
     se_cruzan,
 )
 from .models import (
+    CambioEstudioProgramado,
     Cita,
     Cobro,
     Combo,
@@ -477,6 +479,29 @@ def buscar_paciente_por_dpi(request):
             paciente.fecha_nacimiento.isoformat() if paciente.fecha_nacimiento else ''
         ),
         'carnet_igss': paciente.carnet_igss or '',
+    })
+
+
+@login_required
+@user_passes_test(es_recepcionista)
+def buscar_paciente_por_telefono(request):
+    """Avisa si el teléfono ingresado ya está registrado a nombre de OTRO
+    paciente, para no duplicarlo por error al escribirlo a mano. No bloquea
+    nada (a diferencia del DPI, que es único): es normal que varios
+    pacientes -ej. familiares- compartan un mismo número de contacto, así
+    que solo se informa de quién es."""
+    telefono = (request.GET.get('telefono') or '').strip()
+    excluir_dpi = (request.GET.get('excluir_dpi') or '').strip()
+    if not telefono:
+        return JsonResponse({'encontrado': False})
+    paciente = Paciente.objects.filter(telefono=telefono).exclude(dpi=excluir_dpi).first()
+    if not paciente:
+        return JsonResponse({'encontrado': False})
+    return JsonResponse({
+        'encontrado': True,
+        'nombre': paciente.nombre,
+        'apellido': paciente.apellido,
+        'dpi': paciente.dpi,
     })
 
 
@@ -1434,7 +1459,84 @@ def editar_estudio(request, estudio_id):
         'form': form,
         'editando': tipo_estudio,
         'historial_precios': tipo_estudio.historial_precios.select_related('modificado_por')[:10],
+        'cambios_programados': tipo_estudio.cambios_programados.filter(
+            estado=CambioEstudioProgramado.ESTADO_PENDIENTE,
+        ).select_related('creado_por'),
     })
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def programar_cambio_estudio(request, estudio_id):
+    """El administrador arma el estudio como quedaría (nombre, modalidad,
+    duración y precios) con el mismo formulario que la edición inmediata,
+    pero en vez de guardar ahora, programa que se aplique solo desde cierta
+    fecha (ver CambioEstudioProgramado)."""
+    tipo_estudio = get_object_or_404(TipoEstudio, id=estudio_id)
+    form = CrearTipoEstudioForm(request.POST, instance=tipo_estudio)
+    fecha_form = FechaVigenciaProgramadaForm(request.POST)
+    if not form.is_valid() or not fecha_form.is_valid():
+        for f in (form, fecha_form):
+            for errores in f.errors.values():
+                for error in errores:
+                    messages.error(request, error)
+        return redirect('editar_estudio', estudio_id=tipo_estudio.id)
+
+    # form.save(commit=False) deja los valores nuevos en el objeto EN
+    # MEMORIA (nombre/modalidad/duración) sin tocar la base de datos -- ni
+    # siquiera guarda_precios() corre con commit=False -- así que el
+    # estudio real sigue exactamente igual hasta que llegue la fecha.
+    propuesto = form.save(commit=False)
+    cambio = CambioEstudioProgramado.objects.create(
+        tipo_estudio=tipo_estudio,
+        nombre=propuesto.nombre,
+        modalidad=propuesto.modalidad,
+        duracion_minutos=propuesto.duracion_minutos,
+        precio_coex_habil=form.cleaned_data['precio_coex_habil'],
+        precio_privado_habil=form.cleaned_data['precio_privado_habil'],
+        precio_privado_inhabil=form.cleaned_data['precio_privado_inhabil'],
+        precio_emergencia_igss_habil=form.cleaned_data['precio_emergencia_igss_habil'],
+        precio_emergencia_igss_inhabil=form.cleaned_data['precio_emergencia_igss_inhabil'],
+        fecha_vigencia=fecha_form.cleaned_data['fecha_vigencia'],
+        creado_por=request.user,
+    )
+    detalle = '; '.join(cambio.resumen_diferencias()) or 'sin cambios respecto al valor actual'
+    Bitacora.registrar(
+        request=request, usuario=request.user,
+        accion=Bitacora.ACCION_PROGRAMAR_CAMBIO_PRECIO,
+        descripcion=(
+            f'Programó cambios en el estudio "{tipo_estudio.nombre}" desde el '
+            f'{cambio.fecha_vigencia:%d/%m/%Y}: {detalle}.'
+        ),
+    )
+    messages.success(
+        request,
+        f'Cambios programados para "{tipo_estudio.nombre}" a partir del '
+        f'{cambio.fecha_vigencia:%d/%m/%Y}.',
+    )
+    return redirect('editar_estudio', estudio_id=tipo_estudio.id)
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def cancelar_cambio_estudio_programado(request, cambio_id):
+    """Cancela un cambio de estudio programado que todavía no se aplicó."""
+    cambio = get_object_or_404(
+        CambioEstudioProgramado, id=cambio_id, estado=CambioEstudioProgramado.ESTADO_PENDIENTE,
+    )
+    cambio.estado = CambioEstudioProgramado.ESTADO_CANCELADO
+    cambio.cancelado_por = request.user
+    cambio.cancelado_en = timezone.now()
+    cambio.save(update_fields=['estado', 'cancelado_por', 'cancelado_en'])
+    Bitacora.registrar(
+        request=request, usuario=request.user,
+        accion=Bitacora.ACCION_CANCELAR_CAMBIO_PRECIO,
+        descripcion=f'Canceló el cambio programado del estudio "{cambio.tipo_estudio.nombre}".',
+    )
+    messages.success(request, 'Cambio programado cancelado.')
+    return redirect('editar_estudio', estudio_id=cambio.tipo_estudio_id)
 
 
 def _auditar_cambios_precio(request, tipo_estudio, precios_antes):

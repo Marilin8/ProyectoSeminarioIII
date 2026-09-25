@@ -14,7 +14,8 @@
 {% block content %}
     <div class="card" style="max-width: 640px;">
         <div class="card-body" style="padding: 1.5rem 2rem;">
-            <form method="post">
+            <form method="post" id="form-estudio"
+                  action="{% if editando %}{% url 'editar_estudio' estudio_id=editando.id %}{% else %}{% url 'crear_estudio' %}{% endif %}">
                 {% csrf_token %}
                 {{ form.non_field_errors }}
 
@@ -81,8 +82,96 @@
                     {% if editando %}Guardar cambios{% else %}Crear estudio{% endif %}
                 </button>
             </form>
+
+            {% if editando %}
+                <button type="button" class="btn btn-outline btn-block" id="btn-abrir-programar" style="margin-top: 0.75rem;">
+                    <svg width="14" height="14"><use href="#i-calendar"/></svg>
+                    Programar cambio
+                </button>
+            {% endif %}
         </div>
     </div>
+
+    {% if editando %}
+        <div class="modal-overlay" id="modal-programar">
+            <div class="modal-card">
+                <h2>Programar cambio</h2>
+                <p style="color:var(--text-muted);">
+                    Se va a programar el estudio con los datos que tengas puestos arriba (nombre,
+                    modalidad, duración y precios). Elegí desde qué fecha rige: el sistema lo aplica
+                    solo ese día, sin necesidad de volver a entrar a editarlo.
+                </p>
+                <label for="id-fecha-vigencia-programada">Vigente desde</label>
+                <input type="date" id="id-fecha-vigencia-programada" required>
+                <div class="modal-botones">
+                    <button type="button" class="btn btn-outline" id="btn-cancelar-programar">Cancelar</button>
+                    <button type="button" class="btn btn-primary" id="btn-confirmar-programar">Programar cambio</button>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            (function () {
+                var form = document.getElementById('form-estudio');
+                var modal = document.getElementById('modal-programar');
+                var abrir = document.getElementById('btn-abrir-programar');
+                var cerrar = document.getElementById('btn-cancelar-programar');
+                var confirmar = document.getElementById('btn-confirmar-programar');
+                var fechaInput = document.getElementById('id-fecha-vigencia-programada');
+                if (!form || !modal || !abrir) { return; }
+
+                abrir.addEventListener('click', function () { modal.classList.add('abierto'); });
+                cerrar.addEventListener('click', function () { modal.classList.remove('abierto'); });
+                modal.addEventListener('click', function (e) {
+                    if (e.target === modal) { modal.classList.remove('abierto'); }
+                });
+                confirmar.addEventListener('click', function () {
+                    if (!fechaInput.value) { fechaInput.reportValidity(); return; }
+                    var oculto = document.createElement('input');
+                    oculto.type = 'hidden';
+                    oculto.name = 'fecha_vigencia';
+                    oculto.value = fechaInput.value;
+                    form.appendChild(oculto);
+                    form.action = "{% url 'programar_cambio_estudio' estudio_id=editando.id %}";
+                    form.submit();
+                });
+            })();
+        </script>
+    {% endif %}
+
+    {% if editando and cambios_programados %}
+        <div class="card" style="max-width:640px;margin-top:1.25rem;">
+            <div class="card-header">Cambios programados</div>
+            <div class="card-body" style="padding:0;overflow-x:auto;">
+                <table>
+                    <thead><tr><th>Vigente desde</th><th>Qué cambia</th><th>Programado por</th><th></th></tr></thead>
+                    <tbody>
+                        {% for c in cambios_programados %}
+                            <tr>
+                                <td style="white-space:nowrap;">{{ c.fecha_vigencia|date:'d/m/Y' }}</td>
+                                <td>
+                                    <ul style="margin:0;padding-left:1.1rem;font-size:0.85rem;">
+                                        {% for texto in c.resumen_diferencias %}
+                                            <li>{{ texto }}</li>
+                                        {% empty %}
+                                            <li class="text-muted">Sin cambios respecto al valor actual</li>
+                                        {% endfor %}
+                                    </ul>
+                                </td>
+                                <td>{{ c.creado_por.username }}</td>
+                                <td>
+                                    <form method="post" action="{% url 'cancelar_cambio_estudio_programado' cambio_id=c.id %}" style="margin:0;">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn-texto" style="color:var(--danger);">Cancelar</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endif %}
 
     {% if editando and historial_precios %}
         <div class="card" style="max-width:640px;margin-top:1.25rem;">

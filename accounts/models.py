@@ -180,6 +180,8 @@ class Bitacora(models.Model):
     ACCION_CORREGIR_ESTUDIO = 'corregir_estudio'
     ACCION_ELIMINAR_CITA = 'eliminar_cita'
     ACCION_ELIMINAR_TURNO = 'eliminar_turno'
+    ACCION_PROGRAMAR_CAMBIO_PRECIO = 'programar_cambio_precio'
+    ACCION_CANCELAR_CAMBIO_PRECIO = 'cancelar_cambio_precio'
 
     ACCION_CHOICES = [
         (ACCION_LOGIN_EXITOSO, 'Inicio de sesión'),
@@ -218,6 +220,8 @@ class Bitacora(models.Model):
         (ACCION_CORREGIR_ESTUDIO, 'Recepción modificó el estudio de una cita'),
         (ACCION_ELIMINAR_CITA, 'Eliminación de una cita del calendario'),
         (ACCION_ELIMINAR_TURNO, 'Eliminación de un turno de la fila de espera'),
+        (ACCION_PROGRAMAR_CAMBIO_PRECIO, 'Programó un cambio de estudio (nombre, modalidad, duración o precio)'),
+        (ACCION_CANCELAR_CAMBIO_PRECIO, 'Canceló un cambio de estudio programado'),
     ]
 
     usuario = models.ForeignKey(

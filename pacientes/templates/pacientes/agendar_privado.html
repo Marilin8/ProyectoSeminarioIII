@@ -7,6 +7,7 @@
     <style>
         .aviso-paciente { display: none; margin-top: 0.75rem; padding: 0.6rem 0.75rem; border-radius: var(--radius); font-size: 0.82rem; background: var(--success-light); color: #166534; border: 1px solid #bbf7d0; }
         .aviso-paciente a { color: inherit; font-weight: bold; margin-left: 0.5rem; }
+        .aviso-telefono-duplicado { display: none; margin-top: 0.5rem; padding: 0.5rem 0.7rem; border-radius: var(--radius); font-size: 0.8rem; background: var(--warning-light); color: #713f12; border: 1px solid #fde047; }
         .previa-estudio { display: none; margin-top: 0.35rem; padding: 0.4rem 0.65rem; background: var(--info-light); border: 1px solid #bfdbfe; border-radius: var(--radius); font-size: 0.82rem; color: var(--primary-dark); font-weight: 600; }
         .previa-estudio.visible { display: block; }
         .seccion-titulo { font-size: 0.95rem; color: var(--text); margin: 1.5rem 0 0.25rem; border-bottom: 1px solid var(--border-light); padding-bottom: 0.3rem; font-weight: 600; }
@@ -62,6 +63,7 @@
             <label for="{{ form.telefono.id_for_label }}">Teléfono</label>
             {{ form.telefono }}
             {{ form.telefono.errors }}
+            <p class="aviso-telefono-duplicado" id="aviso-telefono-duplicado"></p>
 
             <label for="{{ form.correo.id_for_label }}">Correo electrónico (opcional)</label>
             {{ form.correo }}
@@ -110,6 +112,9 @@
     {% include 'includes/telefono_pais.html' %}
     <script>
         activarSelectorTelefono('telefono');
+        activarAvisoTelefonoDuplicado('telefono', {
+            obtenerDpiPropio: function () { return document.getElementById('id_dpi').value; },
+        });
         // Autocompletar datos del paciente por DPI.
         (function () {
             var dpi = document.getElementById('id_dpi');

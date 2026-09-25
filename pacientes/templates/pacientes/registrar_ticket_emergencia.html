@@ -11,6 +11,12 @@
     </a>
 {% endblock %}
 
+{% block extra_css %}
+    <style>
+        .aviso-telefono-duplicado { display: none; margin-top: 0.5rem; padding: 0.5rem 0.7rem; border-radius: var(--radius); font-size: 0.8rem; background: var(--warning-light); color: #713f12; border: 1px solid #fde047; }
+    </style>
+{% endblock %}
+
 {% block content %}
     <div class="card" style="max-width:640px;margin:0 auto;">
         <div class="card-body">
@@ -53,6 +59,7 @@
                 <label for="{{ form.telefono.id_for_label }}">Teléfono (opcional)</label>
                 {{ form.telefono }}
                 {{ form.telefono.errors }}
+                <p class="aviso-telefono-duplicado" id="aviso-telefono-duplicado"></p>
 
                 <label for="{{ form.correo.id_for_label }}">Correo electrónico</label>
                 {{ form.correo }}
@@ -85,6 +92,9 @@
     {% include 'includes/telefono_pais.html' %}
     <script>
         activarSelectorTelefono('telefono');
+        activarAvisoTelefonoDuplicado('telefono', {
+            obtenerDpiPropio: function () { return document.getElementById('id_dpi').value; },
+        });
         // Autocompleta los datos del paciente si el DPI ya está registrado,
         // para no volver a escribir nombre/apellido/sexo/teléfono/fecha de
         // nacimiento cada vez.

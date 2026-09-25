@@ -7,6 +7,16 @@ urlpatterns = [
     path('estudios/nuevo/', views.crear_estudio, name='crear_estudio'),
     path('estudios/', views.lista_estudios, name='lista_estudios'),
     path('estudios/<int:estudio_id>/editar/', views.editar_estudio, name='editar_estudio'),
+    path(
+        'estudios/<int:estudio_id>/programar-cambio/',
+        views.programar_cambio_estudio,
+        name='programar_cambio_estudio',
+    ),
+    path(
+        'estudios/cambio-programado/<int:cambio_id>/cancelar/',
+        views.cancelar_cambio_estudio_programado,
+        name='cancelar_cambio_estudio_programado',
+    ),
     path('estudios/historial-precios/', views.historial_precios_estudio, name='historial_precios_estudio'),
     path('combos/nuevo/', views.crear_combo, name='crear_combo'),
     path('combos/', views.lista_combos, name='lista_combos'),
@@ -24,6 +34,11 @@ urlpatterns = [
     path('visor/<int:orden_id>/imagenes.zip', views.visor_jpg, name='visor_jpg'),
 
     path('pacientes/buscar-por-dpi/', views.buscar_paciente_por_dpi, name='buscar_paciente_por_dpi'),
+    path(
+        'pacientes/buscar-por-telefono/',
+        views.buscar_paciente_por_telefono,
+        name='buscar_paciente_por_telefono',
+    ),
     path(
         'pacientes/completar-datos/<int:paciente_id>/',
         views.completar_datos_paciente,

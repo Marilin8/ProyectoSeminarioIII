@@ -66,6 +66,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'accounts.middleware.SesionUnicaMiddleware',
     'pacientes.middleware.AutoMarcarAusenteMiddleware',
+    'pacientes.middleware.AplicarCambiosEstudioProgramadosMiddleware',
 ]
 
 # Autenticación en dos pasos (django-otp TOTP). El emisor es lo que muestra
