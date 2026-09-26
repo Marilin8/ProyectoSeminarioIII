@@ -184,6 +184,23 @@ def _ip_real_del_visitante(request):
     return request.META.get('HTTP_CF_CONNECTING_IP') or request.META.get('REMOTE_ADDR')
 
 
+def _ip_real_del_visitante(request):
+    """IP del visitante para la bitácora.
+
+    Cuando el sitio se accede vía el Cloudflare Tunnel, la conexión le
+    llega a Django desde 'cloudflared' en esta misma máquina, así que
+    REMOTE_ADDR siempre da 127.0.0.1 — la bitácora no capturaba la IP
+    real de nadie que entrara por la web pública.
+
+    Cloudflare agrega el header CF-Connecting-IP con la IP real del
+    cliente en cada request que pasa por su borde (no se puede
+    falsificar: Cloudflare lo sobreescribe, ignora el que mande el
+    visitante). Si no viene (acceso directo por LAN sin pasar por el
+    túnel), se sigue usando REMOTE_ADDR como antes.
+    """
+    return request.META.get('HTTP_CF_CONNECTING_IP') or request.META.get('REMOTE_ADDR')
+
+
 class Bitacora(models.Model):
     ACCION_LOGIN_EXITOSO = 'login_exitoso'
     ACCION_LOGIN_FALLIDO = 'login_fallido'
@@ -221,6 +238,8 @@ class Bitacora(models.Model):
     ACCION_CORREGIR_ESTUDIO = 'corregir_estudio'
     ACCION_ELIMINAR_CITA = 'eliminar_cita'
     ACCION_ELIMINAR_TURNO = 'eliminar_turno'
+    ACCION_PROGRAMAR_CAMBIO_PRECIO = 'programar_cambio_precio'
+    ACCION_CANCELAR_CAMBIO_PRECIO = 'cancelar_cambio_precio'
     ACCION_REAGENDAR_DESDE_TURNO = 'reagendar_desde_turno'
 
     ACCION_CHOICES = [
@@ -260,6 +279,8 @@ class Bitacora(models.Model):
         (ACCION_CORREGIR_ESTUDIO, 'Recepción modificó el estudio de una cita'),
         (ACCION_ELIMINAR_CITA, 'Eliminación de una cita del calendario'),
         (ACCION_ELIMINAR_TURNO, 'Eliminación de un turno de la fila de espera'),
+        (ACCION_PROGRAMAR_CAMBIO_PRECIO, 'Programó un cambio de estudio (nombre, modalidad, duración o precio)'),
+        (ACCION_CANCELAR_CAMBIO_PRECIO, 'Canceló un cambio de estudio programado'),
         (ACCION_REAGENDAR_DESDE_TURNO, 'Envío a reagendar desde la pantalla de turnos'),
     ]
 

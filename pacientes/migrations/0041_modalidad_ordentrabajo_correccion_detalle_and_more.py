@@ -30,55 +30,12 @@ class Migration(migrations.Migration):
                 'ordering': ['nombre'],
             },
         ),
-        migrations.AddField(
-            model_name='ordentrabajo',
-            name='correccion_detalle',
-            field=models.CharField(blank=True, max_length=255, verbose_name='qué cambió recepción'),
-        ),
-        migrations.AddField(
-            model_name='ordentrabajo',
-            name='correccion_en',
-            field=models.DateTimeField(blank=True, null=True),
-        ),
-        migrations.AddField(
-            model_name='ordentrabajo',
-            name='correccion_por',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='ordenes_corregidas', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AddField(
-            model_name='ordentrabajo',
-            name='validacion_en',
-            field=models.DateTimeField(blank=True, null=True),
-        ),
-        migrations.AddField(
-            model_name='ordentrabajo',
-            name='validacion_estado',
-            field=models.CharField(choices=[('pendiente', 'Pendiente de verificación del técnico'), ('correcto', 'Estudio correcto'), ('modificacion', 'Modificación solicitada a recepción'), ('corregido', 'Actualizado por recepción, falta confirmar')], default='correcto', max_length=15, verbose_name='verificación del técnico'),
-            # Las órdenes que ya existían se consideran verificadas, para no
-            # bloquear en Caja lo que se generó antes de esta función.
-            preserve_default=False,
-        ),
-        # Las órdenes nuevas sí arrancan pendientes de verificación.
-        migrations.AlterField(
-            model_name='ordentrabajo',
-            name='validacion_estado',
-            field=models.CharField(choices=[('pendiente', 'Pendiente de verificación del técnico'), ('correcto', 'Estudio correcto'), ('modificacion', 'Modificación solicitada a recepción'), ('corregido', 'Actualizado por recepción, falta confirmar')], default='pendiente', max_length=15, verbose_name='verificación del técnico'),
-        ),
-        migrations.AddField(
-            model_name='ordentrabajo',
-            name='validacion_nota',
-            field=models.TextField(blank=True, help_text='Lo que el técnico le pidió cambiar a recepción.', verbose_name='qué hay que modificar'),
-        ),
-        migrations.AddField(
-            model_name='ordentrabajo',
-            name='validacion_por',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='ordenes_validadas', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AlterField(
-            model_name='notificacion',
-            name='tipo',
-            field=models.CharField(choices=[('cita_asignada', 'Nueva cita asignada'), ('cita_confirmada', 'Cita confirmada'), ('cita_rechazada', 'Cita rechazada'), ('orden_pendiente', 'Nueva orden de trabajo pendiente'), ('estudio_listo_informar', 'Estudio listo para informar'), ('estudio_completado', 'Estudio completado'), ('datos_paciente_pendientes', 'Datos de paciente pendientes de llenar'), ('reporte_enviado', 'Reporte diario enviado'), ('estudio_extra_agregado', 'Estudio extra agregado'), ('estudio_validado', 'Estudio verificado, listo para cobrar'), ('modificacion_solicitada', 'Modificación de estudio solicitada'), ('estudio_actualizado', 'Estudio actualizado por recepción'), ('cita_cancelada', 'Cita cancelada por recepción')], max_length=30),
-        ),
+        # Nota: los campos correccion_*/validacion_* de OrdenTrabajo y el
+        # AlterField de notificacion.tipo NO van acá -- ya los agregó, con
+        # el mismo estado final, la migración 0043_validacion_tecnico_estudio
+        # (construida en paralelo en la rama Marilin). Se quitaron de acá al
+        # fusionar Elmer con Marilin para no intentar crear las mismas
+        # columnas dos veces.
         migrations.AlterField(
             model_name='tipoestudio',
             name='modalidad',

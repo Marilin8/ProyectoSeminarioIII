@@ -201,6 +201,17 @@ class MedicoTratante(models.Model):
         return self.nombre
 
 
+def nombre_modalidad(codigo):
+    """Nombre legible de un código de modalidad: busca primero en el
+    catálogo administrable Modalidad y, si no está ahí (una de las 5
+    modalidades históricas hardcodeadas, o un código que ya no existe),
+    cae a TipoEstudio.MODALIDAD_CHOICES."""
+    modalidad = Modalidad.objects.filter(codigo=codigo).first()
+    if modalidad:
+        return modalidad.nombre
+    return dict(TipoEstudio.MODALIDAD_CHOICES).get(codigo, codigo)
+
+
 class TipoEstudio(models.Model):
     MODALIDAD_RX = 'rx'
     MODALIDAD_RX_CONTRASTE = 'rx_contraste'
@@ -229,17 +240,7 @@ class TipoEstudio(models.Model):
     )
 
     def get_modalidad_display(self):
-        modalidad = Modalidad.objects.filter(
-            codigo=self.modalidad
-        ).first()
-
-        if modalidad:
-            return modalidad.nombre
-
-        return dict(self.MODALIDAD_CHOICES).get(
-            self.modalidad,
-            self.modalidad
-        )
+        return nombre_modalidad(self.modalidad)
 
     activo = models.BooleanField(default=True)
     radiologos = models.ManyToManyField(
@@ -370,6 +371,146 @@ class HistorialPrecioEstudio(models.Model):
             f'{self.tipo_estudio} · {self.get_convenio_display()} {horario}: '
             f'Q{self.valor_anterior} -> Q{self.valor_nuevo} ({self.modificado_por})'
         )
+
+
+# Cada estudio tiene un precio por convenio y por tipo de horario. COEX solo
+# tiene tarifa hábil; Privado y Emergencia IGSS tienen hábil e inhábil (a
+# partir de las 18:00). El formulario de estudio (y programar un cambio)
+# exponen esas 5 celdas.
+PRECIOS_ESTUDIO = [
+    ('precio_coex_habil', CONVENIO_COEX, True, 'COEX'),
+    ('precio_privado_habil', CONVENIO_PRIVADO, True, 'Privado · hábil'),
+    ('precio_privado_inhabil', CONVENIO_PRIVADO, False, 'Privado · inhábil'),
+    ('precio_emergencia_igss_habil', CONVENIO_EMERGENCIA_IGSS, True, 'Emergencia IGSS · hábil'),
+    ('precio_emergencia_igss_inhabil', CONVENIO_EMERGENCIA_IGSS, False, 'Emergencia IGSS · inhábil'),
+]
+
+
+class CambioEstudioProgramado(models.Model):
+    """Un cambio a un estudio (nombre, modalidad, duración y/o precios) que
+    el administrador programó para una fecha futura, en vez de tener que
+    volver a entrar a editarlo ese día. Guarda el estado COMPLETO que debe
+    quedar el estudio -- se arma con el mismo formulario que la edición
+    inmediata (ver pacientes.views.programar_cambio_estudio), así que
+    "programar" y "guardar ahora" parten de la misma pantalla.
+
+    Se aplica solo: ver aplicar_vencidos, llamado en cada request desde
+    pacientes.middleware.AplicarCambiosEstudioProgramadosMiddleware."""
+
+    ESTADO_PENDIENTE = 'pendiente'
+    ESTADO_APLICADO = 'aplicado'
+    ESTADO_CANCELADO = 'cancelado'
+
+    ESTADO_CHOICES = [
+        (ESTADO_PENDIENTE, 'Pendiente'),
+        (ESTADO_APLICADO, 'Aplicado'),
+        (ESTADO_CANCELADO, 'Cancelado'),
+    ]
+
+    tipo_estudio = models.ForeignKey(
+        TipoEstudio, on_delete=models.CASCADE, related_name='cambios_programados',
+    )
+    nombre = models.CharField(max_length=120)
+    modalidad = models.CharField(max_length=30)
+    duracion_minutos = models.PositiveIntegerField()
+    precio_coex_habil = models.DecimalField(max_digits=8, decimal_places=2)
+    precio_privado_habil = models.DecimalField(max_digits=8, decimal_places=2)
+    precio_privado_inhabil = models.DecimalField(max_digits=8, decimal_places=2)
+    precio_emergencia_igss_habil = models.DecimalField(max_digits=8, decimal_places=2)
+    precio_emergencia_igss_inhabil = models.DecimalField(max_digits=8, decimal_places=2)
+    fecha_vigencia = models.DateField(verbose_name='vigente desde')
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=ESTADO_PENDIENTE)
+    creado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='cambios_estudio_programados_creados',
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+    aplicado_en = models.DateTimeField(null=True, blank=True)
+    cancelado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='cambios_estudio_programados_cancelados',
+    )
+    cancelado_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'cambios_estudio_programados'
+        verbose_name = 'cambio de estudio programado'
+        verbose_name_plural = 'cambios de estudio programados'
+        ordering = ['fecha_vigencia', 'creado_en']
+
+    def __str__(self):
+        return f'{self.tipo_estudio} -> "{self.nombre}" desde {self.fecha_vigencia}'
+
+    def resumen_diferencias(self):
+        """Lista de textos "Campo: antes → después" con lo que este cambio
+        va a modificar, comparado con el estado ACTUAL del estudio -- para
+        mostrarlo en la pantalla de edición sin repetir la matriz de
+        precios completa."""
+        estudio = self.tipo_estudio
+        diferencias = []
+        if estudio.nombre != self.nombre:
+            diferencias.append(f'Nombre: {estudio.nombre} → {self.nombre}')
+        if estudio.modalidad != self.modalidad:
+            diferencias.append(
+                f'Modalidad: {nombre_modalidad(estudio.modalidad)} → {nombre_modalidad(self.modalidad)}'
+            )
+        if estudio.duracion_minutos != self.duracion_minutos:
+            diferencias.append(f'Duración: {estudio.duracion_minutos} → {self.duracion_minutos} min')
+        precios_actuales = {(p.convenio, p.horario_habil): p.precio for p in estudio.precios.all()}
+        for campo, convenio, habil, etiqueta in PRECIOS_ESTUDIO:
+            nuevo = getattr(self, campo)
+            actual = precios_actuales.get((convenio, habil), Decimal('0.00'))
+            if actual != nuevo:
+                diferencias.append(f'{etiqueta}: Q{actual} → Q{nuevo}')
+        return diferencias
+
+    @classmethod
+    def aplicar_vencidos(cls):
+        """Aplica todos los cambios programados cuya fecha de vigencia ya
+        llegó: actualiza el estudio (nombre/modalidad/duración) y la matriz
+        de precios, deja el rastro de los precios en HistorialPrecioEstudio
+        (mismo que un cambio manual) y marca el cambio programado como
+        aplicado. Al tocar el mismo TipoEstudio/PrecioEstudio que usa el
+        resto del sistema, el cambio queda reflejado en cualquier pantalla
+        que consulte ese estudio (agendar cita, boletas, reportes, etc.)."""
+        hoy = timezone.localdate()
+        vencidos = cls.objects.filter(
+            estado=cls.ESTADO_PENDIENTE, fecha_vigencia__lte=hoy,
+        ).select_related('tipo_estudio', 'creado_por')
+        for cambio in vencidos:
+            estudio = cambio.tipo_estudio
+            campos_estudio = []
+            if estudio.nombre != cambio.nombre:
+                estudio.nombre = cambio.nombre
+                campos_estudio.append('nombre')
+            if estudio.modalidad != cambio.modalidad:
+                estudio.modalidad = cambio.modalidad
+                campos_estudio.append('modalidad')
+            if estudio.duracion_minutos != cambio.duracion_minutos:
+                estudio.duracion_minutos = cambio.duracion_minutos
+                campos_estudio.append('duracion_minutos')
+            if campos_estudio:
+                estudio.save(update_fields=campos_estudio)
+
+            for campo, convenio, horario_habil, _ in PRECIOS_ESTUDIO:
+                precio_nuevo = getattr(cambio, campo)
+                precio, creado = PrecioEstudio.objects.get_or_create(
+                    tipo_estudio=estudio, convenio=convenio, horario_habil=horario_habil,
+                    defaults={'precio': precio_nuevo},
+                )
+                if not creado and precio.precio != precio_nuevo:
+                    valor_anterior = precio.precio
+                    precio.precio = precio_nuevo
+                    precio.save(update_fields=['precio'])
+                    HistorialPrecioEstudio.objects.create(
+                        tipo_estudio=estudio, convenio=convenio, horario_habil=horario_habil,
+                        valor_anterior=valor_anterior, valor_nuevo=precio_nuevo,
+                        modificado_por=cambio.creado_por,
+                    )
+
+            cambio.estado = cls.ESTADO_APLICADO
+            cambio.aplicado_en = timezone.now()
+            cambio.save(update_fields=['estado', 'aplicado_en'])
 
 
 class Combo(models.Model):

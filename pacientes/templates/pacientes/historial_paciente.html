@@ -300,6 +300,8 @@
                 filtroAgrupacion.value = '';
                 aplicarFiltros();
             });
+            document.getElementById('filtro-estado-pago').addEventListener('change', aplicarFiltros);
+            document.getElementById('filtro-agrupacion').addEventListener('change', aplicarFiltros);
         })();
     </script>
 {% endblock %}

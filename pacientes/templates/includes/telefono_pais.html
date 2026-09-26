@@ -117,4 +117,70 @@
             input._resincronizarTelefonoPais();
         }
     };
+
+    // Avisa si el teléfono que se está escribiendo ya está registrado a
+    // nombre de OTRO paciente (mismo mecanismo que la búsqueda por DPI, pero
+    // sin autocompletar ni bloquear nada: es normal que varios pacientes
+    // -ej. familiares- compartan un número). `opciones.obtenerDpiPropio`
+    // devuelve el DPI del paciente actual (si lo hay) para no avisar que el
+    // teléfono "ya está registrado" con el mismo paciente que se está
+    // completando/editando.
+    window.activarAvisoTelefonoDuplicado = window.activarAvisoTelefonoDuplicado || function (idCampo, opciones) {
+        opciones = opciones || {};
+        var input = document.getElementById('id_' + idCampo);
+        var aviso = document.getElementById(opciones.idAviso || 'aviso-telefono-duplicado');
+        if (!input || !aviso) return;
+
+        var timer = null;
+        var ultimoBuscado = null;
+
+        // Solo busca cuando el número quedó completo para el país elegido
+        // (misma cantidad de dígitos que exige validar_telefono_pais), para
+        // no consultar con un teléfono a medio escribir.
+        function valorSiEstaCompleto() {
+            var contenedor = input.closest('.campo-telefono-pais');
+            var select = contenedor ? contenedor.querySelector('.selector-pais-telefono') : null;
+            var coincide = /^\+(\d+)\s*(\d*)$/.exec(input.value || '');
+            if (!select || !coincide) return null;
+            var esperados = parseInt(select.options[select.selectedIndex].dataset.digitos, 10);
+            return coincide[2].length === esperados ? input.value : null;
+        }
+
+        function buscar() {
+            var valor = valorSiEstaCompleto();
+            if (!valor) {
+                aviso.style.display = 'none';
+                ultimoBuscado = null;
+                return;
+            }
+            if (valor === ultimoBuscado) return;
+            ultimoBuscado = valor;
+            var url = '{% url "buscar_paciente_por_telefono" %}?telefono=' + encodeURIComponent(valor);
+            var dpiPropio = opciones.obtenerDpiPropio ? opciones.obtenerDpiPropio() : '';
+            if (dpiPropio) {
+                url += '&excluir_dpi=' + encodeURIComponent(dpiPropio);
+            }
+            fetch(url)
+                .then(function (respuesta) { return respuesta.json(); })
+                .then(function (datos) {
+                    if (!datos.encontrado) {
+                        aviso.style.display = 'none';
+                        return;
+                    }
+                    aviso.textContent = 'Este teléfono ya está registrado con '
+                        + datos.nombre + ' ' + datos.apellido + ' (DPI ' + datos.dpi + ').';
+                    aviso.style.display = 'block';
+                })
+                .catch(function () {
+                    // Si falla la búsqueda no se interrumpe el formulario.
+                    aviso.style.display = 'none';
+                });
+        }
+
+        input.addEventListener('input', function () {
+            clearTimeout(timer);
+            timer = setTimeout(buscar, 300);
+        });
+        input.addEventListener('blur', buscar);
+    };
 </script>

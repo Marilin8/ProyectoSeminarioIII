@@ -66,6 +66,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'accounts.middleware.SesionUnicaMiddleware',
     'pacientes.middleware.AutoMarcarAusenteMiddleware',
+    'pacientes.middleware.AplicarCambiosEstudioProgramadosMiddleware',
 ]
 
 # Autenticación en dos pasos (django-otp TOTP). El emisor es lo que muestra
@@ -100,7 +101,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': config('DB_NAME', default='clinica_imagenes'),
         'USER': config('DB_USER', default='root'),
-        'PASSWORD': config('DB_PASSWORD', default=''),
+        'PASSWORD': config('DB_PASSWORD', default='1234'),
         'HOST': config('DB_HOST', default='127.0.0.1'),
         'PORT': config('DB_PORT', default='3306'),
         'OPTIONS': {

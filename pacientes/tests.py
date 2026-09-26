@@ -15,6 +15,7 @@ from pacientes import horarios
 from pacientes.correos import enviar_resultados
 from pacientes.forms import AgendarCitaForm, RegistrarTicketForm, validar_telefono_pais
 from pacientes.models import (
+    CambioEstudioProgramado,
     Cita,
     Cobro,
     Combo,
@@ -730,6 +731,234 @@ class PrecioHistoricoTests(TestCase):
         self.assertEqual(cita_noviembre.precio_base, Decimal('350.00'))
 
 
+class CambioEstudioProgramadoTests(TestCase):
+    """El administrador arma el estudio (nombre, modalidad, duración y
+    precios) con el mismo formulario de "Editar estudio" y, en vez de
+    guardar ahora, programa que se aplique solo desde cierta fecha (ver
+    CambioEstudioProgramado.aplicar_vencidos y el middleware que lo llama
+    en cada request), sin tener que acordarse de volver a editarlo."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_cambio_estudio', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.estudio = TipoEstudio.objects.create(
+            nombre='Radiografía programada', modalidad=TipoEstudio.MODALIDAD_RX, duracion_minutos=20,
+        )
+        self.precio_coex = PrecioEstudio.objects.create(
+            tipo_estudio=self.estudio, convenio=Cita.CONVENIO_COEX,
+            horario_habil=True, precio=Decimal('300.00'),
+        )
+        self.precio_privado = PrecioEstudio.objects.create(
+            tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
+            horario_habil=True, precio=Decimal('400.00'),
+        )
+        self.hoy = timezone.localdate()
+        self.client.force_login(self.admin)
+
+    def _datos_formulario(self, **extra):
+        datos = {
+            'nombre': self.estudio.nombre,
+            'modalidad': self.estudio.modalidad,
+            'duracion_minutos': str(self.estudio.duracion_minutos),
+            'precio_coex_habil': '300.00',
+            'precio_privado_habil': '400.00',
+            'precio_privado_inhabil': '450.00',
+            'precio_emergencia_igss_habil': '350.00',
+            'precio_emergencia_igss_inhabil': '400.00',
+            'fecha_vigencia': (self.hoy + datetime.timedelta(days=10)).isoformat(),
+        }
+        datos.update(extra)
+        return datos
+
+    def _programar(self, **extra):
+        return self.client.post(
+            reverse('programar_cambio_estudio', args=[self.estudio.id]), self._datos_formulario(**extra),
+        )
+
+    def test_programar_cambio_crea_un_registro_pendiente_sin_tocar_el_actual(self):
+        respuesta = self._programar(nombre='Radiografía nueva', precio_coex_habil='350.00')
+
+        self.assertRedirects(respuesta, reverse('editar_estudio', args=[self.estudio.id]))
+        cambio = CambioEstudioProgramado.objects.get()
+        self.assertEqual(cambio.tipo_estudio, self.estudio)
+        self.assertEqual(cambio.nombre, 'Radiografía nueva')
+        self.assertEqual(cambio.precio_coex_habil, Decimal('350.00'))
+        self.assertEqual(cambio.estado, CambioEstudioProgramado.ESTADO_PENDIENTE)
+        self.assertEqual(cambio.creado_por, self.admin)
+        self.assertTrue(
+            Bitacora.objects.filter(accion=Bitacora.ACCION_PROGRAMAR_CAMBIO_PRECIO).exists()
+        )
+        # Todavía no cambió nada: rige recién en la fecha programada.
+        self.estudio.refresh_from_db()
+        self.precio_coex.refresh_from_db()
+        self.assertEqual(self.estudio.nombre, 'Radiografía programada')
+        self.assertEqual(self.precio_coex.precio, Decimal('300.00'))
+
+    def test_rechaza_una_fecha_de_vigencia_en_el_pasado(self):
+        ayer = (self.hoy - datetime.timedelta(days=1)).isoformat()
+
+        self._programar(fecha_vigencia=ayer)
+
+        self.assertFalse(CambioEstudioProgramado.objects.exists())
+
+    def test_rechaza_datos_invalidos_del_formulario_principal(self):
+        self._programar(duracion_minutos='0')
+
+        self.assertFalse(CambioEstudioProgramado.objects.exists())
+
+    def test_solo_administrador_puede_programar_un_cambio(self):
+        tecnico = crear_usuario('tec_cambio_estudio', rol=Usuario.ROL_TECNICO_IMAGENES)
+        self.client.force_login(tecnico)
+
+        self._programar()
+
+        self.assertFalse(CambioEstudioProgramado.objects.exists())
+
+    def test_editar_estudio_muestra_solo_lo_que_realmente_cambia(self):
+        self._programar(nombre='Radiografía nueva', precio_coex_habil='350.00')
+
+        respuesta = self.client.get(reverse('editar_estudio', args=[self.estudio.id]))
+
+        self.assertContains(respuesta, 'Radiografía programada → Radiografía nueva')
+        self.assertContains(respuesta, 'COEX: Q300.00 → Q350.00')
+        # Privado no cambió (mismo valor que ya tenía): no debe listarse.
+        self.assertNotContains(respuesta, 'Privado · hábil: Q400.00')
+        self.assertEqual(len(respuesta.context['cambios_programados']), 1)
+
+    def test_aplicar_vencidos_actualiza_nombre_modalidad_duracion_y_precios(self):
+        cambio = CambioEstudioProgramado.objects.create(
+            tipo_estudio=self.estudio, nombre='Radiografía nueva',
+            modalidad=TipoEstudio.MODALIDAD_RX_CONTRASTE, duracion_minutos=45,
+            precio_coex_habil=Decimal('350.00'), precio_privado_habil=Decimal('400.00'),
+            precio_privado_inhabil=Decimal('450.00'), precio_emergencia_igss_habil=Decimal('350.00'),
+            precio_emergencia_igss_inhabil=Decimal('400.00'),
+            fecha_vigencia=self.hoy, creado_por=self.admin,
+        )
+
+        CambioEstudioProgramado.aplicar_vencidos()
+
+        self.estudio.refresh_from_db()
+        self.assertEqual(self.estudio.nombre, 'Radiografía nueva')
+        self.assertEqual(self.estudio.modalidad, TipoEstudio.MODALIDAD_RX_CONTRASTE)
+        self.assertEqual(self.estudio.duracion_minutos, 45)
+        self.precio_coex.refresh_from_db()
+        self.assertEqual(self.precio_coex.precio, Decimal('350.00'))
+        # Privado no cambió (ya estaba en 400): no debe generar historial.
+        self.assertEqual(HistorialPrecioEstudio.objects.count(), 1)
+        historial = HistorialPrecioEstudio.objects.get()
+        self.assertEqual(historial.convenio, Cita.CONVENIO_COEX)
+        self.assertEqual(historial.valor_anterior, Decimal('300.00'))
+        self.assertEqual(historial.valor_nuevo, Decimal('350.00'))
+        cambio.refresh_from_db()
+        self.assertEqual(cambio.estado, CambioEstudioProgramado.ESTADO_APLICADO)
+        self.assertIsNotNone(cambio.aplicado_en)
+
+    def test_el_cambio_aplicado_se_refleja_en_todo_lo_que_usa_el_estudio(self):
+        """El requisito explícito: lo que se programa debe reflejarse en
+        cualquier parte del proyecto que use el nombre o el precio del
+        estudio, porque se actualiza el mismo TipoEstudio/PrecioEstudio."""
+        CambioEstudioProgramado.objects.create(
+            tipo_estudio=self.estudio, nombre='Radiografía actualizada',
+            modalidad=self.estudio.modalidad, duracion_minutos=self.estudio.duracion_minutos,
+            precio_coex_habil=Decimal('500.00'), precio_privado_habil=Decimal('400.00'),
+            precio_privado_inhabil=Decimal('450.00'), precio_emergencia_igss_habil=Decimal('350.00'),
+            precio_emergencia_igss_inhabil=Decimal('400.00'),
+            fecha_vigencia=self.hoy, creado_por=self.admin,
+        )
+
+        CambioEstudioProgramado.aplicar_vencidos()
+
+        self.estudio.refresh_from_db()
+        self.assertEqual(self.estudio.precio_para(Cita.CONVENIO_COEX, True), Decimal('500.00'))
+        recepcionista = crear_usuario('recep_cambio_estudio', rol=Usuario.ROL_RECEPCIONISTA)
+        cita_nueva = crear_cita(
+            recepcionista, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_COEX,
+            fecha=self.hoy, hora=datetime.time(9, 0),
+        )
+        self.assertEqual(cita_nueva.precio_base, Decimal('500.00'))
+        lista = self.client.get(reverse('lista_estudios'), {'q': 'Radiografía actualizada'})
+        self.assertContains(lista, 'Radiografía actualizada')
+
+    def test_aplicar_vencidos_no_toca_los_que_todavia_no_llegan(self):
+        CambioEstudioProgramado.objects.create(
+            tipo_estudio=self.estudio, nombre='Radiografía nueva', modalidad=self.estudio.modalidad,
+            duracion_minutos=self.estudio.duracion_minutos,
+            precio_coex_habil=Decimal('350.00'), precio_privado_habil=Decimal('400.00'),
+            precio_privado_inhabil=Decimal('450.00'), precio_emergencia_igss_habil=Decimal('350.00'),
+            precio_emergencia_igss_inhabil=Decimal('400.00'),
+            fecha_vigencia=self.hoy + datetime.timedelta(days=1), creado_por=self.admin,
+        )
+
+        CambioEstudioProgramado.aplicar_vencidos()
+
+        self.estudio.refresh_from_db()
+        self.assertEqual(self.estudio.nombre, 'Radiografía programada')
+        self.assertEqual(
+            CambioEstudioProgramado.objects.get().estado, CambioEstudioProgramado.ESTADO_PENDIENTE,
+        )
+
+    def test_una_peticion_cualquiera_dispara_la_aplicacion_via_middleware(self):
+        CambioEstudioProgramado.objects.create(
+            tipo_estudio=self.estudio, nombre='Radiografía nueva', modalidad=self.estudio.modalidad,
+            duracion_minutos=self.estudio.duracion_minutos,
+            precio_coex_habil=Decimal('300.00'), precio_privado_habil=Decimal('400.00'),
+            precio_privado_inhabil=Decimal('450.00'), precio_emergencia_igss_habil=Decimal('350.00'),
+            precio_emergencia_igss_inhabil=Decimal('400.00'),
+            fecha_vigencia=self.hoy, creado_por=self.admin,
+        )
+
+        self.client.get(reverse('dashboard'))
+
+        self.estudio.refresh_from_db()
+        self.assertEqual(self.estudio.nombre, 'Radiografía nueva')
+
+    def test_cancelar_un_cambio_programado(self):
+        cambio = CambioEstudioProgramado.objects.create(
+            tipo_estudio=self.estudio, nombre='Radiografía nueva', modalidad=self.estudio.modalidad,
+            duracion_minutos=self.estudio.duracion_minutos,
+            precio_coex_habil=Decimal('350.00'), precio_privado_habil=Decimal('400.00'),
+            precio_privado_inhabil=Decimal('450.00'), precio_emergencia_igss_habil=Decimal('350.00'),
+            precio_emergencia_igss_inhabil=Decimal('400.00'),
+            fecha_vigencia=self.hoy + datetime.timedelta(days=5), creado_por=self.admin,
+        )
+
+        respuesta = self.client.post(
+            reverse('cancelar_cambio_estudio_programado', args=[cambio.id]),
+        )
+
+        self.assertRedirects(respuesta, reverse('editar_estudio', args=[self.estudio.id]))
+        cambio.refresh_from_db()
+        self.assertEqual(cambio.estado, CambioEstudioProgramado.ESTADO_CANCELADO)
+        self.assertEqual(cambio.cancelado_por, self.admin)
+        self.assertIsNotNone(cambio.cancelado_en)
+        self.assertTrue(
+            Bitacora.objects.filter(accion=Bitacora.ACCION_CANCELAR_CAMBIO_PRECIO).exists()
+        )
+        # Un cancelado no lo recoge aplicar_vencidos aunque su fecha ya pase.
+        CambioEstudioProgramado.objects.filter(pk=cambio.pk).update(
+            fecha_vigencia=self.hoy - datetime.timedelta(days=1),
+        )
+        CambioEstudioProgramado.aplicar_vencidos()
+        self.estudio.refresh_from_db()
+        self.assertEqual(self.estudio.nombre, 'Radiografía programada')
+
+    def test_no_se_puede_cancelar_un_cambio_ya_aplicado(self):
+        cambio = CambioEstudioProgramado.objects.create(
+            tipo_estudio=self.estudio, nombre='Radiografía nueva', modalidad=self.estudio.modalidad,
+            duracion_minutos=self.estudio.duracion_minutos,
+            precio_coex_habil=Decimal('300.00'), precio_privado_habil=Decimal('400.00'),
+            precio_privado_inhabil=Decimal('450.00'), precio_emergencia_igss_habil=Decimal('350.00'),
+            precio_emergencia_igss_inhabil=Decimal('400.00'),
+            fecha_vigencia=self.hoy, creado_por=self.admin,
+        )
+        CambioEstudioProgramado.aplicar_vencidos()
+
+        respuesta = self.client.post(
+            reverse('cancelar_cambio_estudio_programado', args=[cambio.id]),
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+
 class InformeAnualTests(TestCase):
     """Resumen anual de facturación por mes y convenio (ver
     pacientes.views.informe_anual): usa el precio vigente en la fecha de
@@ -1199,6 +1428,67 @@ class BuscarPacientePorDpiViewTests(TestCase):
         self.client.force_login(otro_usuario)
 
         respuesta = self.client.get(reverse('buscar_paciente_por_dpi'), {'dpi': '1010101010101'})
+
+        self.assertEqual(respuesta.status_code, 302)
+
+
+class BuscarPacientePorTelefonoViewTests(TestCase):
+    """Endpoint que avisa (sin bloquear ni autocompletar) si el teléfono que
+    se está escribiendo ya pertenece a OTRO paciente, para no duplicarlo por
+    error -- ver includes/telefono_pais.html activarAvisoTelefonoDuplicado."""
+
+    def setUp(self):
+        self.usuario = crear_usuario('recepcionista_busqueda_tel', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(self.usuario)
+        self.paciente = crear_paciente(
+            dpi='2020202020202', nombre='Marco', apellido='López', telefono='+502 55512345',
+        )
+
+    def test_avisa_si_el_telefono_ya_pertenece_a_otro_paciente(self):
+        respuesta = self.client.get(
+            reverse('buscar_paciente_por_telefono'), {'telefono': '+502 55512345'},
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        datos = respuesta.json()
+        self.assertTrue(datos['encontrado'])
+        self.assertEqual(datos['nombre'], 'Marco')
+        self.assertEqual(datos['apellido'], 'López')
+        self.assertEqual(datos['dpi'], '2020202020202')
+
+    def test_no_avisa_si_el_telefono_no_esta_registrado(self):
+        respuesta = self.client.get(
+            reverse('buscar_paciente_por_telefono'), {'telefono': '+502 99999999'},
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertFalse(respuesta.json()['encontrado'])
+
+    def test_no_avisa_si_el_telefono_pertenece_al_mismo_paciente_excluido(self):
+        # Ej. la pantalla de "completar datos" o el autocompletado por DPI:
+        # no debe avisar que el teléfono "ya está registrado" con el mismo
+        # paciente que se está editando.
+        respuesta = self.client.get(
+            reverse('buscar_paciente_por_telefono'),
+            {'telefono': '+502 55512345', 'excluir_dpi': '2020202020202'},
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertFalse(respuesta.json()['encontrado'])
+
+    def test_no_avisa_con_telefono_vacio(self):
+        respuesta = self.client.get(reverse('buscar_paciente_por_telefono'), {'telefono': ''})
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertFalse(respuesta.json()['encontrado'])
+
+    def test_usuario_no_recepcionista_no_puede_consultar(self):
+        otro_usuario = crear_usuario('tecnico_busqueda_tel', rol=Usuario.ROL_TECNICO_IMAGENES)
+        self.client.force_login(otro_usuario)
+
+        respuesta = self.client.get(
+            reverse('buscar_paciente_por_telefono'), {'telefono': '+502 55512345'},
+        )
 
         self.assertEqual(respuesta.status_code, 302)
 

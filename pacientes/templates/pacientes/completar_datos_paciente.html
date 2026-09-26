@@ -33,6 +33,7 @@
                 <label for="{{ form.telefono.id_for_label }}">Telefono</label>
                 {{ form.telefono }}
                 {{ form.telefono.errors }}
+                <p class="aviso-telefono-duplicado" id="aviso-telefono-duplicado" style="display:none;margin-top:0.5rem;padding:0.5rem 0.7rem;border-radius:var(--radius);font-size:0.8rem;background:var(--warning-light);color:#713f12;border:1px solid #fde047;"></p>
 
                 <label for="{{ form.fecha_nacimiento.id_for_label }}">Fecha de nacimiento</label>
                 {{ form.fecha_nacimiento }}
@@ -57,5 +58,8 @@
         });
     })();
     activarSelectorTelefono('telefono');
+    activarAvisoTelefonoDuplicado('telefono', {
+        obtenerDpiPropio: function () { return '{{ paciente.dpi }}'; },
+    });
 </script>
 {% endblock %}

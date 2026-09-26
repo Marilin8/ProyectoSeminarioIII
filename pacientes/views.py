@@ -42,6 +42,7 @@ from .forms import (
     CrearOrdenPagoForm,
     EditarContactoPacienteForm,
     EXTENSIONES_IMAGEN_DIRECTA,
+    FechaVigenciaProgramadaForm,
     GenerarOrdenForm,
     IngresarCorreoEnvioForm,
     NOMBRES_IGNORADOS_EN_CARPETA,
@@ -63,6 +64,7 @@ from .horarios import (
     se_cruzan,
 )
 from .models import (
+    CambioEstudioProgramado,
     Cita,
     Cobro,
     Combo,
@@ -491,6 +493,29 @@ def buscar_paciente_por_dpi(request):
 
 @login_required
 @user_passes_test(es_recepcionista)
+def buscar_paciente_por_telefono(request):
+    """Avisa si el teléfono ingresado ya está registrado a nombre de OTRO
+    paciente, para no duplicarlo por error al escribirlo a mano. No bloquea
+    nada (a diferencia del DPI, que es único): es normal que varios
+    pacientes -ej. familiares- compartan un mismo número de contacto, así
+    que solo se informa de quién es."""
+    telefono = (request.GET.get('telefono') or '').strip()
+    excluir_dpi = (request.GET.get('excluir_dpi') or '').strip()
+    if not telefono:
+        return JsonResponse({'encontrado': False})
+    paciente = Paciente.objects.filter(telefono=telefono).exclude(dpi=excluir_dpi).first()
+    if not paciente:
+        return JsonResponse({'encontrado': False})
+    return JsonResponse({
+        'encontrado': True,
+        'nombre': paciente.nombre,
+        'apellido': paciente.apellido,
+        'dpi': paciente.dpi,
+    })
+
+
+@login_required
+@user_passes_test(es_recepcionista)
 def radiologos_por_estudio(request):
     """Usado por el formulario de agendar cita: al elegir el tipo de
     estudio, solo deja elegir entre los radiólogos que realmente lo
@@ -905,6 +930,13 @@ def pagos_pendientes(request):
             'total': _total_citas_para_orden(citas_rango),
         }
 
+    # Solo entran a una orden agrupada los estudios que el técnico ya
+    # confirmó como correctos (ver OrdenTrabajo.validacion_estado).
+    cobros_para_orden = qs.filter(
+        estado=Cobro.ESTADO_PENDIENTE,
+        cita__convenio__in=(Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS),
+        cita__orden_trabajo__validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO,
+    ).select_related('cita__paciente', 'cita__tipo_estudio')
     pagina = Paginator(qs, 20).get_page(request.GET.get('page'))
 
     filtros = request.GET.copy()
@@ -925,6 +957,7 @@ def pagos_pendientes(request):
     combos = Combo.objects.filter(activo=True).prefetch_related('estudios').order_by('nombre')
     return render(request, 'pacientes/pagos_pendientes.html', {
         'pagina': pagina,
+        'cobros_para_orden': cobros_para_orden,
         'busqueda': busqueda,
         'estado': estado,
         'convenio': convenio,
@@ -1885,7 +1918,84 @@ def editar_estudio(request, estudio_id):
         'form': form,
         'editando': tipo_estudio,
         'historial_precios': tipo_estudio.historial_precios.select_related('modificado_por')[:10],
+        'cambios_programados': tipo_estudio.cambios_programados.filter(
+            estado=CambioEstudioProgramado.ESTADO_PENDIENTE,
+        ).select_related('creado_por'),
     })
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def programar_cambio_estudio(request, estudio_id):
+    """El administrador arma el estudio como quedaría (nombre, modalidad,
+    duración y precios) con el mismo formulario que la edición inmediata,
+    pero en vez de guardar ahora, programa que se aplique solo desde cierta
+    fecha (ver CambioEstudioProgramado)."""
+    tipo_estudio = get_object_or_404(TipoEstudio, id=estudio_id)
+    form = CrearTipoEstudioForm(request.POST, instance=tipo_estudio)
+    fecha_form = FechaVigenciaProgramadaForm(request.POST)
+    if not form.is_valid() or not fecha_form.is_valid():
+        for f in (form, fecha_form):
+            for errores in f.errors.values():
+                for error in errores:
+                    messages.error(request, error)
+        return redirect('editar_estudio', estudio_id=tipo_estudio.id)
+
+    # form.save(commit=False) deja los valores nuevos en el objeto EN
+    # MEMORIA (nombre/modalidad/duración) sin tocar la base de datos -- ni
+    # siquiera guarda_precios() corre con commit=False -- así que el
+    # estudio real sigue exactamente igual hasta que llegue la fecha.
+    propuesto = form.save(commit=False)
+    cambio = CambioEstudioProgramado.objects.create(
+        tipo_estudio=tipo_estudio,
+        nombre=propuesto.nombre,
+        modalidad=propuesto.modalidad,
+        duracion_minutos=propuesto.duracion_minutos,
+        precio_coex_habil=form.cleaned_data['precio_coex_habil'],
+        precio_privado_habil=form.cleaned_data['precio_privado_habil'],
+        precio_privado_inhabil=form.cleaned_data['precio_privado_inhabil'],
+        precio_emergencia_igss_habil=form.cleaned_data['precio_emergencia_igss_habil'],
+        precio_emergencia_igss_inhabil=form.cleaned_data['precio_emergencia_igss_inhabil'],
+        fecha_vigencia=fecha_form.cleaned_data['fecha_vigencia'],
+        creado_por=request.user,
+    )
+    detalle = '; '.join(cambio.resumen_diferencias()) or 'sin cambios respecto al valor actual'
+    Bitacora.registrar(
+        request=request, usuario=request.user,
+        accion=Bitacora.ACCION_PROGRAMAR_CAMBIO_PRECIO,
+        descripcion=(
+            f'Programó cambios en el estudio "{tipo_estudio.nombre}" desde el '
+            f'{cambio.fecha_vigencia:%d/%m/%Y}: {detalle}.'
+        ),
+    )
+    messages.success(
+        request,
+        f'Cambios programados para "{tipo_estudio.nombre}" a partir del '
+        f'{cambio.fecha_vigencia:%d/%m/%Y}.',
+    )
+    return redirect('editar_estudio', estudio_id=tipo_estudio.id)
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def cancelar_cambio_estudio_programado(request, cambio_id):
+    """Cancela un cambio de estudio programado que todavía no se aplicó."""
+    cambio = get_object_or_404(
+        CambioEstudioProgramado, id=cambio_id, estado=CambioEstudioProgramado.ESTADO_PENDIENTE,
+    )
+    cambio.estado = CambioEstudioProgramado.ESTADO_CANCELADO
+    cambio.cancelado_por = request.user
+    cambio.cancelado_en = timezone.now()
+    cambio.save(update_fields=['estado', 'cancelado_por', 'cancelado_en'])
+    Bitacora.registrar(
+        request=request, usuario=request.user,
+        accion=Bitacora.ACCION_CANCELAR_CAMBIO_PRECIO,
+        descripcion=f'Canceló el cambio programado del estudio "{cambio.tipo_estudio.nombre}".',
+    )
+    messages.success(request, 'Cambio programado cancelado.')
+    return redirect('editar_estudio', estudio_id=cambio.tipo_estudio_id)
 
 
 def _auditar_cambios_precio(request, tipo_estudio, precios_antes):
@@ -2836,6 +2946,187 @@ def adjuntar_imagenes_finalizar(request, orden_id):
         'ok': True,
         'completo': completo,
         'redirect_url': reverse('ordenes_pendientes') if completo else None,
+    })
+
+
+@login_required
+@user_passes_test(es_tecnico)
+@require_POST
+def validar_estudio(request, orden_id):
+    """El técnico revisa los datos del estudio antes de cargar las imágenes:
+    "Estudio correcto" deja el cobro listo para Caja; "Modificar estudio" le
+    pide a recepción que cambie algo (ver corregir_estudio_cita)."""
+    orden = get_object_or_404(
+        OrdenTrabajo.objects.select_related('cita__paciente', 'cita__tipo_estudio'),
+        id=orden_id, cita__estado=Cita.ESTADO_EN_PROCESO,
+    )
+    cita = orden.cita
+    volver = redirect('adjuntar_imagenes', orden_id=orden.id)
+
+    if orden.validacion_estado == OrdenTrabajo.VALIDACION_CORRECTO:
+        messages.info(request, 'Este estudio ya está confirmado como correcto.')
+        return volver
+    if orden.validacion_estado == OrdenTrabajo.VALIDACION_MODIFICACION:
+        messages.info(
+            request,
+            'Ya le pediste a recepción que modifique este estudio. Esperá a que lo actualice.',
+        )
+        return volver
+
+    accion = request.POST.get('accion')
+    if accion == 'correcto':
+        orden.validacion_estado = OrdenTrabajo.VALIDACION_CORRECTO
+        orden.validacion_por = request.user
+        orden.validacion_en = timezone.now()
+        orden.save(update_fields=['validacion_estado', 'validacion_por', 'validacion_en'])
+        _notificar_estudio_validado(cita)
+        Bitacora.registrar(
+            request=request, usuario=request.user,
+            accion=Bitacora.ACCION_VALIDAR_ESTUDIO,
+            descripcion=(
+                f'Confirmó que el estudio {cita.tipo_estudio} de {cita.paciente} '
+                f'(cita #{cita.id}) es correcto.'
+            ),
+        )
+        messages.success(
+            request, 'Estudio confirmado como correcto. Recepción ya puede cobrarlo; cargá las imágenes.',
+        )
+    elif accion == 'modificar':
+        form = SolicitarModificacionEstudioForm(request.POST)
+        if not form.is_valid():
+            messages.error(request, 'Indicá qué hay que modificar del estudio.')
+            return volver
+        nota = form.cleaned_data['nota']
+        orden.validacion_estado = OrdenTrabajo.VALIDACION_MODIFICACION
+        orden.validacion_nota = nota
+        orden.validacion_por = request.user
+        orden.validacion_en = timezone.now()
+        orden.correccion_detalle = ''
+        orden.save(update_fields=[
+            'validacion_estado', 'validacion_nota', 'validacion_por', 'validacion_en',
+            'correccion_detalle',
+        ])
+        _notificar_modificacion_solicitada(cita, nota)
+        Bitacora.registrar(
+            request=request, usuario=request.user,
+            accion=Bitacora.ACCION_SOLICITAR_MODIFICACION,
+            descripcion=(
+                f'Pidió modificar el estudio {cita.tipo_estudio} de {cita.paciente} '
+                f'(cita #{cita.id}): {nota}'
+            ),
+        )
+        messages.success(request, 'Se le avisó a recepción. Cuando lo actualicen te va a aparecer aquí.')
+    else:
+        messages.error(request, 'Acción no válida.')
+    return volver
+
+
+def _volver_de_recepcion(cita):
+    if cita.convenio in (Cita.CONVENIO_COEX, Cita.CONVENIO_PRIVADO):
+        return f'{reverse(f"procesar_citas_{cita.convenio}")}?fecha={cita.fecha}'
+    return reverse('pantalla_turnos')
+
+
+@login_required
+@user_passes_test(es_recepcionista)
+def estudios_por_corregir(request):
+    """Estudios que el técnico pidió modificar y recepción todavía no
+    actualizó, sin importar la fecha ni el convenio."""
+    ordenes = (
+        OrdenTrabajo.objects.filter(
+            cita__estado=Cita.ESTADO_EN_PROCESO,
+            validacion_estado=OrdenTrabajo.VALIDACION_MODIFICACION,
+        )
+        .select_related('cita__paciente', 'cita__tipo_estudio', 'validacion_por')
+        .order_by('validacion_en')
+    )
+    return render(request, 'pacientes/estudios_por_corregir.html', {'ordenes': ordenes})
+
+
+@login_required
+@user_passes_test(es_recepcionista)
+def corregir_estudio_cita(request, cita_id):
+    """Recepción hace el cambio que pidió el técnico (otro estudio, otro
+    radiólogo o la indicación clínica) y le avisa que ya está actualizado."""
+    cita = get_object_or_404(
+        Cita.objects.select_related('paciente', 'tipo_estudio', 'radiologo'),
+        id=cita_id, estado=Cita.ESTADO_EN_PROCESO, orden_trabajo__isnull=False,
+    )
+    orden = cita.orden_trabajo
+    if orden.validacion_estado != OrdenTrabajo.VALIDACION_MODIFICACION:
+        messages.info(request, 'Este estudio no tiene ninguna modificación pendiente.')
+        return redirect(_volver_de_recepcion(cita))
+
+    if request.method == 'POST':
+        form = CorregirEstudioForm(request.POST, cita=cita)
+        if form.is_valid():
+            cd = form.cleaned_data
+            nuevo = cd['tipo_estudio']
+            cambio_estudio = nuevo.id != cita.tipo_estudio_id
+            if cambio_estudio and _hay_estudio_duplicado(
+                dpi=cita.paciente.dpi, tipo_estudio=nuevo, fecha=cita.fecha, hora=cita.hora,
+            ):
+                form.add_error(
+                    'tipo_estudio',
+                    'Este paciente ya tiene agendado ese mismo estudio en la misma fecha y hora.',
+                )
+            else:
+                cambios = []
+                if cambio_estudio:
+                    cambios.append(f'Estudio: {cita.tipo_estudio.nombre} → {nuevo.nombre}')
+                radiologo = cd.get('radiologo')
+                if radiologo and radiologo.id != cita.radiologo_id:
+                    cambios.append(f'Radiólogo: {radiologo.get_full_name() or radiologo.username}')
+                if cd['motivo'].strip() != orden.motivo.strip():
+                    cambios.append('Indicación clínica actualizada')
+                if cd['comentario']:
+                    cambios.append(cd['comentario'])
+                detalle = '; '.join(cambios) or 'Datos revisados, sin cambios'
+
+                estudio_anterior = cita.tipo_estudio
+                cita.tipo_estudio = nuevo
+                if radiologo:
+                    cita.radiologo = radiologo
+                cita.save(update_fields=['tipo_estudio', 'radiologo'])
+                orden.motivo = cd['motivo'].strip()
+                orden.validacion_estado = OrdenTrabajo.VALIDACION_CORREGIDO
+                orden.correccion_detalle = detalle[:255]
+                orden.correccion_por = request.user
+                orden.correccion_en = timezone.now()
+                orden.save(update_fields=[
+                    'motivo', 'validacion_estado', 'correccion_detalle',
+                    'correccion_por', 'correccion_en',
+                ])
+                _notificar_estudio_actualizado(orden)
+                sufijo = f' (antes: {estudio_anterior.nombre}).' if cambio_estudio else '.'
+                Bitacora.registrar(
+                    request=request, usuario=request.user,
+                    accion=Bitacora.ACCION_CORREGIR_ESTUDIO,
+                    descripcion=(
+                        f'Modificó el estudio de {cita.paciente} (cita #{cita.id}) a pedido del '
+                        f'técnico: {detalle}{sufijo}'
+                    ),
+                )
+                messages.success(
+                    request, f'Estudio actualizado. Se le avisó al técnico de {cita.paciente}.',
+                )
+                return redirect(_volver_de_recepcion(cita))
+    else:
+        form = CorregirEstudioForm(
+            cita=cita,
+            initial={
+                'tipo_estudio': cita.tipo_estudio_id,
+                'radiologo': cita.radiologo_id,
+                'motivo': orden.motivo,
+            },
+        )
+
+    return render(request, 'pacientes/corregir_estudio.html', {
+        'form': form,
+        'cita': cita,
+        'orden': orden,
+        'edad': cita.paciente.edad_en(cita.fecha),
+        'volver_url': reverse('estudios_por_corregir'),
     })
 
 

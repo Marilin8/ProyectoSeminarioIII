@@ -6,7 +6,9 @@ from django.utils import timezone
 from accounts.models import Usuario
 from clinica.validators import validar_correo_existente, validar_dominio_correo
 
-from .models import Cita, Cobro, Combo, MedicoTratante, Modalidad, Paciente, TipoEstudio
+from .models import (
+    PRECIOS_ESTUDIO, Cita, Cobro, Combo, MedicoTratante, Modalidad, Paciente, TipoEstudio,
+)
 
 CONVENIOS_QUE_REQUIEREN_CARNET_IGSS = (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS)
 
@@ -623,18 +625,6 @@ class ProcesarTicketForm(forms.Form):
     )
 
 
-# Cada estudio tiene un precio por convenio y por tipo de horario. COEX solo
-# tiene tarifa hábil; Privado y Emergencia IGSS tienen hábil e inhábil (a
-# partir de las 18:00). El formulario expone esas 5 celdas.
-PRECIOS_ESTUDIO = [
-    ('precio_coex_habil', Cita.CONVENIO_COEX, True, 'COEX'),
-    ('precio_privado_habil', Cita.CONVENIO_PRIVADO, True, 'Privado · hábil'),
-    ('precio_privado_inhabil', Cita.CONVENIO_PRIVADO, False, 'Privado · inhábil'),
-    ('precio_emergencia_igss_habil', Cita.CONVENIO_EMERGENCIA_IGSS, True, 'Emergencia IGSS · hábil'),
-    ('precio_emergencia_igss_inhabil', Cita.CONVENIO_EMERGENCIA_IGSS, False, 'Emergencia IGSS · inhábil'),
-]
-
-
 class CrearTipoEstudioForm(forms.ModelForm):
     modalidad = forms.ChoiceField(
         label='Modalidad',
@@ -694,6 +684,26 @@ class CrearTipoEstudioForm(forms.ModelForm):
         else:
             self._guardar_precios = guardar_precios
         return tipo_estudio
+
+
+class FechaVigenciaProgramadaForm(forms.Form):
+    """Solo la fecha desde la que rige un cambio de estudio programado (ver
+    CambioEstudioProgramado): los demás datos (nombre, modalidad, duración,
+    precios) ya vienen del mismo CrearTipoEstudioForm que usa la edición
+    inmediata -- no hay que volver a mostrarlos."""
+
+    fecha_vigencia = forms.DateField(
+        label='Vigente desde',
+        widget=forms.DateInput(attrs={'type': 'date'}, format='%Y-%m-%d'),
+        input_formats=['%Y-%m-%d'],
+        error_messages={'required': 'Elegí desde qué fecha rige el cambio.'},
+    )
+
+    def clean_fecha_vigencia(self):
+        fecha = self.cleaned_data['fecha_vigencia']
+        if fecha < timezone.localdate():
+            raise forms.ValidationError('La fecha de vigencia no puede ser anterior a hoy.')
+        return fecha
 
 
 class ComboForm(forms.ModelForm):

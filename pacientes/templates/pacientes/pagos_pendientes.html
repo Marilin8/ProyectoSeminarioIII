@@ -57,6 +57,15 @@
             </div>
         {% endif %}
         <div style="display:flex;flex-direction:column;gap:0.2rem;">
+            <label for="combo" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Combo</label>
+            <select name="combo" id="combo">
+                <option value="">Todos</option>
+                {% for combo in combos %}
+                    <option value="{{ combo.id }}" {% if combo_id == combo.id|stringformat:'s' %}selected{% endif %}>{{ combo.nombre }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:0.2rem;">
             <label for="tipo_estudio" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Estudio</label>
             <select name="tipo_estudio" id="tipo_estudio">
                 <option value="">Todos</option>

@@ -338,6 +338,43 @@
             return fila;
         }
 
+        // Eliminar una cita agendada (el paciente ya no se va a hacer el
+        // estudio): pide confirmación en el mismo cuadro antes de enviar.
+        function filaEliminar(c) {
+            var fila = document.createElement('div');
+            fila.className = 'fila-eliminar';
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-outline btn-sm btn-eliminar';
+            btn.textContent = 'Eliminar cita';
+            btn.addEventListener('click', function () {
+                fila.innerHTML = '';
+                var pregunta = document.createElement('span');
+                pregunta.className = 'confirmar-eliminar';
+                pregunta.textContent = '¿Eliminar la cita de ' + c.paciente + '?';
+                var si = document.createElement('button');
+                si.type = 'button';
+                si.className = 'btn btn-danger btn-sm';
+                si.textContent = 'Sí, eliminar';
+                si.addEventListener('click', function () {
+                    formEliminar.action = ELIMINAR_URL.replace('/0/', '/' + c.id + '/');
+                    formEliminar.elements['volver'].value = window.location.pathname + window.location.search;
+                    formEliminar.submit();
+                });
+                var no = document.createElement('button');
+                no.type = 'button';
+                no.className = 'btn btn-outline btn-sm';
+                no.textContent = 'No';
+                no.addEventListener('click', function () {
+                    fila.innerHTML = '';
+                    fila.appendChild(btn);
+                });
+                fila.appendChild(pregunta); fila.appendChild(si); fila.appendChild(no);
+            });
+            fila.appendChild(btn);
+            return fila;
+        }
+
         function abrir(fecha, hora) {
             var citas = detalle[fecha + '|' + hora] || [];
             titulo.textContent = 'Citas del ' + fecha.split('-').reverse().join('/') + ' a las ' + hora;

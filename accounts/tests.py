@@ -371,10 +371,10 @@ class EditarUsuarioRolAdicionalViewTests(TestCase):
         return self.client.post(reverse('editar_usuario', args=[self.empleado.id]), datos)
 
     def test_agregar_un_rol_adicional(self):
-        self._editar(roles_adicionales=[Usuario.ROL_MEDICO_RADIOLOGO])
+        self._editar(roles_adicionales=[Usuario.ROL_RECEPCIONISTA])
 
         roles = set(self.empleado.roles_adicionales.values_list('rol', flat=True))
-        self.assertEqual(roles, {Usuario.ROL_MEDICO_RADIOLOGO})
+        self.assertEqual(roles, {Usuario.ROL_RECEPCIONISTA})
 
     def test_quitar_un_rol_adicional(self):
         RolAdicional.objects.create(usuario=self.empleado, rol=Usuario.ROL_MEDICO_RADIOLOGO)
