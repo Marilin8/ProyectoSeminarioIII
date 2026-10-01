@@ -231,6 +231,17 @@ class MedicoTratante(models.Model):
     def recibe_estudios_privados(self):
         return self.tipo in self.TIPOS_QUE_RECIBEN_ESTUDIO
 
+    @classmethod
+    def disponibles_para(cls, lado):
+        """Activos que se pueden elegir al agendar del lado `lado`
+        (TIPO_IGSS o TIPO_PRIVADO): los clasificados para ese lado o para
+        ambos, más los que todavía no se clasificaron (tipo en blanco) --
+        así no desaparecen de golpe los que ya estaban cargados antes de
+        que existiera este campo."""
+        return cls.objects.filter(activo=True).filter(
+            models.Q(tipo='') | models.Q(tipo__in=(lado, cls.TIPO_AMBOS))
+        ).order_by('nombre')
+
     def __str__(self):
         return self.nombre
 

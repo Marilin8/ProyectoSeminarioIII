@@ -2514,6 +2514,7 @@ def agendar_cita_privado(request):
                 estado=Cita.ESTADO_AGENDADA,
                 fecha=cd['fecha'],
                 hora=cd['hora'],
+                medico_tratante=cd.get('medico_tratante'),
                 fecha_sugerida=cd['fecha'],
                 hora_sugerida=cd['hora'],
                 notas=cd['motivo'],
@@ -2657,28 +2658,7 @@ def marcar_llegada(request, convenio, cita_id):
         # porque llegan sin cita agendada).
         if convenio in (Cita.CONVENIO_COEX, Cita.CONVENIO_PRIVADO):
             ticket = _crear_ticket_de_turno(request=request, cita=cita, usuario=request.user)
-            mensaje = f'Se registró la llegada de {cita.paciente} — turno {ticket.turno}.'
-
-            if convenio == Cita.CONVENIO_PRIVADO:
-                try:
-                    posiciones = int(request.POST.get('adelantar') or 0)
-                except ValueError:
-                    posiciones = 0
-                posiciones = max(0, min(2, posiciones))
-                if posiciones:
-                    ticket.adelantar(posiciones)
-                    Bitacora.registrar(
-                        request=request,
-                        usuario=request.user,
-                        accion=Bitacora.ACCION_ADELANTAR_TICKET,
-                        descripcion=(
-                            f'Adelantó {posiciones} turno(s) al turno {ticket.turno} de '
-                            f'{ticket.paciente} en la Pantalla de turnos.'
-                        ),
-                    )
-                    mensaje += f' Se adelantó {posiciones} turno(s) en la fila de espera.'
-
-            messages.success(request, mensaje)
+            messages.success(request, f'Se registró la llegada de {cita.paciente} — turno {ticket.turno}.')
         else:
             messages.success(request, f'Se registró la llegada de {cita.paciente}.')
     return redirect(f'{reverse(f"procesar_citas_{convenio}")}?fecha={cita.fecha}')
@@ -3847,8 +3827,8 @@ def confirmar_reagenda(request, convenio, cita_id):
     cita = get_object_or_404(Cita, id=cita_id, convenio=convenio)
     calendario_url = reverse(f'calendario_{convenio}')
 
-    if cita.estado != Cita.ESTADO_AUSENTE:
-        messages.error(request, 'Solo se pueden reagendar citas marcadas como ausente.')
+    if cita.estado not in (Cita.ESTADO_AUSENTE, Cita.ESTADO_AGENDADA):
+        messages.error(request, 'Solo se pueden reagendar citas agendadas o marcadas como ausente.')
         return redirect(f'{reverse(f"procesar_citas_{convenio}")}?fecha={cita.fecha}')
 
     datos = request.POST if request.method == 'POST' else request.GET

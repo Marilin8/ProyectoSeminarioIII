@@ -35,11 +35,6 @@
             text-align: center;
             padding: 2rem 0;
         }
-        .adelantar-select {
-            width: auto;
-            padding: 0.3rem 0.4rem;
-            font-size: 0.75rem;
-        }
     </style>
 {% endblock %}
 
@@ -87,15 +82,8 @@
                             <td>
                                 {% if cita.estado == 'agendada' and not cita.hora_llegada %}
                                     <div class="acciones">
-                                        <form method="post" action="{% url marcar_llegada_url_name cita_id=cita.id %}" style="display:flex;gap:0.3rem;align-items:center;">
+                                        <form method="post" action="{% url marcar_llegada_url_name cita_id=cita.id %}">
                                             {% csrf_token %}
-                                            {% if convenio == 'privado' %}
-                                                <select name="adelantar" class="adelantar-select" title="Adelantar en la Pantalla de turnos">
-                                                    <option value="0">Sin adelantar</option>
-                                                    <option value="1">Adelantar 1 turno</option>
-                                                    <option value="2">Adelantar 2 turnos</option>
-                                                </select>
-                                            {% endif %}
                                             <button class="btn btn-success btn-sm" type="submit">
                                                 <svg width="14" height="14"><use href="#i-check-circle"/></svg>
                                                 Llegó
@@ -110,6 +98,19 @@
                                             </button>
                                         </form>
                                         {% endif %}
+                                        <a class="btn btn-outline btn-sm" href="{% url calendario_url_name %}?reagendar={{ cita.id }}">
+                                            <svg width="14" height="14"><use href="#i-calendar"/></svg>
+                                            Reagendar
+                                        </a>
+                                        <form method="post" action="{% url 'eliminar_cita' cita_id=cita.id %}"
+                                              onsubmit="return confirm('¿Cancelar la cita de {{ cita.paciente.nombre|escapejs }} {{ cita.paciente.apellido|escapejs }}?');">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="volver" value="{{ request.get_full_path }}">
+                                            <button class="btn btn-danger btn-sm" type="submit">
+                                                <svg width="14" height="14"><use href="#i-x-circle"/></svg>
+                                                Cancelar
+                                            </button>
+                                        </form>
                                     </div>
                                     {% if cita.esta_tarde %}
                                         <span class="alerta-tarde">⚠ +15 min tarde, considera marcar ausente</span>

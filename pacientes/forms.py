@@ -236,7 +236,7 @@ class AgendarCitaForm(forms.Form):
     medico_tratante = forms.ModelChoiceField(
         label='Médico tratante',
         required=False,
-        queryset=MedicoTratante.objects.filter(activo=True).order_by('nombre'),
+        queryset=MedicoTratante.disponibles_para(MedicoTratante.TIPO_IGSS),
     )
     fecha = forms.DateField(widget=forms.DateInput(attrs={'type': 'date'}))
     hora = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}))
@@ -373,6 +373,11 @@ class AgendarCitaPrivadoForm(forms.Form):
         label='Radiólogo asignado',
         required=False,
         queryset=_radiologos_disponibles(),
+    )
+    medico_tratante = forms.ModelChoiceField(
+        label='Médico tratante',
+        required=False,
+        queryset=MedicoTratante.disponibles_para(MedicoTratante.TIPO_PRIVADO),
     )
     fecha = forms.DateField(widget=forms.DateInput(attrs={'type': 'date'}))
     hora = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}))
@@ -693,7 +698,7 @@ class ProcesarTicketForm(forms.Form):
     medico_tratante = forms.ModelChoiceField(
         label='Médico tratante',
         required=False,
-        queryset=MedicoTratante.objects.filter(activo=True).order_by('nombre'),
+        queryset=MedicoTratante.disponibles_para(MedicoTratante.TIPO_IGSS),
     )
     motivo = forms.CharField(
         label='Motivo / indicación clínica',

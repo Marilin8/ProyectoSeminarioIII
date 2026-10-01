@@ -215,28 +215,6 @@ class FlujoPrivadoTests(TestCase):
         self.assertEqual(ticket.prioridad, Ticket.PRIORIDAD_NORMAL)
         self.assertEqual(ticket.estado, Ticket.ESTADO_EN_ESPERA)
 
-    def test_marcar_llegada_privado_puede_adelantar_el_turno(self):
-        p1, p2 = crear_paciente(dpi='9191919191911'), crear_paciente(dpi='9292929292921')
-        cita_coex = crear_cita(
-            self.recepcionista, paciente=p1, tipo_estudio=self.estudio,
-            convenio=Cita.CONVENIO_COEX, fecha=self.fecha, hora=datetime.time(9, 0),
-        )
-        cita_privado = crear_cita(
-            self.recepcionista, paciente=p2, tipo_estudio=self.estudio,
-            convenio=Cita.CONVENIO_PRIVADO, fecha=self.fecha, hora=datetime.time(9, 30),
-        )
-        self.client.force_login(self.recepcionista)
-
-        self.client.post(reverse('marcar_llegada_coex', args=[cita_coex.id]))
-        self.client.post(reverse('marcar_llegada_privado', args=[cita_privado.id]), {'adelantar': '1'})
-
-        ticket_coex = Ticket.objects.get(cita=cita_coex)
-        ticket_privado = Ticket.objects.get(cita=cita_privado)
-        cola = list(Ticket.objects.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden'))
-        self.assertEqual(cola, [ticket_privado, ticket_coex])
-        # El número de turno oficial no cambia aunque se haya adelantado.
-        self.assertEqual(ticket_privado.numero, 2)
-
 
 @override_settings(VERIFICAR_CORREO_EXISTENTE=True)
 class VerificacionCorreoAgendarPrivadoTests(TestCase):
@@ -607,6 +585,94 @@ class CalendarioReagendarTests(TestCase):
         reagendar_url = reverse('confirmar_reagenda_privado', args=[self.cita_ausente.id])
 
         self.assertIn(f'{reagendar_url}?fecha={self.dia.isoformat()}&hora=09:00', html)
+
+
+class ReagendarCitaAgendadaTests(TestCase):
+    """confirmar_reagenda ahora también deja reagendar una cita todavía
+    AGENDADA (antes solo dejaba con citas AUSENTE) -- es lo que usa el botón
+    "Reagendar" que reemplazó al selector de "adelantar" turnos en Procesar
+    citas (ver procesar_citas.html)."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_reagendar_agendada', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(self.recepcion)
+        self.estudio = TipoEstudio.objects.create(nombre='RX reagendar agendada')
+        self.fecha = timezone.localdate() + datetime.timedelta(days=1)
+        while self.fecha.weekday() == 6:
+            self.fecha += datetime.timedelta(days=1)
+        self.cita = crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
+            estado=Cita.ESTADO_AGENDADA, fecha=self.fecha, hora=datetime.time(9, 0),
+        )
+
+    def _nueva_fecha(self):
+        nueva = self.fecha + datetime.timedelta(days=1)
+        while nueva.weekday() == 6:
+            nueva += datetime.timedelta(days=1)
+        return nueva
+
+    def test_reagenda_una_cita_todavia_agendada(self):
+        nueva_fecha = self._nueva_fecha()
+
+        respuesta = self.client.post(
+            reverse('confirmar_reagenda_privado', args=[self.cita.id]),
+            {'fecha': nueva_fecha.isoformat(), 'hora': '09:00'},
+        )
+
+        self.assertRedirects(respuesta, f"{reverse('procesar_citas_privado')}?fecha={nueva_fecha}")
+        self.cita.refresh_from_db()
+        self.assertEqual(self.cita.fecha, nueva_fecha)
+        self.assertEqual(self.cita.estado, Cita.ESTADO_AGENDADA)
+
+    def test_no_reagenda_una_cita_que_ya_entro_al_flujo_de_trabajo(self):
+        self.cita.estado = Cita.ESTADO_EN_PROCESO
+        self.cita.save(update_fields=['estado'])
+
+        respuesta = self.client.post(
+            reverse('confirmar_reagenda_privado', args=[self.cita.id]),
+            {'fecha': self._nueva_fecha().isoformat(), 'hora': '09:00'},
+            follow=True,
+        )
+
+        self.assertContains(respuesta, 'Solo se pueden reagendar')
+        self.cita.refresh_from_db()
+        self.assertEqual(self.cita.estado, Cita.ESTADO_EN_PROCESO)
+
+
+class ProcesarCitasAccionesTests(TestCase):
+    """La fila de una cita agendada (todavía sin llegar) ofrece Reagendar y
+    Cancelar en vez del viejo selector "adelantar" turnos (ver
+    procesar_citas.html)."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_acciones_citas', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(self.recepcion)
+        self.estudio = TipoEstudio.objects.create(nombre='RX acciones citas')
+        self.fecha = timezone.localdate() + datetime.timedelta(days=1)
+        while self.fecha.weekday() == 6:
+            self.fecha += datetime.timedelta(days=1)
+        self.cita = crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
+            estado=Cita.ESTADO_AGENDADA, fecha=self.fecha, hora=datetime.time(9, 0),
+        )
+
+    def test_ofrece_reagendar_y_cancelar_en_vez_de_adelantar(self):
+        respuesta = self.client.get(f"{reverse('procesar_citas_privado')}?fecha={self.fecha}")
+
+        self.assertContains(respuesta, 'Reagendar')
+        self.assertContains(respuesta, 'Cancelar')
+        self.assertContains(respuesta, reverse('eliminar_cita', args=[self.cita.id]))
+        self.assertNotContains(respuesta, 'Sin adelantar')
+        self.assertNotContains(respuesta, 'adelantar-select')
+
+    def test_cancelar_elimina_la_cita_desde_procesar_citas(self):
+        respuesta = self.client.post(
+            reverse('eliminar_cita', args=[self.cita.id]),
+            {'volver': f"{reverse('procesar_citas_privado')}?fecha={self.fecha}"},
+        )
+
+        self.assertRedirects(respuesta, f"{reverse('procesar_citas_privado')}?fecha={self.fecha}")
+        self.assertFalse(Cita.objects.filter(id=self.cita.id).exists())
 
 
 class ListaEstudiosTests(TestCase):
@@ -4425,3 +4491,88 @@ class VisorEstudioMedicoTratanteTests(TestCase):
             self.client.post(self.url, {'dpi_ultimos': '0000000000000'})
         respuesta = self.client.post(self.url, {'dpi_ultimos': self.medico.dpi})
         self.assertContains(respuesta, 'Demasiados intentos')
+
+
+class MedicoTratanteDisponiblesParaTests(TestCase):
+    """disponibles_para(lado) filtra el catálogo de médicos tratantes según
+    el convenio del formulario donde se está agendando: los clasificados
+    para ese lado o ambos, más los que todavía no se clasificaron (tipo en
+    blanco, para no esconder de golpe los que ya estaban cargados antes de
+    este campo)."""
+
+    def test_filtra_por_lado_y_deja_pasar_sin_clasificar(self):
+        solo_igss = MedicoTratante.objects.create(nombre='Dr. Solo IGSS', tipo=MedicoTratante.TIPO_IGSS)
+        solo_privado = MedicoTratante.objects.create(
+            nombre='Dr. Solo Privado', tipo=MedicoTratante.TIPO_PRIVADO,
+        )
+        ambos = MedicoTratante.objects.create(nombre='Dr. Ambos', tipo=MedicoTratante.TIPO_AMBOS)
+        sin_clasificar = MedicoTratante.objects.create(nombre='Dr. Sin Clasificar')
+        inactivo = MedicoTratante.objects.create(
+            nombre='Dr. Inactivo Privado', tipo=MedicoTratante.TIPO_PRIVADO, activo=False,
+        )
+
+        lado_igss = list(MedicoTratante.disponibles_para(MedicoTratante.TIPO_IGSS))
+        lado_privado = list(MedicoTratante.disponibles_para(MedicoTratante.TIPO_PRIVADO))
+
+        self.assertIn(solo_igss, lado_igss)
+        self.assertNotIn(solo_privado, lado_igss)
+        self.assertIn(ambos, lado_igss)
+        self.assertIn(sin_clasificar, lado_igss)
+        self.assertNotIn(inactivo, lado_igss)
+
+        self.assertIn(solo_privado, lado_privado)
+        self.assertNotIn(solo_igss, lado_privado)
+        self.assertIn(ambos, lado_privado)
+        self.assertIn(sin_clasificar, lado_privado)
+
+
+class MedicoTratanteEnPrivadoTests(TestCase):
+    """El módulo Privado también puede elegir médico tratante al agendar
+    (antes solo lo tenían COEX/Emergencia IGSS), filtrado a los que
+    aceptan privado (ver disponibles_para)."""
+
+    def setUp(self):
+        self.recepcionista = crear_usuario('recep_priv_medtrat', rol=Usuario.ROL_RECEPCIONISTA)
+        self.radiologo = crear_usuario('rad_priv_medtrat', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.estudio = TipoEstudio.objects.create(nombre='Radiografía privada médico tratante')
+        self.estudio.radiologos.add(self.radiologo)
+        self.fecha = timezone.localdate() + datetime.timedelta(days=2)
+
+    def _agendar(self, medico_tratante_id='', dpi='9191919191901'):
+        self.client.force_login(self.recepcionista)
+        return self.client.post(reverse('agendar_cita_privado'), {
+            'dpi': dpi, 'nombre': 'Marco', 'apellido': 'Privado',
+            'sexo': Paciente.SEXO_MASCULINO, 'telefono': '55551234', 'correo': '',
+            'fecha_nacimiento': '1990-01-01', 'tipo_estudio': self.estudio.id,
+            'medico_tratante': medico_tratante_id,
+            'fecha': self.fecha.isoformat(), 'hora': '11:00', 'motivo': 'Control',
+        }, follow=True)
+
+    def test_guarda_el_medico_tratante_elegido(self):
+        medico = MedicoTratante.objects.create(
+            nombre='Dr. Privado Agenda', tipo=MedicoTratante.TIPO_PRIVADO,
+        )
+
+        self._agendar(medico_tratante_id=medico.id)
+
+        cita = Cita.objects.get(paciente__dpi='9191919191901')
+        self.assertEqual(cita.medico_tratante, medico)
+
+    def test_es_opcional(self):
+        self._agendar(medico_tratante_id='')
+
+        cita = Cita.objects.get(paciente__dpi='9191919191901')
+        self.assertIsNone(cita.medico_tratante)
+
+    def test_el_select_no_ofrece_medicos_solo_igss(self):
+        MedicoTratante.objects.create(nombre='Dr. Solo IGSS Agenda', tipo=MedicoTratante.TIPO_IGSS)
+        privado = MedicoTratante.objects.create(nombre='Dr. Privado Lista', tipo=MedicoTratante.TIPO_PRIVADO)
+
+        self.client.force_login(self.recepcionista)
+        respuesta = self.client.get(reverse('agendar_cita_privado'))
+
+        opciones = list(respuesta.context['form'].fields['medico_tratante'].queryset)
+        self.assertIn(privado, opciones)
+        self.assertNotIn(
+            MedicoTratante.objects.get(nombre='Dr. Solo IGSS Agenda'), opciones,
+        )

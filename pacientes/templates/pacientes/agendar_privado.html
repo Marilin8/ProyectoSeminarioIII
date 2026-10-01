@@ -90,6 +90,10 @@
                 {{ form.radiologo.errors }}
             </div>
 
+            <label for="{{ form.medico_tratante.id_for_label }}">Médico tratante</label>
+            {{ form.medico_tratante }}
+            {{ form.medico_tratante.errors }}
+
             <label for="{{ form.fecha.id_for_label }}">Fecha</label>
             {{ form.fecha }}
             {{ form.fecha.errors }}
