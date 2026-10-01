@@ -2610,9 +2610,15 @@ def procesar_citas(request, convenio):
 
 def _crear_ticket_de_turno(*, request, cita, usuario, prioridad=Ticket.PRIORIDAD_NORMAL, motivo=''):
     """Genera el ticket de la Pantalla de turnos para una cita que acaba de
-    marcarse como llegada (COEX/Privado). Si por algún motivo ya existiera
-    un ticket para esta cita (doble clic, etc.) no crea uno duplicado."""
-    ticket_existente = Ticket.objects.filter(cita=cita).first()
+    marcarse como llegada (COEX/Privado). Si por algún motivo ya existiera un
+    ticket EN CURSO para esta cita (doble clic, etc.) no crea uno duplicado
+    -- pero uno viejo ya ausente/atendido (p.ej. porque antes se usó
+    "Reagendar" desde la Pantalla de turnos, que deja el ticket anterior en
+    ESTADO_AUSENTE sin tocar la cita) no cuenta: esa cita ya puede tener un
+    turno nuevo cuando el paciente vuelve a llegar."""
+    ticket_existente = Ticket.objects.filter(
+        cita=cita, estado__in=(Ticket.ESTADO_EN_ESPERA, Ticket.ESTADO_EN_ATENCION),
+    ).first()
     if ticket_existente:
         return ticket_existente
     ticket = Ticket.objects.create(

@@ -216,6 +216,60 @@ class FlujoPrivadoTests(TestCase):
         self.assertEqual(ticket.estado, Ticket.ESTADO_EN_ESPERA)
 
 
+class RegenerarTicketTrasReagendarTests(TestCase):
+    """Bug reportado: desde la Pantalla de turnos, "Reagendar" deja el
+    ticket viejo en ESTADO_AUSENTE (y la cita en ESTADO_AUSENTE) sin
+    borrarlo. _crear_ticket_de_turno buscaba "¿ya hay un ticket para esta
+    cita?" sin fijarse en su estado, así que cuando el paciente volvía y
+    marcaba llegada de nuevo, reusaba ese ticket viejo -- ya ausente, nunca
+    reactivado -- y el paciente quedaba marcado como llegado pero sin
+    aparecer en la fila de espera de la Pantalla de turnos."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_regen_ticket', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(self.recepcion)
+        self.estudio = TipoEstudio.objects.create(nombre='RX regenerar ticket')
+        self.fecha = timezone.localdate()
+        self.cita = crear_cita(
+            self.recepcion, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
+            estado=Cita.ESTADO_AGENDADA, fecha=self.fecha, hora=datetime.time(7, 30),
+        )
+
+    def test_marcar_llegada_dos_veces_seguidas_no_duplica_el_ticket(self):
+        self.client.post(reverse('marcar_llegada_privado', args=[self.cita.id]))
+        self.client.post(reverse('marcar_llegada_privado', args=[self.cita.id]))
+
+        self.assertEqual(Ticket.objects.filter(cita=self.cita).count(), 1)
+
+    def test_tras_reagendar_desde_turno_y_volver_a_llegar_saca_turno_nuevo(self):
+        self.client.post(reverse('marcar_llegada_privado', args=[self.cita.id]))
+        ticket_viejo = Ticket.objects.get(cita=self.cita)
+
+        self.client.post(reverse('reagendar_desde_turno', args=[ticket_viejo.id]))
+        ticket_viejo.refresh_from_db()
+        self.cita.refresh_from_db()
+        self.assertEqual(ticket_viejo.estado, Ticket.ESTADO_AUSENTE)
+        self.assertEqual(self.cita.estado, Cita.ESTADO_AUSENTE)
+        self.assertIsNone(self.cita.hora_llegada)
+
+        # Recepción reagenda para más tarde el mismo día y el paciente llega.
+        self.cita.estado = Cita.ESTADO_AGENDADA
+        self.cita.hora = datetime.time(11, 0)
+        self.cita.save(update_fields=['estado', 'hora'])
+
+        self.client.post(reverse('marcar_llegada_privado', args=[self.cita.id]))
+
+        tickets = Ticket.objects.filter(cita=self.cita).order_by('creado_en')
+        self.assertEqual(tickets.count(), 2)
+        ticket_nuevo = tickets.last()
+        self.assertNotEqual(ticket_nuevo.id, ticket_viejo.id)
+        self.assertEqual(ticket_nuevo.estado, Ticket.ESTADO_EN_ESPERA)
+
+        # Y aparece de verdad en la fila de espera de la Pantalla de turnos.
+        pantalla = self.client.get(reverse('pantalla_turnos'))
+        self.assertIn(ticket_nuevo, list(pantalla.context['cola']))
+
+
 @override_settings(VERIFICAR_CORREO_EXISTENTE=True)
 class VerificacionCorreoAgendarPrivadoTests(TestCase):
     """En el módulo Privado el correo es opcional (a diferencia de COEX y
