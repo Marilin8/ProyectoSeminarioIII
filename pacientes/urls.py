@@ -37,6 +37,9 @@ urlpatterns = [
     # Visor web público del estudio (link estilo PACS que se manda por correo:
     # /visor/?studyId=<id>&tab=images&ac=<token base64>).
     path('visor/', views.visor_estudio, name='visor_estudio'),
+    # Mismo link estilo PACS pero para el médico tratante (correo aparte,
+    # DPI del médico en vez del paciente): /visor/medico/?studyId=...&ac=...
+    path('visor/medico/', views.visor_estudio_medico_tratante, name='visor_estudio_medico_tratante'),
     path(
         'visor/<int:orden_id>/imagen/<int:imagen_id>/',
         views.visor_imagen,

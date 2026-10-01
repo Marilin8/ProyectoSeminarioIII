@@ -14,10 +14,13 @@
 
         <p style="color:#64748b; margin:0;">
             {% if editando %}
-                Modifique el nombre del médico tratante.
+                Modifique los datos del médico tratante.
             {% else %}
                 Registre un médico tratante para poder elegirlo al agendar COEX / Emergencia IGSS.
             {% endif %}
+            Si es privado o ambos, el DPI y el correo son obligatorios: al terminar un estudio
+            donde quedó como médico tratante se le avisa a ese correo, y su DPI es la llave para
+            entrar a revisarlo.
         </p>
     </div>
 
@@ -25,23 +28,57 @@
 
         <form method="post">
             {% csrf_token %}
+            {% if form.non_field_errors %}
+                <div style="color:#dc2626; font-size:0.85rem; margin-bottom:16px;">
+                    {{ form.non_field_errors }}
+                </div>
+            {% endif %}
 
             <div style="margin-bottom:20px;">
-                <label for="nombre"
+                <label for="{{ form.nombre.id_for_label }}"
                        style="display:block; font-weight:600; margin-bottom:8px;">
                     Nombre del médico tratante
                 </label>
+                {{ form.nombre }}
+                {% if form.nombre.errors %}
+                    <p style="color:#dc2626; font-size:0.8rem; margin:4px 0 0;">{{ form.nombre.errors|join:" " }}</p>
+                {% endif %}
+            </div>
 
-                <input
-                    type="text"
-                    id="nombre"
-                    name="nombre"
-                    required
-                    maxlength="150"
-                    value="{% if editando %}{{ medico.nombre }}{% endif %}"
-                    placeholder="Ej. Dr. Juan Pérez"
-                    style="width:100%; padding:11px 12px; border:1px solid #cbd5e1; border-radius:8px;"
-                >
+            <div style="margin-bottom:20px;">
+                <label for="{{ form.tipo.id_for_label }}"
+                       style="display:block; font-weight:600; margin-bottom:8px;">
+                    Tipo
+                </label>
+                {{ form.tipo }}
+                {% if form.tipo.errors %}
+                    <p style="color:#dc2626; font-size:0.8rem; margin:4px 0 0;">{{ form.tipo.errors|join:" " }}</p>
+                {% endif %}
+            </div>
+
+            <div style="margin-bottom:20px;">
+                <label for="{{ form.dpi.id_for_label }}"
+                       style="display:block; font-weight:600; margin-bottom:8px;">
+                    DPI
+                </label>
+                {{ form.dpi }}
+                <p style="color:#64748b; font-size:0.8rem; margin:4px 0 0;">
+                    Llave de acceso al visor del estudio (solo necesario si es privado o ambos).
+                </p>
+                {% if form.dpi.errors %}
+                    <p style="color:#dc2626; font-size:0.8rem; margin:4px 0 0;">{{ form.dpi.errors|join:" " }}</p>
+                {% endif %}
+            </div>
+
+            <div style="margin-bottom:20px;">
+                <label for="{{ form.correo.id_for_label }}"
+                       style="display:block; font-weight:600; margin-bottom:8px;">
+                    Correo electrónico
+                </label>
+                {{ form.correo }}
+                {% if form.correo.errors %}
+                    <p style="color:#dc2626; font-size:0.8rem; margin:4px 0 0;">{{ form.correo.errors|join:" " }}</p>
+                {% endif %}
             </div>
 
             <div style="display:flex; gap:10px;">

@@ -13,7 +13,7 @@
         .visor-marca h1 { font-size: 1.15rem; color: var(--primary-dark); }
         .visor-marca small { color: var(--text-muted); }
         .visor-wrap input[type="text"] {
-            text-align: center; letter-spacing: 0.4em; font-size: 1.3rem; font-weight: 600;
+            text-align: center; letter-spacing: 0.12em; font-size: 1.3rem; font-weight: 600;
         }
     </style>
 </head>
@@ -33,8 +33,8 @@
                     </div>
                 {% else %}
                     <p class="text-sm text-muted" style="margin-bottom: 1rem;">
-                        Para proteger su información, ingrese los <strong>últimos 4 dígitos
-                        de su DPI</strong>.
+                        Para proteger su información, ingrese su <strong>DPI completo</strong>
+                        (13 dígitos).
                     </p>
                     {% if error %}
                         <div class="alert alert-danger">
@@ -46,9 +46,9 @@
                     {% endif %}
                     <form method="post" action="?{{ query_string }}">
                         {% csrf_token %}
-                        <label for="dpi_ultimos">Últimos 4 dígitos del DPI</label>
+                        <label for="dpi_ultimos">DPI completo</label>
                         <input type="text" name="dpi_ultimos" id="dpi_ultimos"
-                               inputmode="numeric" pattern="[0-9]{4}" maxlength="4"
+                               inputmode="numeric" pattern="[0-9]{13}" maxlength="13"
                                autocomplete="off" required autofocus>
                         <button type="submit" class="btn btn-primary btn-block mt-2">
                             Ver mi estudio

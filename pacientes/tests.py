@@ -292,8 +292,8 @@ class VerificacionCorreoAgendarPrivadoTests(TestCase):
 
 class VisorEstudioTests(TestCase):
     """Visor web público del estudio: link estilo PACS
-    (/visor/?studyId=<id>&ac=<token base64>) + gate de últimos 4 dígitos del
-    DPI + imágenes servidas solo con sesión autorizada."""
+    (/visor/?studyId=<id>&ac=<token base64>) + gate de DPI completo +
+    imágenes servidas solo con sesión autorizada."""
 
     def setUp(self):
         self.recepcionista = crear_usuario('recep_visor', rol=Usuario.ROL_RECEPCIONISTA)
@@ -322,19 +322,19 @@ class VisorEstudioTests(TestCase):
 
     def test_sin_dpi_muestra_el_gate(self):
         respuesta = self.client.get(self.url)
-        self.assertContains(respuesta, 'últimos 4')
+        self.assertContains(respuesta, 'DPI completo')
 
     def test_link_sin_ac_valido_da_404(self):
         respuesta = self.client.get(f"{reverse('visor_estudio')}?studyId={self.orden.id}&ac=basura")
         self.assertEqual(respuesta.status_code, 404)
 
     def test_dpi_incorrecto_no_autoriza(self):
-        respuesta = self.client.post(self.url, {'dpi_ultimos': '0000'})
-        self.assertContains(respuesta, 'no coinciden')
+        respuesta = self.client.post(self.url, {'dpi_ultimos': '0000000000000'})
+        self.assertContains(respuesta, 'no coincide')
         self.assertNotContains(respuesta, self.estudio.nombre)
 
     def test_dpi_correcto_muestra_estudio_e_imagenes(self):
-        self.client.post(self.url, {'dpi_ultimos': '5667'})
+        self.client.post(self.url, {'dpi_ultimos': '1122334455667'})
         respuesta = self.client.get(self.url)
         self.assertContains(respuesta, self.estudio.nombre)
         self.assertContains(respuesta, self.url_img)
@@ -350,8 +350,8 @@ class VisorEstudioTests(TestCase):
 
     def test_se_bloquea_tras_varios_intentos(self):
         for _ in range(5):
-            self.client.post(self.url, {'dpi_ultimos': '9999'})
-        respuesta = self.client.post(self.url, {'dpi_ultimos': '5667'})
+            self.client.post(self.url, {'dpi_ultimos': '9999999999999'})
+        respuesta = self.client.post(self.url, {'dpi_ultimos': '1122334455667'})
         self.assertContains(respuesta, 'Demasiados intentos')
         self.assertNotContains(respuesta, self.estudio.nombre)
 
@@ -4189,3 +4189,239 @@ class MedicoTratanteTests(TestCase):
 
         opciones = list(respuesta.context['form'].fields['medico_tratante'].queryset)
         self.assertEqual(opciones, [activo])
+
+
+class MedicoTratanteFormTests(TestCase):
+    """DPI y correo son obligatorios solo cuando el tipo es privado o
+    ambos: para IGSS (o sin clasificar) no hace falta, porque no se le
+    manda nada (ver MedicoTratante.recibe_estudios_privados)."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_medicos_form', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.client.force_login(self.admin)
+
+    def test_crear_medico_igss_no_exige_dpi_ni_correo(self):
+        respuesta = self.client.post(reverse('crear_medico_tratante'), {
+            'nombre': 'Dr. Solo IGSS', 'tipo': MedicoTratante.TIPO_IGSS,
+        })
+
+        self.assertRedirects(respuesta, reverse('lista_medicos_tratantes'))
+        medico = MedicoTratante.objects.get(nombre='Dr. Solo IGSS')
+        self.assertEqual(medico.dpi, None)
+        self.assertEqual(medico.correo, '')
+
+    def test_crear_medico_privado_sin_dpi_falla(self):
+        respuesta = self.client.post(reverse('crear_medico_tratante'), {
+            'nombre': 'Dr. Privado Incompleto', 'tipo': MedicoTratante.TIPO_PRIVADO,
+            'correo': 'doc@example.com',
+        })
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertFalse(MedicoTratante.objects.filter(nombre='Dr. Privado Incompleto').exists())
+        self.assertTrue(respuesta.context['form'].errors.get('dpi'))
+
+    def test_crear_medico_ambos_sin_correo_falla(self):
+        respuesta = self.client.post(reverse('crear_medico_tratante'), {
+            'nombre': 'Dr. Ambos Incompleto', 'tipo': MedicoTratante.TIPO_AMBOS,
+            'dpi': '1234567890123',
+        })
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertFalse(MedicoTratante.objects.filter(nombre='Dr. Ambos Incompleto').exists())
+        self.assertTrue(respuesta.context['form'].errors.get('correo'))
+
+    def test_crear_medico_privado_completo(self):
+        respuesta = self.client.post(reverse('crear_medico_tratante'), {
+            'nombre': 'Dr. Privado Completo', 'tipo': MedicoTratante.TIPO_PRIVADO,
+            'dpi': '1234567890123', 'correo': 'doc.completo@example.com',
+        })
+
+        self.assertRedirects(respuesta, reverse('lista_medicos_tratantes'))
+        medico = MedicoTratante.objects.get(nombre='Dr. Privado Completo')
+        self.assertEqual(medico.dpi, '1234567890123')
+        self.assertEqual(medico.correo, 'doc.completo@example.com')
+        self.assertTrue(medico.recibe_estudios_privados)
+
+    def test_dpi_duplicado_rechazado(self):
+        MedicoTratante.objects.create(
+            nombre='Dr. Original', dpi='1111111111111', correo='original@example.com',
+            tipo=MedicoTratante.TIPO_PRIVADO,
+        )
+
+        respuesta = self.client.post(reverse('crear_medico_tratante'), {
+            'nombre': 'Dr. Repetido', 'tipo': MedicoTratante.TIPO_PRIVADO,
+            'dpi': '1111111111111', 'correo': 'repetido@example.com',
+        })
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertFalse(MedicoTratante.objects.filter(nombre='Dr. Repetido').exists())
+        self.assertTrue(respuesta.context['form'].errors.get('dpi'))
+
+    def test_dpi_con_letras_rechazado(self):
+        respuesta = self.client.post(reverse('crear_medico_tratante'), {
+            'nombre': 'Dr. DPI Malo', 'tipo': MedicoTratante.TIPO_IGSS, 'dpi': 'abc123',
+        })
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTrue(respuesta.context['form'].errors.get('dpi'))
+
+
+class EnvioMedicoTratanteTests(TestCase):
+    """Al completarse el informe de una cita con médico tratante privado o
+    ambos, se le manda un correo con el link al visor y su DPI queda como
+    llave para entrar (ver _intentar_envio_medico_tratante en views.py). No
+    depende del convenio de la cita ni de si el estudio ya se le mandó al
+    paciente -- son dos envíos independientes."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_medtrat', rol=Usuario.ROL_RECEPCIONISTA)
+        self.radiologo = crear_usuario('rad_medtrat', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+
+    def _preparar_cita(self, medico_tratante=None, convenio=Cita.CONVENIO_COEX, dpi='8008008008001'):
+        paciente = crear_paciente(dpi=dpi, correo='')
+        tipo_estudio = TipoEstudio.objects.create(nombre=f'RX médico tratante {dpi}')
+        cita = crear_cita(
+            self.recepcion, paciente=paciente, tipo_estudio=tipo_estudio,
+            convenio=convenio, estado=Cita.ESTADO_EN_PROCESO, medico_tratante=medico_tratante,
+        )
+        orden = OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        ImagenEstudio.objects.create(
+            orden=orden, tipo_estudio=tipo_estudio,
+            archivo=SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+            subida_por=self.recepcion,
+        )
+        return cita, orden
+
+    def _completar_informe(self, cita):
+        self.client.force_login(self.radiologo)
+        return self.client.post(reverse('adjuntar_informe', args=[cita.id]), {
+            f'texto_{cita.tipo_estudio.id}': 'Sin hallazgos.',
+        })
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_se_envia_al_medico_tratante_privado_al_completar_el_informe(self):
+        medico = MedicoTratante.objects.create(
+            nombre='Dr. Tratante Privado', dpi='9009009009001', correo='tratante@example.com',
+            tipo=MedicoTratante.TIPO_PRIVADO,
+        )
+        cita, orden = self._preparar_cita(medico_tratante=medico)
+
+        self._completar_informe(cita)
+
+        orden.refresh_from_db()
+        self.assertIsNotNone(orden.enviado_medico_tratante_en)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['tratante@example.com'])
+        self.assertIn('visor/medico', mail.outbox[0].body)
+        # El DPI es la llave: no se manda el PDF suelto en este correo.
+        self.assertEqual(mail.outbox[0].attachments, [])
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_se_envia_al_medico_tratante_ambos_aunque_sea_emergencia_igss(self):
+        medico = MedicoTratante.objects.create(
+            nombre='Dr. Tratante Ambos', dpi='9009009009002', correo='ambos@example.com',
+            tipo=MedicoTratante.TIPO_AMBOS,
+        )
+        cita, orden = self._preparar_cita(
+            medico_tratante=medico, convenio=Cita.CONVENIO_EMERGENCIA_IGSS, dpi='8008008008002',
+        )
+
+        self._completar_informe(cita)
+
+        orden.refresh_from_db()
+        self.assertIsNotNone(orden.enviado_medico_tratante_en)
+        self.assertEqual(len(mail.outbox), 1)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_no_se_envia_si_el_medico_tratante_es_solo_igss(self):
+        medico = MedicoTratante.objects.create(
+            nombre='Dr. Tratante IGSS', dpi='9009009009003', correo='igss@example.com',
+            tipo=MedicoTratante.TIPO_IGSS,
+        )
+        cita, orden = self._preparar_cita(medico_tratante=medico, dpi='8008008008003')
+
+        self._completar_informe(cita)
+
+        orden.refresh_from_db()
+        self.assertIsNone(orden.enviado_medico_tratante_en)
+        self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_no_se_envia_si_no_hay_medico_tratante(self):
+        cita, orden = self._preparar_cita(medico_tratante=None, dpi='8008008008004')
+
+        self._completar_informe(cita)
+
+        orden.refresh_from_db()
+        self.assertIsNone(orden.enviado_medico_tratante_en)
+        self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_avisa_si_al_medico_privado_le_falta_dpi(self):
+        from django.contrib.messages import get_messages
+
+        medico = MedicoTratante.objects.create(
+            nombre='Dr. Sin DPI', correo='sindpi@example.com', tipo=MedicoTratante.TIPO_PRIVADO,
+        )
+        cita, orden = self._preparar_cita(medico_tratante=medico, dpi='8008008008005')
+
+        respuesta = self._completar_informe(cita)
+
+        orden.refresh_from_db()
+        self.assertIsNone(orden.enviado_medico_tratante_en)
+        self.assertEqual(len(mail.outbox), 0)
+        mensajes = [str(m) for m in get_messages(respuesta.wsgi_request)]
+        self.assertTrue(any('DPI' in m for m in mensajes))
+
+
+class VisorEstudioMedicoTratanteTests(TestCase):
+    """Visor del médico tratante (/visor/medico/): mismo token que el del
+    paciente, pero el DPI que lo desbloquea es el del médico; una vez
+    autorizado, reusa el mismo visor_estudio.html y las mismas descargas."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_visor_med', rol=Usuario.ROL_RECEPCIONISTA)
+        self.medico = MedicoTratante.objects.create(
+            nombre='Dr. Visor', dpi='7117117117001', correo='visor@example.com',
+            tipo=MedicoTratante.TIPO_AMBOS,
+        )
+        self.paciente = crear_paciente(dpi='6116116116001', correo='')
+        self.estudio = TipoEstudio.objects.create(nombre='Radiografía visor médico tratante')
+        self.cita = crear_cita(
+            self.recepcion, paciente=self.paciente, tipo_estudio=self.estudio,
+            convenio=Cita.CONVENIO_COEX, estado=Cita.ESTADO_PROCESADA, medico_tratante=self.medico,
+        )
+        self.orden = OrdenTrabajo.objects.create(
+            cita=self.cita, motivo='x', creada_por=self.recepcion,
+            enviado_medico_tratante_en=timezone.now(),
+        )
+        InformeEstudio.objects.create(orden=self.orden, tipo_estudio=self.estudio, texto='Sin hallazgos.')
+        token = self.orden.asegurar_token_publico()
+        ac = base64.urlsafe_b64encode(str(token).encode()).decode().rstrip('=')
+        self.url = f"{reverse('visor_estudio_medico_tratante')}?studyId={self.orden.id}&ac={ac}"
+
+    def test_sin_dpi_muestra_el_gate(self):
+        respuesta = self.client.get(self.url)
+        self.assertContains(respuesta, 'DPI completo')
+
+    def test_dpi_del_paciente_no_desbloquea_el_visor_del_medico(self):
+        respuesta = self.client.post(self.url, {'dpi_ultimos': self.paciente.dpi})
+        self.assertContains(respuesta, 'no coincide')
+
+    def test_dpi_del_medico_desbloquea_y_reusa_el_visor_del_paciente(self):
+        qs = self.url.split('?', 1)[1]
+        respuesta = self.client.post(self.url, {'dpi_ultimos': self.medico.dpi}, follow=True)
+        self.assertRedirects(respuesta, f"{reverse('visor_estudio')}?{qs}")
+        self.assertContains(respuesta, self.estudio.nombre)
+
+    def test_sin_medico_tratante_privado_da_404(self):
+        self.cita.medico_tratante = None
+        self.cita.save(update_fields=['medico_tratante'])
+
+        self.assertEqual(self.client.get(self.url).status_code, 404)
+
+    def test_se_bloquea_tras_varios_intentos(self):
+        for _ in range(5):
+            self.client.post(self.url, {'dpi_ultimos': '0000000000000'})
+        respuesta = self.client.post(self.url, {'dpi_ultimos': self.medico.dpi})
+        self.assertContains(respuesta, 'Demasiados intentos')

@@ -27,7 +27,7 @@ from accounts.models import MESES_ES, Bitacora, Usuario
 from accounts.views import es_administrador
 from clinica.validators import avisar_si_correo_no_existe
 from django.utils.text import slugify
-from .correos import enviar_resultados
+from .correos import enviar_estudio_medico_tratante, enviar_resultados
 from .dicom_utils import dicom_a_jpg_memoria
 from .forms import (
     AdjuntarImagenesForm,
@@ -45,6 +45,7 @@ from .forms import (
     FechaVigenciaProgramadaForm,
     GenerarOrdenForm,
     IngresarCorreoEnvioForm,
+    MedicoTratanteForm,
     NOMBRES_IGNORADOS_EN_CARPETA,
     ProcesarTicketForm,
     RegistrarPagoEstudioForm,
@@ -753,6 +754,40 @@ def _intentar_envio_automatico(request, cita):
     if _cobro_bloquea_envio(cita):
         return False
     _enviar_estudio_y_registrar(request, cita, orden)
+    return True
+
+
+def _intentar_envio_medico_tratante(request, cita, orden):
+    """Si la cita tiene médico tratante y es privado o ambos (ver
+    MedicoTratante.recibe_estudios_privados), le manda por correo el enlace
+    del visor del estudio con su DPI como llave de acceso -- independiente
+    del convenio de la cita y de si ya se le enviaron los resultados al
+    paciente (ver enviado_medico_tratante_en en OrdenTrabajo). No bloquea
+    nada si falla o si al médico le falta DPI/correo: solo deja un aviso,
+    igual que el envío al paciente. Devuelve True si efectivamente se
+    envió."""
+    medico = cita.medico_tratante
+    if not medico or not medico.recibe_estudios_privados or orden.enviado_medico_tratante_en:
+        return False
+    if not (medico.dpi and medico.correo):
+        messages.warning(
+            request,
+            f'El médico tratante {medico.nombre} es {medico.get_tipo_display()} pero le falta '
+            'DPI o correo registrado: no se le pudo enviar el estudio. Completá sus datos '
+            'desde "Médicos tratantes".',
+        )
+        return False
+
+    error = enviar_estudio_medico_tratante(orden)
+    if error:
+        messages.warning(
+            request, f'No se pudo enviar el estudio al médico tratante {medico.nombre}: {error}.',
+        )
+        return False
+
+    orden.enviado_medico_tratante_en = timezone.now()
+    orden.save(update_fields=['enviado_medico_tratante_en'])
+    messages.success(request, f'Estudio enviado también al médico tratante {medico.nombre} ({medico.correo}).')
     return True
 
 
@@ -1795,17 +1830,18 @@ def lista_medicos_tratantes(request):
 @user_passes_test(es_administrador)
 def crear_medico_tratante(request):
     if request.method == 'POST':
-        nombre = (request.POST.get('nombre') or '').strip()
-        if not nombre:
-            messages.error(request, 'Escriba el nombre del médico.')
-        elif MedicoTratante.objects.filter(nombre__iexact=nombre).exists():
-            messages.error(request, 'Ya existe un médico tratante con ese nombre.')
-        else:
-            medico = MedicoTratante.objects.create(nombre=nombre)
+        form = MedicoTratanteForm(request.POST)
+        if form.is_valid():
+            cd = form.cleaned_data
+            medico = MedicoTratante.objects.create(
+                nombre=cd['nombre'], dpi=cd['dpi'] or None, correo=cd['correo'], tipo=cd['tipo'],
+            )
             messages.success(request, f'Médico tratante "{medico.nombre}" creado correctamente.')
             return redirect('lista_medicos_tratantes')
+    else:
+        form = MedicoTratanteForm()
 
-    return render(request, 'pacientes/crear_medico_tratante.html', {'editando': None})
+    return render(request, 'pacientes/crear_medico_tratante.html', {'form': form, 'editando': None})
 
 
 @login_required
@@ -1814,22 +1850,23 @@ def editar_medico_tratante(request, medico_id):
     medico = get_object_or_404(MedicoTratante, id=medico_id)
 
     if request.method == 'POST':
-        nombre_nuevo = (request.POST.get('nombre') or '').strip()
-        if not nombre_nuevo:
-            messages.error(request, 'Escriba el nombre del médico.')
-        elif MedicoTratante.objects.filter(nombre__iexact=nombre_nuevo).exclude(id=medico.id).exists():
-            messages.error(request, 'Ya existe otro médico tratante con ese nombre.')
-        elif nombre_nuevo != medico.nombre:
-            medico.nombre = nombre_nuevo
-            medico.save(update_fields=['nombre', 'actualizado_en'])
+        form = MedicoTratanteForm(request.POST, medico_actual=medico)
+        if form.is_valid():
+            cd = form.cleaned_data
+            medico.nombre = cd['nombre']
+            medico.dpi = cd['dpi'] or None
+            medico.correo = cd['correo']
+            medico.tipo = cd['tipo']
+            medico.save(update_fields=['nombre', 'dpi', 'correo', 'tipo', 'actualizado_en'])
             messages.success(request, f'Médico tratante "{medico.nombre}" actualizado correctamente.')
             return redirect('lista_medicos_tratantes')
-        else:
-            messages.info(request, 'No se realizaron cambios.')
-            return redirect('lista_medicos_tratantes')
+    else:
+        form = MedicoTratanteForm(initial={
+            'nombre': medico.nombre, 'dpi': medico.dpi or '', 'correo': medico.correo, 'tipo': medico.tipo,
+        }, medico_actual=medico)
 
     return render(request, 'pacientes/crear_medico_tratante.html', {
-        'editando': medico, 'medico': medico,
+        'form': form, 'editando': medico, 'medico': medico,
     })
 
 
@@ -3414,6 +3451,7 @@ def adjuntar_informe(request, cita_id):
                 cita.estado = Cita.ESTADO_PROCESADA
                 cita.save(update_fields=['estado'])
                 _notificar_estudio_completado(cita)
+                _intentar_envio_medico_tratante(request, cita, orden)
                 if not _intentar_envio_automatico(request, cita):
                     messages.success(request, f'Informe completo para {cita.paciente}. Ya se puede enviar al paciente.')
             else:
@@ -4845,7 +4883,7 @@ def descargar_reporte_xlsx(request, convenio, fecha):
 #   - studyId: identifica el estudio (no es secreto)
 #   - ac: token de acceso (UUID en base64; sin esto no abre)
 #
-# Para abrirlo el paciente ingresa además los últimos 4 dígitos de su DPI;
+# Para abrirlo el paciente ingresa además su DPI completo;
 # tras eso queda autorizado en la sesión y puede ver las imágenes que la
 # radióloga dejó seleccionadas y descargar el informe. No requiere login.
 # ---------------------------------------------------------------------------
@@ -4872,10 +4910,16 @@ def _visor_orden_desde_request(request):
     if not (study_id or '').isdigit() or not token:
         raise Http404
     orden = get_object_or_404(
-        OrdenTrabajo.objects.select_related('cita__paciente', 'cita__tipo_estudio'),
+        OrdenTrabajo.objects.select_related(
+            'cita__paciente', 'cita__tipo_estudio', 'cita__medico_tratante',
+        ),
         id=study_id, token_publico=token,
     )
-    if not orden.resultados_enviados_en:
+    # El mismo token sirve para el visor del paciente y el del médico
+    # tratante (visor_estudio_medico_tratante): cada uno se marca por
+    # separado (resultados_enviados_en / enviado_medico_tratante_en) y
+    # pide el DPI de la persona correspondiente antes de mostrar nada.
+    if not (orden.resultados_enviados_en or orden.enviado_medico_tratante_en):
         raise Http404
     return orden
 
@@ -4895,13 +4939,13 @@ def visor_estudio(request):
             if intentos >= VISOR_MAX_INTENTOS:
                 contexto['bloqueado'] = True
                 return render(request, 'pacientes/visor_gate.html', contexto)
-            ultimos = (request.POST.get('dpi_ultimos') or '').strip()
-            if ultimos and ultimos == (paciente.dpi or '')[-4:]:
+            dpi_ingresado = (request.POST.get('dpi_ultimos') or '').strip()
+            if dpi_ingresado and dpi_ingresado == (paciente.dpi or ''):
                 request.session[clave_ok] = True
                 request.session.pop(clave_intentos, None)
                 return redirect(f'{reverse("visor_estudio")}?{qs}')
             request.session[clave_intentos] = intentos + 1
-            contexto['error'] = 'Los 4 dígitos no coinciden con el DPI registrado.'
+            contexto['error'] = 'El DPI no coincide con el registrado.'
             contexto['intentos_restantes'] = VISOR_MAX_INTENTOS - (intentos + 1)
             return render(request, 'pacientes/visor_gate.html', contexto)
 
@@ -4923,6 +4967,45 @@ def visor_estudio(request):
         'tiene_dicom': any(img.archivo_original for img in imagenes),
         'edad': paciente.edad_en(orden.cita.fecha),
     })
+
+
+def visor_estudio_medico_tratante(request):
+    """Igual que visor_estudio pero para el médico tratante (correo
+    enviado por enviar_estudio_medico_tratante): el DPI que lo desbloquea
+    es el del médico, no el del paciente. Una vez que entra, usa el mismo
+    visor_estudio.html y las mismas descargas (visor_imagen/visor_jpg/
+    visor_informe_pdf/visor_dicom): todas miran la misma bandera de sesión
+    visor_ok_<orden>, sin importar quién la puso ahí."""
+    orden = _visor_orden_desde_request(request)
+    medico = orden.cita.medico_tratante
+    if not medico or not medico.recibe_estudios_privados or not medico.dpi:
+        raise Http404
+    clave_ok = f'visor_ok_{orden.id}'
+    clave_intentos = f'visor_intentos_medico_{orden.id}'
+    qs = request.META.get('QUERY_STRING', '')
+
+    if request.session.get(clave_ok) is not True:
+        intentos = request.session.get(clave_intentos, 0)
+        contexto = {'medico': medico, 'query_string': qs}
+
+        if request.method == 'POST':
+            if intentos >= VISOR_MAX_INTENTOS:
+                contexto['bloqueado'] = True
+                return render(request, 'pacientes/visor_gate.html', contexto)
+            dpi_ingresado = (request.POST.get('dpi_ultimos') or '').strip()
+            if dpi_ingresado and dpi_ingresado == (medico.dpi or ''):
+                request.session[clave_ok] = True
+                request.session.pop(clave_intentos, None)
+                return redirect(f'{reverse("visor_estudio")}?{qs}')
+            request.session[clave_intentos] = intentos + 1
+            contexto['error'] = 'El DPI no coincide con el registrado.'
+            contexto['intentos_restantes'] = VISOR_MAX_INTENTOS - (intentos + 1)
+            return render(request, 'pacientes/visor_gate.html', contexto)
+
+        contexto['bloqueado'] = intentos >= VISOR_MAX_INTENTOS
+        return render(request, 'pacientes/visor_gate.html', contexto)
+
+    return redirect(f'{reverse("visor_estudio")}?{qs}')
 
 
 def _visor_orden_autorizada(request, orden_id):

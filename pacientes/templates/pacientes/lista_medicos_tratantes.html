@@ -34,6 +34,8 @@
             <thead>
                 <tr style="background:#f8fafc;">
                     <th style="text-align:left; padding:14px;">Médico tratante</th>
+                    <th style="text-align:left; padding:14px;">Tipo</th>
+                    <th style="text-align:left; padding:14px;">DPI / correo</th>
                     <th style="text-align:left; padding:14px;">Estado</th>
                     <th style="text-align:right; padding:14px;">Acciones</th>
                 </tr>
@@ -45,6 +47,22 @@
 
                     <td style="padding:14px;">
                         {{ medico.nombre }}
+                    </td>
+
+                    <td style="padding:14px;">
+                        {% if medico.tipo %}
+                            {{ medico.get_tipo_display }}
+                        {% else %}
+                            <span style="color:#94a3b8;">Sin clasificar</span>
+                        {% endif %}
+                    </td>
+
+                    <td style="padding:14px; color:#64748b; font-size:0.85rem;">
+                        {% if medico.dpi or medico.correo %}
+                            {{ medico.dpi|default:"—" }}<br>{{ medico.correo|default:"—" }}
+                        {% else %}
+                            —
+                        {% endif %}
                     </td>
 
                     <td style="padding:14px;">
@@ -102,7 +120,7 @@
                 {% empty %}
 
                 <tr>
-                    <td colspan="3"
+                    <td colspan="5"
                         style="padding:25px; text-align:center; color:#64748b;">
                         No hay médicos tratantes registrados.
                     </td>

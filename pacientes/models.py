@@ -184,9 +184,39 @@ class HistorialModalidad(models.Model):
 class MedicoTratante(models.Model):
     """Catálogo administrable de médicos tratantes (COEX / Emergencia IGSS),
     para elegir uno al agendar en vez de escribirlo a mano cada vez. El
-    administrador lo mantiene desde "Médicos tratantes" en su panel."""
+    administrador lo mantiene desde "Médicos tratantes" en su panel.
+
+    DPI, correo y tipo son el dato de afiliación del médico (no es un rol ni
+    un usuario del sistema: no inicia sesión). Cuando tipo es privado o
+    ambos, al completarse un estudio donde quedó como médico tratante se le
+    manda el enlace del visor por correo y su DPI es la llave para abrirlo
+    (ver enviar_estudio_medico_tratante en correos.py y
+    visor_estudio_medico_tratante en views.py). Si es solo igss, no se le
+    envía nada: ese caso ya lo distribuye IGSS por su cuenta."""
+
+    TIPO_IGSS = 'igss'
+    TIPO_PRIVADO = 'privado'
+    TIPO_AMBOS = 'ambos'
+
+    TIPO_CHOICES = [
+        ('', 'Sin clasificar'),
+        (TIPO_IGSS, 'IGSS'),
+        (TIPO_PRIVADO, 'Privado'),
+        (TIPO_AMBOS, 'Ambos'),
+    ]
+
+    TIPOS_QUE_RECIBEN_ESTUDIO = (TIPO_PRIVADO, TIPO_AMBOS)
 
     nombre = models.CharField(max_length=150, unique=True, verbose_name='nombre')
+    dpi = models.CharField(
+        max_length=20, unique=True, null=True, blank=True, verbose_name='DPI',
+        help_text='Llave de acceso al visor del estudio cuando el tipo es privado o ambos.',
+    )
+    correo = models.EmailField(blank=True, verbose_name='correo electrónico')
+    tipo = models.CharField(
+        max_length=10, choices=TIPO_CHOICES, blank=True, default='', verbose_name='tipo',
+        help_text='De qué lado refiere pacientes: IGSS, privado o ambos.',
+    )
     activo = models.BooleanField(default=True, verbose_name='activo')
     creado_en = models.DateTimeField(auto_now_add=True)
     actualizado_en = models.DateTimeField(auto_now=True)
@@ -196,6 +226,10 @@ class MedicoTratante(models.Model):
         verbose_name = 'médico tratante'
         verbose_name_plural = 'médicos tratantes'
         ordering = ['nombre']
+
+    @property
+    def recibe_estudios_privados(self):
+        return self.tipo in self.TIPOS_QUE_RECIBEN_ESTUDIO
 
     def __str__(self):
         return self.nombre
@@ -1113,10 +1147,17 @@ class OrdenTrabajo(models.Model):
     # null hasta que efectivamente se envía.
     resultados_enviados_en = models.DateTimeField(null=True, blank=True)
 
+    # Igual que resultados_enviados_en pero para el médico tratante de la
+    # cita (cuando es privado o ambos): se marca sola al completarse el
+    # informe, independiente de si ya se le enviaron los resultados al
+    # paciente. Ver _intentar_envio_medico_tratante en views.py.
+    enviado_medico_tratante_en = models.DateTimeField(null=True, blank=True)
+
     # Token opaco para el visor web público del estudio (se manda en el
-    # correo al paciente). Se genera la primera vez que se envían los
-    # resultados; queda null hasta entonces. No caduca. El acceso al visor
-    # pide además los últimos 4 dígitos del DPI del paciente.
+    # correo al paciente y, por separado, al médico tratante si corresponde).
+    # Se genera la primera vez que se envían los resultados; queda null hasta
+    # entonces. No caduca. El acceso al visor pide además el DPI completo
+    # (del paciente o, en /visor/medico/, del médico tratante).
     token_publico = models.UUIDField(null=True, blank=True, unique=True, editable=False)
 
     def asegurar_token_publico(self):

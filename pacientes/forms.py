@@ -598,6 +598,83 @@ class EditarContactoPacienteForm(forms.Form):
         return correo
 
 
+class MedicoTratanteForm(forms.Form):
+    """Alta/edición del catálogo de médicos tratantes (panel "Médicos
+    tratantes", solo admin). DPI y correo son obligatorios cuando el tipo es
+    privado o ambos: son lo que permite avisarle por correo y dejarlo entrar
+    al visor del estudio con su DPI (ver MedicoTratante.recibe_estudios_privados
+    y enviar_estudio_medico_tratante en correos.py)."""
+
+    nombre = forms.CharField(label='Nombre', max_length=150)
+    dpi = forms.CharField(
+        label='DPI',
+        max_length=13,
+        required=False,
+        widget=forms.TextInput(attrs={
+            'maxlength': 13,
+            'inputmode': 'numeric',
+            'pattern': r'\d{13}',
+            'title': 'El DPI debe tener exactamente 13 dígitos.',
+        }),
+    )
+    correo = forms.EmailField(label='Correo electrónico', required=False)
+    tipo = forms.ChoiceField(
+        label='Tipo', choices=MedicoTratante.TIPO_CHOICES, required=False,
+    )
+
+    def __init__(self, *args, medico_actual=None, **kwargs):
+        self.medico_actual = medico_actual
+        super().__init__(*args, **kwargs)
+
+    def clean_nombre(self):
+        nombre = self.cleaned_data['nombre'].strip()
+        if not nombre:
+            raise forms.ValidationError('Escriba el nombre del médico.')
+        duplicado = MedicoTratante.objects.filter(nombre__iexact=nombre)
+        if self.medico_actual:
+            duplicado = duplicado.exclude(id=self.medico_actual.id)
+        if duplicado.exists():
+            raise forms.ValidationError('Ya existe un médico tratante con ese nombre.')
+        return nombre
+
+    def clean_dpi(self):
+        dpi = (self.cleaned_data.get('dpi') or '').strip()
+        if not dpi:
+            return ''
+        if not dpi.isdigit() or len(dpi) != 13:
+            raise forms.ValidationError('El DPI debe tener exactamente 13 dígitos.')
+        duplicado = MedicoTratante.objects.filter(dpi=dpi)
+        if self.medico_actual:
+            duplicado = duplicado.exclude(id=self.medico_actual.id)
+        if duplicado.exists():
+            raise forms.ValidationError('Ya existe un médico tratante con ese DPI.')
+        return dpi
+
+    def clean_correo(self):
+        correo = (self.cleaned_data.get('correo') or '').strip().lower()
+        if correo:
+            validar_dominio_correo(correo)
+            validar_correo_existente(correo)
+        return correo
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get('tipo') in MedicoTratante.TIPOS_QUE_RECIBEN_ESTUDIO:
+            if not cleaned.get('dpi'):
+                self.add_error(
+                    'dpi',
+                    'El DPI es obligatorio para un médico privado o ambos: es la llave '
+                    'con la que va a entrar a revisar el estudio.',
+                )
+            if not cleaned.get('correo'):
+                self.add_error(
+                    'correo',
+                    'El correo es obligatorio para un médico privado o ambos: ahí se le '
+                    'avisa cuando el estudio del paciente está listo.',
+                )
+        return cleaned
+
+
 class ProcesarTicketForm(forms.Form):
     """Convierte un ticket en espera directamente en una orden de trabajo
     para el técnico (se salta la revisión del radiólogo: el paciente ya
