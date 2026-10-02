@@ -120,8 +120,13 @@
                         <ul style="margin:0 0 0.75rem 0;padding-left:1.1rem;font-size:0.85rem;">
                             {% for extra in estudios_extra %}
                                 <li>
-                                    {{ extra.tipo_estudio.nombre }} — Q{{ extra.precio|floatformat:2 }}
-                                    {% if extra.procesar_ahora %}<span class="badge badge-info" style="margin-left:0.3rem;">Procesando</span>{% endif %}
+                                    {{ extra.tipo_estudio.nombre }}
+                                    {% if extra.procesar_ahora %}
+                                        — Q{{ extra.precio|floatformat:2 }}
+                                        <span class="badge badge-info" style="margin-left:0.3rem;">Procesando</span>
+                                    {% else %}
+                                        <span class="badge" style="margin-left:0.3rem;">Sugerencia, no se cobra</span>
+                                    {% endif %}
                                     {% if extra.notas %}<span class="text-muted">({{ extra.notas }})</span>{% endif %}
                                 </li>
                             {% endfor %}
@@ -133,16 +138,17 @@
                     {% if form_estudio_extra %}
                         <label class="check-estudio-extra" style="display:flex;align-items:center;gap:0.5rem;font-weight:500;cursor:pointer;">
                             <input type="checkbox" id="chk-mostrar-estudio-extra" style="width:auto;">
-                            ¿Se realizó un estudio extra?
+                            Sugerir estudio extra
                         </label>
                         <div id="bloque-estudio-extra" style="display:none;margin-top:0.6rem;">
-                            <label for="{{ form_estudio_extra.tipo_estudio.id_for_label }}">Estudio extra realizado</label>
+                            <label for="{{ form_estudio_extra.tipo_estudio.id_for_label }}">Estudio a sugerir</label>
                             {{ form_estudio_extra.tipo_estudio }}
                             {{ form_estudio_extra.tipo_estudio.errors }}
                             {{ form_estudio_extra.notas }}
                             {{ form_estudio_extra.notas.errors }}
                             <p class="ayuda">
-                                Es solo un aviso: se agrega y se le notifica a recepción para el cobro al guardar el informe.
+                                Sin marcar "Procesar ahora" queda solo como sugerencia: no se cobra, y el
+                                paciente y el médico tratante la ven al entrar a su visor de resultados.
                             </p>
 
                             <label style="display:flex;align-items:flex-start;gap:0.5rem;margin-top:0.6rem;cursor:pointer;">

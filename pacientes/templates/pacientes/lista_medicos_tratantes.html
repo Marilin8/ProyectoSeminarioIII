@@ -79,6 +79,13 @@
 
                     <td style="padding:14px; text-align:right;">
 
+                        {% if medico.tipo != 'igss' %}
+                            <a href="{% url 'reporte_comision_medico_tratante' medico.id %}"
+                               style="margin-right:10px; text-decoration:none;">
+                                Comisiones
+                            </a>
+                        {% endif %}
+
                         <a href="{% url 'editar_medico_tratante' medico.id %}"
                            style="margin-right:10px; text-decoration:none;">
                             Editar

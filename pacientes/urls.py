@@ -33,6 +33,14 @@ urlpatterns = [
     path('medicos-tratantes/<int:medico_id>/editar/', views.editar_medico_tratante, name='editar_medico_tratante'),
     path('medicos-tratantes/<int:medico_id>/eliminar/', views.eliminar_medico_tratante, name='eliminar_medico_tratante'),
     path('medicos-tratantes/<int:medico_id>/activar/', views.activar_medico_tratante, name='activar_medico_tratante'),
+    path(
+        'medicos-tratantes/<int:medico_id>/comision/',
+        views.reporte_comision_medico_tratante, name='reporte_comision_medico_tratante',
+    ),
+    path(
+        'medicos-tratantes/<int:medico_id>/comision/pdf/',
+        views.comision_medico_tratante_pdf, name='comision_medico_tratante_pdf',
+    ),
 
     # Visor web público del estudio (link estilo PACS que se manda por correo:
     # /visor/?studyId=<id>&tab=images&ac=<token base64>).
@@ -40,6 +48,9 @@ urlpatterns = [
     # Mismo link estilo PACS pero para el médico tratante (correo aparte,
     # DPI del médico en vez del paciente): /visor/medico/?studyId=...&ac=...
     path('visor/medico/', views.visor_estudio_medico_tratante, name='visor_estudio_medico_tratante'),
+    # Panel de historial clínico dentro del visor: abre otro estudio ya
+    # procesado del mismo paciente sin necesitar su propio link con token.
+    path('visor/historial/<int:orden_id>/', views.visor_estudio_historial, name='visor_estudio_historial'),
     path(
         'visor/<int:orden_id>/imagen/<int:imagen_id>/',
         views.visor_imagen,

@@ -1,4 +1,5 @@
 import re
+from decimal import Decimal
 
 from django import forms
 from django.utils import timezone
@@ -680,6 +681,36 @@ class MedicoTratanteForm(forms.Form):
         return cleaned
 
 
+class PagoComisionMedicoTratanteForm(forms.Form):
+    """Pago de la comisión por referencia de un médico tratante: el monto
+    lo escribe el administrador a mano (no hay % fijo guardado, ver
+    PagoComisionMedicoTratante) y se adjunta el comprobante del pago."""
+
+    EXTENSIONES_VALIDAS = ('.jpg', '.jpeg', '.png', '.webp', '.pdf')
+    TAMANO_MAXIMO = 10 * 1024 * 1024  # 10 MB
+
+    monto = forms.DecimalField(
+        label='Monto a pagar', max_digits=10, decimal_places=2, min_value=Decimal('0.01'),
+    )
+    comprobante = forms.FileField(label='Comprobante (boleta o transferencia)')
+    numero_boleta = forms.CharField(
+        label='Número de boleta / referencia', max_length=60, required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'El que aparece en la boleta'}),
+    )
+    notas = forms.CharField(
+        label='Notas (opcional)', max_length=255, required=False,
+        widget=forms.TextInput(attrs={'placeholder': 'Ej.: transferencia Banco Industrial'}),
+    )
+
+    def clean_comprobante(self):
+        archivo = self.cleaned_data['comprobante']
+        if not archivo.name.lower().endswith(self.EXTENSIONES_VALIDAS):
+            raise forms.ValidationError('Subí una foto (JPG, PNG o WEBP) o un PDF.')
+        if archivo.size > self.TAMANO_MAXIMO:
+            raise forms.ValidationError('El archivo no debe pesar más de 10 MB.')
+        return archivo
+
+
 class ProcesarTicketForm(forms.Form):
     """Convierte un ticket en espera directamente en una orden de trabajo
     para el técnico (se salta la revisión del radiólogo: el paciente ya
@@ -868,14 +899,17 @@ class CrearOrdenPagoForm(forms.Form):
 
 
 class AgregarEstudioExtraForm(forms.Form):
-    """El radiólogo avisa que le realizó al paciente un estudio extra al
-    agendado. Caja lo cobra directamente o lo agrupa según el convenio."""
+    """El radiólogo sugiere (o, si marca "procesar ahora", directamente
+    agrega) un estudio extra al agendado. Sin "procesar ahora" es solo una
+    sugerencia -- no se cobra, y el paciente y el médico tratante la ven en
+    su visor de resultados. Con "procesar ahora" sí se cobra de una vez y
+    caja lo cobra directamente o lo agrupa según el convenio."""
 
     # Opcional: en adjuntar_informe casi nunca hay estudio extra, y un
     # <select required> impide guardar el informe sin elegir uno.
     tipo_estudio = forms.ModelChoiceField(
         queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
-        label='Estudio extra realizado',
+        label='Estudio a sugerir',
         required=False,
     )
     notas = forms.CharField(
@@ -886,8 +920,9 @@ class AgregarEstudioExtraForm(forms.Form):
         label='Procesar ahora',
         required=False,
         help_text=(
-            'El técnico va a poder subir las imágenes de este estudio ya mismo, '
-            'sin esperar a que subas el informe (igual que un combo).'
+            'Se cobra de una vez y el técnico va a poder subir las imágenes de este '
+            'estudio ya mismo, sin esperar a que subas el informe (igual que un combo). '
+            'Si lo dejás sin marcar, queda solo como sugerencia: no se cobra.'
         ),
     )
 

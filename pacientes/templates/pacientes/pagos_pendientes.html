@@ -194,10 +194,10 @@
                         <div class="meta">
                             Creado {{ cobro.creado_en|date:'d/m/Y H:i' }} · Q{{ cobro.cita.precio|floatformat:2 }}
                         </div>
-                        {% if cobro.cita.estudios_extra.all %}
+                        {% if cobro.cita.estudios_extra_cobrados %}
                             <div class="meta" style="color:var(--primary-dark);">
                                 Incluye extra:
-                                {% for extra in cobro.cita.estudios_extra.all %}
+                                {% for extra in cobro.cita.estudios_extra_cobrados %}
                                     {{ extra.tipo_estudio.nombre }} (Q{{ extra.precio|floatformat:2 }}){% if not forloop.last %}, {% endif %}
                                 {% endfor %}
                             </div>

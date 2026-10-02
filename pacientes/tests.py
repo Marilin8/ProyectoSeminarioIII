@@ -29,6 +29,8 @@ from pacientes.models import (
     OrdenPago,
     OrdenTrabajo,
     Paciente,
+    PagoComisionMedicoTratante,
+    PagoComisionMedicoTratanteLinea,
     PrecioEstudio,
     ReporteDiario,
     Ticket,
@@ -229,7 +231,11 @@ class RegenerarTicketTrasReagendarTests(TestCase):
         self.recepcion = crear_usuario('recep_regen_ticket', rol=Usuario.ROL_RECEPCIONISTA)
         self.client.force_login(self.recepcion)
         self.estudio = TipoEstudio.objects.create(nombre='RX regenerar ticket')
-        self.fecha = timezone.localdate()
+        # Fecha en el futuro: AutoMarcarAusenteMiddleware pasaría a AUSENTE
+        # cualquier cita AGENDADA de hoy si ya son las 18:00 (ver
+        # Cita.marcar_ausentes_vencidas), lo que rompería este test según la
+        # hora a la que se corra.
+        self.fecha = timezone.localdate() + datetime.timedelta(days=1)
         self.cita = crear_cita(
             self.recepcion, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
             estado=Cita.ESTADO_AGENDADA, fecha=self.fecha, hora=datetime.time(7, 30),
@@ -386,6 +392,97 @@ class VisorEstudioTests(TestCase):
         respuesta = self.client.post(self.url, {'dpi_ultimos': '1122334455667'})
         self.assertContains(respuesta, 'Demasiados intentos')
         self.assertNotContains(respuesta, self.estudio.nombre)
+
+    def test_muestra_la_sugerencia_de_estudio_extra_sin_procesar_ahora(self):
+        extra = TipoEstudio.objects.create(nombre='RX columna sugerida')
+        EstudioExtra.objects.create(
+            cita=self.cita, tipo_estudio=extra, agregado_por=self.recepcionista, procesar_ahora=False,
+        )
+        self.client.post(self.url, {'dpi_ultimos': '1122334455667'})
+
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, 'sugiere realizar')
+        self.assertContains(respuesta, 'RX columna sugerida')
+
+    def test_no_muestra_sugerencia_para_un_extra_ya_procesado(self):
+        extra = TipoEstudio.objects.create(nombre='RX ya procesada')
+        EstudioExtra.objects.create(
+            cita=self.cita, tipo_estudio=extra, agregado_por=self.recepcionista, procesar_ahora=True,
+        )
+        self.client.post(self.url, {'dpi_ultimos': '1122334455667'})
+
+        respuesta = self.client.get(self.url)
+
+        self.assertNotContains(respuesta, 'sugiere realizar')
+
+    def test_muestra_el_historial_clinico_de_otros_estudios_procesados(self):
+        estudio_viejo = TipoEstudio.objects.create(nombre='Ecografía abdominal vieja')
+        cita_vieja = crear_cita(
+            self.recepcionista, paciente=self.paciente, tipo_estudio=estudio_viejo,
+            estado=Cita.ESTADO_PROCESADA, fecha=timezone.localdate() - datetime.timedelta(days=200),
+        )
+        # Nunca se envió por correo -- igual debe aparecer en el historial.
+        orden_vieja = OrdenTrabajo.objects.create(cita=cita_vieja, motivo='x', creada_por=self.recepcionista)
+
+        self.client.post(self.url, {'dpi_ultimos': '1122334455667'})
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, 'Historial clínico')
+        self.assertContains(respuesta, 'Ecografía abdominal vieja')
+        self.assertContains(respuesta, reverse('visor_estudio_historial', args=[orden_vieja.id]))
+        # El estudio actual no se repite a sí mismo en la lista de "otros".
+        self.assertNotContains(
+            respuesta,
+            f'href="{reverse("visor_estudio_historial", args=[self.orden.id])}"',
+        )
+
+    def test_no_muestra_historial_de_otro_paciente(self):
+        otro_paciente = crear_paciente(dpi='9988776655443')
+        otro_estudio = TipoEstudio.objects.create(nombre='RX de otro paciente')
+        otra_cita = crear_cita(
+            self.recepcionista, paciente=otro_paciente, tipo_estudio=otro_estudio,
+            estado=Cita.ESTADO_PROCESADA,
+        )
+        OrdenTrabajo.objects.create(cita=otra_cita, motivo='x', creada_por=self.recepcionista)
+
+        self.client.post(self.url, {'dpi_ultimos': '1122334455667'})
+        respuesta = self.client.get(self.url)
+
+        self.assertNotContains(respuesta, 'RX de otro paciente')
+
+    def test_puede_abrir_un_estudio_del_historial_sin_haber_sido_enviado(self):
+        estudio_viejo = TipoEstudio.objects.create(nombre='TAC viejo historial')
+        cita_vieja = crear_cita(
+            self.recepcionista, paciente=self.paciente, tipo_estudio=estudio_viejo,
+            estado=Cita.ESTADO_PROCESADA, fecha=timezone.localdate() - datetime.timedelta(days=5),
+        )
+        orden_vieja = OrdenTrabajo.objects.create(cita=cita_vieja, motivo='x', creada_por=self.recepcionista)
+        InformeEstudio.objects.create(orden=orden_vieja, tipo_estudio=estudio_viejo, texto='Sin hallazgos previos.')
+        imagen_vieja = ImagenEstudio.objects.create(
+            orden=orden_vieja, tipo_estudio=estudio_viejo, subida_por=self.tecnico, seleccionada=True,
+            archivo=SimpleUploadedFile('vieja.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+        )
+        self.client.post(self.url, {'dpi_ultimos': '1122334455667'})
+
+        respuesta = self.client.get(reverse('visor_estudio_historial', args=[orden_vieja.id]))
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, 'TAC viejo historial')
+        url_img_vieja = reverse('visor_imagen', args=[orden_vieja.id, imagen_vieja.id])
+        self.assertEqual(self.client.get(url_img_vieja).status_code, 200)
+
+    def test_historial_sin_sesion_autorizada_da_404(self):
+        estudio_viejo = TipoEstudio.objects.create(nombre='RX sin autorizar')
+        cita_vieja = crear_cita(
+            self.recepcionista, paciente=self.paciente, tipo_estudio=estudio_viejo,
+            estado=Cita.ESTADO_PROCESADA,
+        )
+        orden_vieja = OrdenTrabajo.objects.create(cita=cita_vieja, motivo='x', creada_por=self.recepcionista)
+
+        respuesta = self.client.get(reverse('visor_estudio_historial', args=[orden_vieja.id]))
+
+        self.assertEqual(respuesta.status_code, 404)
 
 
 class PacienteModelTests(TestCase):
@@ -3202,28 +3299,39 @@ class EstudioExtraTests(TestCase):
         )
         OrdenTrabajo.objects.create(cita=self.cita, motivo='x', creada_por=self.recepcion, validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO)
 
-    def _agregar(self, notas=''):
+    def _agregar(self, notas='', procesar_ahora=False):
         self.client.force_login(self.radiologo)
-        return self.client.post(
-            reverse('agregar_estudio_extra', args=[self.cita.id]),
-            {'tipo_estudio': self.estudio_extra.id, 'notas': notas},
-        )
+        datos = {'tipo_estudio': self.estudio_extra.id, 'notas': notas}
+        if procesar_ahora:
+            datos['procesar_ahora'] = 'on'
+        return self.client.post(reverse('agregar_estudio_extra', args=[self.cita.id]), datos)
 
-    def test_agregar_estudio_extra_suma_al_precio_de_la_cita(self):
+    def test_sin_procesar_ahora_queda_como_sugerencia_y_no_cobra(self):
+        """Por sí solo (sin "procesar ahora") es solo una sugerencia: no
+        suma al precio ni reabre el cobro -- el paciente y el médico
+        tratante la ven en su visor de resultados, no se les cobra."""
         self.assertEqual(self.cita.precio, Decimal('150'))
 
         self._agregar()
 
         self.cita.refresh_from_db()
         self.assertEqual(self.cita.precio_base, Decimal('150'))
-        self.assertEqual(self.cita.precio, Decimal('400'))
+        self.assertEqual(self.cita.precio, Decimal('150'))
         extra = EstudioExtra.objects.get(cita=self.cita)
         self.assertEqual(extra.tipo_estudio, self.estudio_extra)
         self.assertEqual(extra.agregado_por, self.radiologo)
         self.assertEqual(extra.precio, Decimal('250'))
+        self.assertFalse(extra.procesar_ahora)
 
-    def test_agregar_estudio_extra_notifica_a_recepcion(self):
-        self._agregar(notas='Se detectó lesión adicional')
+    def test_procesar_ahora_suma_al_precio_de_la_cita(self):
+        self._agregar(procesar_ahora=True)
+
+        self.cita.refresh_from_db()
+        self.assertEqual(self.cita.precio_base, Decimal('150'))
+        self.assertEqual(self.cita.precio, Decimal('400'))
+
+    def test_procesar_ahora_notifica_a_recepcion(self):
+        self._agregar(notas='Se detectó lesión adicional', procesar_ahora=True)
 
         notificacion = Notificacion.objects.get(
             destinatario=self.recepcion, tipo=Notificacion.TIPO_ESTUDIO_EXTRA_AGREGADO,
@@ -3231,6 +3339,15 @@ class EstudioExtraTests(TestCase):
         self.assertIn('RX Columna extra', notificacion.mensaje)
         self.assertIn('250.00', notificacion.mensaje)
         self.assertEqual(notificacion.cita, self.cita)
+
+    def test_sin_procesar_ahora_no_notifica_a_recepcion(self):
+        self._agregar(notas='Se detectó lesión adicional')
+
+        self.assertFalse(
+            Notificacion.objects.filter(
+                destinatario=self.recepcion, tipo=Notificacion.TIPO_ESTUDIO_EXTRA_AGREGADO,
+            ).exists()
+        )
 
     def test_agregar_estudio_extra_tambien_aplica_a_coex(self):
         cita_coex = crear_cita(
@@ -3264,7 +3381,7 @@ class EstudioExtraTests(TestCase):
         self.assertFalse(EstudioExtra.objects.filter(cita=self.cita).exists())
 
     def test_boleta_pago_pdf_incluye_el_total_con_estudios_extra(self):
-        self._agregar()
+        self._agregar(procesar_ahora=True)
         cobro, _ = Cobro.objects.get_or_create(cita=self.cita)
         cobro.marcar_pagado(self.recepcion)
         self.client.force_login(self.recepcion)
@@ -3296,7 +3413,8 @@ class EstudioExtraTests(TestCase):
         extra = EstudioExtra.objects.get(cita=self.cita)
         self.assertEqual(extra.tipo_estudio, self.estudio_extra)
         self.assertEqual(extra.notas, 'agregado junto con el informe')
-        self.assertTrue(
+        # Sin "procesar ahora" queda como sugerencia: no avisa a recepción.
+        self.assertFalse(
             Notificacion.objects.filter(
                 destinatario=self.recepcion, tipo=Notificacion.TIPO_ESTUDIO_EXTRA_AGREGADO,
             ).exists()
@@ -4546,6 +4664,47 @@ class VisorEstudioMedicoTratanteTests(TestCase):
         respuesta = self.client.post(self.url, {'dpi_ultimos': self.medico.dpi})
         self.assertContains(respuesta, 'Demasiados intentos')
 
+    def test_tambien_ve_la_sugerencia_de_estudio_extra(self):
+        extra = TipoEstudio.objects.create(nombre='RX sugerida al medico tratante')
+        EstudioExtra.objects.create(
+            cita=self.cita, tipo_estudio=extra, agregado_por=self.recepcion, procesar_ahora=False,
+        )
+
+        self.client.post(self.url, {'dpi_ultimos': self.medico.dpi}, follow=True)
+        respuesta = self.client.get(reverse('visor_estudio'), {
+            'studyId': self.orden.id, 'ac': self.url.split('ac=')[1],
+        })
+
+        self.assertContains(respuesta, 'sugiere realizar')
+        self.assertContains(respuesta, 'RX sugerida al medico tratante')
+
+    def test_ve_el_historial_aunque_no_fuera_el_medico_tratante_de_ese_otro_estudio(self):
+        """El médico tratante accede a TODO el historial clínico del
+        paciente, no solo a los estudios donde él quedó como médico
+        tratante (ver _historial_clinico)."""
+        otro_estudio = TipoEstudio.objects.create(nombre='Estudio sin este médico tratante')
+        otra_cita = crear_cita(
+            self.recepcion, paciente=self.paciente, tipo_estudio=otro_estudio,
+            convenio=Cita.CONVENIO_PRIVADO, estado=Cita.ESTADO_PROCESADA, medico_tratante=None,
+        )
+        otra_orden = OrdenTrabajo.objects.create(cita=otra_cita, motivo='x', creada_por=self.recepcion)
+        InformeEstudio.objects.create(orden=otra_orden, tipo_estudio=otro_estudio, texto='Sin hallazgos.')
+        imagen = ImagenEstudio.objects.create(
+            orden=otra_orden, tipo_estudio=otro_estudio, subida_por=self.recepcion, seleccionada=True,
+            archivo=SimpleUploadedFile('otra.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+        )
+
+        self.client.post(self.url, {'dpi_ultimos': self.medico.dpi}, follow=True)
+        respuesta = self.client.get(reverse('visor_estudio'), {
+            'studyId': self.orden.id, 'ac': self.url.split('ac=')[1],
+        })
+        self.assertContains(respuesta, 'Estudio sin este médico tratante')
+
+        abierto = self.client.get(reverse('visor_estudio_historial', args=[otra_orden.id]))
+        self.assertEqual(abierto.status_code, 200)
+        url_img = reverse('visor_imagen', args=[otra_orden.id, imagen.id])
+        self.assertEqual(self.client.get(url_img).status_code, 200)
+
 
 class MedicoTratanteDisponiblesParaTests(TestCase):
     """disponibles_para(lado) filtra el catálogo de médicos tratantes según
@@ -4630,3 +4789,181 @@ class MedicoTratanteEnPrivadoTests(TestCase):
         self.assertNotIn(
             MedicoTratante.objects.get(nombre='Dr. Solo IGSS Agenda'), opciones,
         )
+
+
+class ComisionMedicoTratanteTests(TestCase):
+    """Reporte de comisión por referencia de médico tratante: solo cuentan
+    citas Privado ya procesadas; al registrar el pago (con comprobante) esas
+    citas quedan cubiertas para siempre -- el próximo reporte arranca donde
+    quedó pendiente, sin pagarlas dos veces."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_comision_medtrat', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.recepcion = crear_usuario('recep_comision_medtrat', rol=Usuario.ROL_RECEPCIONISTA)
+        self.medico = MedicoTratante.objects.create(
+            nombre='Dr. Comisiones', dpi='5005005005001', correo='comisiones@example.com',
+            tipo=MedicoTratante.TIPO_PRIVADO,
+        )
+        self.estudio = TipoEstudio.objects.create(nombre='RX comisión médico tratante')
+        PrecioEstudio.objects.create(
+            tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO, horario_habil=True, precio=Decimal('300'),
+        )
+        self.client.force_login(self.admin)
+
+    def _crear_cita_procesada(self, dpi, fecha, convenio=Cita.CONVENIO_PRIVADO, medico_tratante='default'):
+        if medico_tratante == 'default':
+            medico_tratante = self.medico
+        paciente = crear_paciente(dpi=dpi)
+        return crear_cita(
+            self.recepcion, paciente=paciente, tipo_estudio=self.estudio, convenio=convenio,
+            estado=Cita.ESTADO_PROCESADA, fecha=fecha, medico_tratante=medico_tratante,
+        )
+
+    def test_solo_cuenta_privado_procesada_del_medico(self):
+        hoy = timezone.localdate()
+        self._crear_cita_procesada('6006006006001', hoy)
+        self._crear_cita_procesada('6006006006002', hoy, convenio=Cita.CONVENIO_COEX)
+        self._crear_cita_procesada('6006006006003', hoy, medico_tratante=None)
+        otro_medico = MedicoTratante.objects.create(nombre='Dr. Otro', tipo=MedicoTratante.TIPO_PRIVADO)
+        self._crear_cita_procesada('6006006006004', hoy, medico_tratante=otro_medico)
+        agendada = self._crear_cita_procesada('6006006006005', hoy)
+        agendada.estado = Cita.ESTADO_AGENDADA
+        agendada.save(update_fields=['estado'])
+
+        respuesta = self.client.get(reverse('reporte_comision_medico_tratante', args=[self.medico.id]))
+
+        self.assertEqual(respuesta.context['datos']['cantidad'], 1)
+        self.assertEqual(respuesta.context['datos']['total'], Decimal('300.00'))
+
+    def test_no_cuenta_estudios_de_emergencia_igss(self):
+        """Lo que refiere el médico tratante para COEX o Emergencia IGSS no
+        tiene nada que ver con esta comisión: solo cuenta lo de Privado."""
+        hoy = timezone.localdate()
+        self._crear_cita_procesada('6006006006071', hoy, convenio=Cita.CONVENIO_EMERGENCIA_IGSS)
+
+        respuesta = self.client.get(reverse('reporte_comision_medico_tratante', args=[self.medico.id]))
+
+        self.assertEqual(respuesta.context['datos']['cantidad'], 0)
+        self.assertEqual(respuesta.context['datos']['total'], Decimal('0.00'))
+
+    def test_medico_solo_igss_no_tiene_reporte(self):
+        """Un médico tratante clasificado solo IGSS nunca puede quedar
+        asignado a una cita Privado (ver MedicoTratante.disponibles_para),
+        así que esta comisión no le aplica: el reporte avisa y redirige en
+        vez de mostrar un reporte vacío confuso."""
+        medico_igss = MedicoTratante.objects.create(nombre='Dr. Solo IGSS Comisión', tipo=MedicoTratante.TIPO_IGSS)
+
+        respuesta = self.client.get(
+            reverse('reporte_comision_medico_tratante', args=[medico_igss.id]), follow=True,
+        )
+
+        self.assertRedirects(respuesta, reverse('lista_medicos_tratantes'))
+        mensajes = [str(m) for m in respuesta.context['messages']]
+        self.assertTrue(any('IGSS' in m for m in mensajes))
+
+    def test_no_ofrece_el_link_de_comisiones_para_un_medico_solo_igss(self):
+        medico_igss = MedicoTratante.objects.create(nombre='Dr. IGSS En Lista', tipo=MedicoTratante.TIPO_IGSS)
+
+        respuesta = self.client.get(reverse('lista_medicos_tratantes'))
+
+        self.assertContains(
+            respuesta, reverse('reporte_comision_medico_tratante', args=[self.medico.id]),
+        )
+        self.assertNotContains(
+            respuesta, reverse('reporte_comision_medico_tratante', args=[medico_igss.id]),
+        )
+
+    def test_por_defecto_arranca_en_la_cita_pendiente_mas_antigua(self):
+        hace_dos_meses = timezone.localdate() - datetime.timedelta(days=60)
+        hace_un_mes = timezone.localdate() - datetime.timedelta(days=30)
+        self._crear_cita_procesada('6006006006011', hace_dos_meses)
+        self._crear_cita_procesada('6006006006012', hace_un_mes)
+
+        respuesta = self.client.get(reverse('reporte_comision_medico_tratante', args=[self.medico.id]))
+
+        self.assertEqual(respuesta.context['periodo']['desde'], hace_dos_meses)
+        self.assertEqual(respuesta.context['datos']['cantidad'], 2)
+
+    def test_registrar_pago_cubre_las_citas_y_no_vuelven_a_aparecer(self):
+        hoy = timezone.localdate()
+        cita1 = self._crear_cita_procesada('6006006006021', hoy)
+        cita2 = self._crear_cita_procesada('6006006006022', hoy)
+        comprobante = SimpleUploadedFile('comprobante.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg')
+
+        respuesta = self.client.post(reverse('reporte_comision_medico_tratante', args=[self.medico.id]), {
+            'monto': '150.00', 'comprobante': comprobante, 'numero_boleta': 'B-001', 'notas': '10% acordado',
+        })
+
+        self.assertRedirects(
+            respuesta, reverse('reporte_comision_medico_tratante', args=[self.medico.id]),
+            fetch_redirect_response=False,
+        )
+        pago = PagoComisionMedicoTratante.objects.get(medico_tratante=self.medico)
+        self.assertEqual(pago.monto, Decimal('150.00'))
+        self.assertEqual(pago.registrado_por, self.admin)
+        self.assertEqual(
+            set(PagoComisionMedicoTratanteLinea.objects.filter(pago=pago).values_list('cita_id', flat=True)),
+            {cita1.id, cita2.id},
+        )
+
+        respuesta_siguiente = self.client.get(reverse('reporte_comision_medico_tratante', args=[self.medico.id]))
+        self.assertEqual(respuesta_siguiente.context['datos']['cantidad'], 0)
+
+    def test_no_permite_pagar_una_cita_dos_veces(self):
+        hoy = timezone.localdate()
+        cita1 = self._crear_cita_procesada('6006006006031', hoy)
+        comprobante = SimpleUploadedFile('c.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg')
+        self.client.post(reverse('reporte_comision_medico_tratante', args=[self.medico.id]), {
+            'monto': '50.00', 'comprobante': comprobante,
+        })
+
+        # Una segunda cita se suma al período, pero cita1 ya está cubierta
+        # por el primer pago: el segundo pago (mismo rango "pendiente") solo
+        # debe agarrar la nueva, nunca volver a incluir cita1.
+        nueva_cita = self._crear_cita_procesada('6006006006032', hoy)
+        comprobante2 = SimpleUploadedFile('c2.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg')
+        self.client.post(reverse('reporte_comision_medico_tratante', args=[self.medico.id]), {
+            'monto': '60.00', 'comprobante': comprobante2,
+        })
+
+        self.assertEqual(PagoComisionMedicoTratante.objects.filter(medico_tratante=self.medico).count(), 2)
+        self.assertEqual(PagoComisionMedicoTratanteLinea.objects.filter(cita=cita1).count(), 1)
+        self.assertEqual(PagoComisionMedicoTratanteLinea.objects.filter(cita=nueva_cita).count(), 1)
+
+    def test_sin_citas_pendientes_no_deja_registrar_pago(self):
+        respuesta = self.client.post(reverse('reporte_comision_medico_tratante', args=[self.medico.id]), {
+            'monto': '50.00',
+            'comprobante': SimpleUploadedFile('c.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+        })
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertFalse(PagoComisionMedicoTratante.objects.filter(medico_tratante=self.medico).exists())
+
+    def test_solo_admin_puede_ver_el_reporte(self):
+        self.client.force_login(self.recepcion)
+
+        respuesta = self.client.get(reverse('reporte_comision_medico_tratante', args=[self.medico.id]))
+
+        self.assertNotEqual(respuesta.status_code, 200)
+
+    def test_pdf_se_genera_correctamente(self):
+        self._crear_cita_procesada('6006006006041', timezone.localdate())
+
+        respuesta = self.client.get(reverse('comision_medico_tratante_pdf', args=[self.medico.id]))
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTrue(respuesta.content.startswith(b'%PDF'))
+
+    def test_rango_libre_respeta_las_fechas_elegidas(self):
+        fecha_vieja = timezone.localdate() - datetime.timedelta(days=100)
+        fecha_reciente = timezone.localdate()
+        self._crear_cita_procesada('6006006006051', fecha_vieja)
+        self._crear_cita_procesada('6006006006052', fecha_reciente)
+
+        respuesta = self.client.get(reverse('reporte_comision_medico_tratante', args=[self.medico.id]), {
+            'modo': 'rango',
+            'desde': fecha_reciente.isoformat(),
+            'hasta': fecha_reciente.isoformat(),
+        })
+
+        self.assertEqual(respuesta.context['datos']['cantidad'], 1)

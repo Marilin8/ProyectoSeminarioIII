@@ -241,6 +241,7 @@ class Bitacora(models.Model):
     ACCION_PROGRAMAR_CAMBIO_PRECIO = 'programar_cambio_precio'
     ACCION_CANCELAR_CAMBIO_PRECIO = 'cancelar_cambio_precio'
     ACCION_REAGENDAR_DESDE_TURNO = 'reagendar_desde_turno'
+    ACCION_PAGAR_COMISION_MEDICO_TRATANTE = 'pagar_comision_medico_tratante'
 
     ACCION_CHOICES = [
         (ACCION_LOGIN_EXITOSO, 'Inicio de sesión'),
@@ -282,6 +283,7 @@ class Bitacora(models.Model):
         (ACCION_PROGRAMAR_CAMBIO_PRECIO, 'Programó un cambio de estudio (nombre, modalidad, duración o precio)'),
         (ACCION_CANCELAR_CAMBIO_PRECIO, 'Canceló un cambio de estudio programado'),
         (ACCION_REAGENDAR_DESDE_TURNO, 'Envío a reagendar desde la pantalla de turnos'),
+        (ACCION_PAGAR_COMISION_MEDICO_TRATANTE, 'Pago de comisión a un médico tratante'),
     ]
 
     usuario = models.ForeignKey(

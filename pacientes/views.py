@@ -47,6 +47,7 @@ from .forms import (
     IngresarCorreoEnvioForm,
     MedicoTratanteForm,
     NOMBRES_IGNORADOS_EN_CARPETA,
+    PagoComisionMedicoTratanteForm,
     ProcesarTicketForm,
     RegistrarPagoEstudioForm,
     RegistrarTicketForm,
@@ -81,6 +82,8 @@ from .models import (
     DetalleOrdenPago,
     OrdenTrabajo,
     Paciente,
+    PagoComisionMedicoTratante,
+    PagoComisionMedicoTratanteLinea,
     ReporteDiario,
     Ticket,
     TipoEstudio,
@@ -1035,7 +1038,7 @@ def _total_citas_para_orden(citas):
     total = Decimal('0.00')
     for cita in citas:
         total += cita.precio_base
-        for extra in cita.estudios_extra.all():
+        for extra in cita.estudios_extra_cobrados:
             total += extra.precio
     return total
 
@@ -1077,7 +1080,7 @@ def crear_orden_pago(request):
             precio = cita.precio_base
             detalles.append((cita, cita.tipo_estudio, None, precio))
             subtotal += precio
-            for extra in cita.estudios_extra.all():
+            for extra in cita.estudios_extra_cobrados:
                 precio_extra = extra.precio
                 detalles.append((cita, extra.tipo_estudio, extra, precio_extra))
                 subtotal += precio_extra
@@ -1340,7 +1343,9 @@ def boleta_pago_pdf(request, cobro_id):
     # agendado más cualquier estudio extra que haya agregado el radiólogo
     # (ver EstudioExtra), cada uno en su propia fila.
     items_servicio = [(cita.tipo_estudio.nombre, cita.precio_base)]
-    items_servicio += [(e.tipo_estudio.nombre, e.precio) for e in cita.estudios_extra.all()]
+    items_servicio += [
+        (e.tipo_estudio.nombre, e.precio) for e in cita.estudios_extra_cobrados
+    ]
 
     filas_servicio = [['Cantidad', 'Descripción', 'Precio']]
     filas_servicio += [['1', nombre, f'Q{precio:.2f}'] for nombre, precio in items_servicio]
@@ -1890,6 +1895,192 @@ def activar_medico_tratante(request, medico_id):
     medico.save(update_fields=['activo', 'actualizado_en'])
     messages.success(request, f'Médico tratante "{medico.nombre}" activado correctamente.')
     return redirect('lista_medicos_tratantes')
+
+
+def _periodo_comision_medico_tratante(request, medico):
+    """Igual que accounts.periodos.resolver_periodo, pero por default (sin
+    `modo` en el querystring) arranca en la cita pendiente de pago más
+    antigua de `medico` y llega hasta hoy, en vez del mes actual -- así un
+    reporte nuevo automáticamente sigue donde quedó pendiente el anterior.
+    Devuelve (periodo, query) -- query ya es '' para el modo pendiente, no
+    hace falta armar el querystring de resolver_periodo para ese caso."""
+    from accounts.periodos import querystring, resolver_periodo
+
+    from .comisiones_medico_tratante import primera_fecha_pendiente
+
+    if request.GET.get('modo'):
+        periodo = resolver_periodo(request)
+        return periodo, querystring(periodo)
+
+    hoy = timezone.localdate()
+    desde = primera_fecha_pendiente(medico) or hoy
+    periodo = {
+        'modo': 'pendiente', 'desde': desde, 'hasta': hoy,
+        'etiqueta': f'Pendiente de pago (desde {desde:%d/%m/%Y})',
+    }
+    return periodo, ''
+
+
+@login_required
+@user_passes_test(es_administrador)
+def reporte_comision_medico_tratante(request, medico_id):
+    """Reporte de comisión por referencia de un médico tratante: cuántas
+    citas Privado procesadas refirió en el período y cuánto suman, para que
+    el administrador decida cuánto pagarle de comisión y lo registre (con
+    comprobante). Sin elegir un período a mano arranca en la cita pendiente
+    de pago más antigua y llega hasta hoy -- así un reporte de un mes
+    arranca automáticamente donde quedó pendiente el anterior. También se
+    puede elegir semana, quincena, mes o un rango libre (mismo selector que
+    la Planilla de empleados, ver accounts.periodos)."""
+    from .comisiones_medico_tratante import citas_pendientes_de_pago, resumen
+
+    medico = get_object_or_404(MedicoTratante, id=medico_id)
+    if medico.tipo == MedicoTratante.TIPO_IGSS:
+        messages.error(
+            request,
+            f'{medico.nombre} está clasificado como IGSS: esta comisión es solo para referencias '
+            'de Privado, así que nunca va a tener nada que reportar acá.',
+        )
+        return redirect('lista_medicos_tratantes')
+    periodo, query = _periodo_comision_medico_tratante(request, medico)
+
+    datos = resumen(citas_pendientes_de_pago(medico, periodo['desde'], periodo['hasta']))
+
+    if request.method == 'POST':
+        form = PagoComisionMedicoTratanteForm(request.POST, request.FILES)
+        if not datos['citas']:
+            messages.error(request, 'No hay citas pendientes de pago en este período.')
+        elif form.is_valid():
+            cd = form.cleaned_data
+            pago = PagoComisionMedicoTratante.objects.create(
+                medico_tratante=medico, desde=periodo['desde'], hasta=periodo['hasta'],
+                monto=cd['monto'], comprobante=cd['comprobante'],
+                numero_boleta=cd['numero_boleta'], notas=cd['notas'],
+                registrado_por=request.user,
+            )
+            PagoComisionMedicoTratanteLinea.objects.bulk_create([
+                PagoComisionMedicoTratanteLinea(pago=pago, cita=cita, precio=cita.precio)
+                for cita in datos['citas']
+            ])
+            Bitacora.registrar(
+                request=request, usuario=request.user,
+                accion=Bitacora.ACCION_PAGAR_COMISION_MEDICO_TRATANTE,
+                descripcion=(
+                    f'Pagó Q{pago.monto:.2f} de comisión a {medico.nombre} por '
+                    f'{len(datos["citas"])} estudio(s) referido(s) ({pago.periodo_etiqueta}).'
+                ),
+            )
+            messages.success(
+                request,
+                f'Pago de Q{pago.monto:.2f} registrado para {medico.nombre} '
+                f'({len(datos["citas"])} estudio(s) referido(s)).',
+            )
+            destino = reverse('reporte_comision_medico_tratante', args=[medico.id])
+            return redirect(f'{destino}?{query}' if query else destino)
+    else:
+        form = PagoComisionMedicoTratanteForm(initial={'monto': datos['total']})
+
+    pagos_anteriores = (
+        medico.pagos_comision.select_related('registrado_por').prefetch_related('lineas__cita__paciente')
+    )
+
+    return render(request, 'pacientes/reporte_comision_medico_tratante.html', {
+        'medico': medico,
+        'periodo': periodo,
+        'query': query,
+        'datos': datos,
+        'form': form,
+        'pagos_anteriores': pagos_anteriores,
+    })
+
+
+@login_required
+@user_passes_test(es_administrador)
+def comision_medico_tratante_pdf(request, medico_id):
+    """PDF imprimible con el detalle de las citas Privado pendientes de
+    pago de un médico tratante en el período elegido (mismo período que
+    reporte_comision_medico_tratante) -- una fila por estudio referido y el
+    total general, para que el administrador decida cuánto pagarle."""
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    from .comisiones_medico_tratante import citas_pendientes_de_pago, resumen
+
+    medico = get_object_or_404(MedicoTratante, id=medico_id)
+    hoy = timezone.localdate()
+    periodo, _query = _periodo_comision_medico_tratante(request, medico)
+
+    datos = resumen(citas_pendientes_de_pago(medico, periodo['desde'], periodo['hasta']))
+
+    azul = colors.HexColor('#1d3a8a')
+    gris = colors.HexColor('#cbd5e1')
+
+    base = getSampleStyleSheet()['BodyText']
+    base.fontSize = 9
+    base.leading = 13
+    negrita = {'parent': base, 'fontName': 'Helvetica-Bold'}
+    st_titulo = ParagraphStyle('titulo', fontSize=13, alignment=TA_CENTER, **negrita)
+    st_derecha = ParagraphStyle('derecha', parent=base, alignment=TA_RIGHT)
+
+    filas = [['Fecha', 'Paciente', 'Estudio', 'Precio']]
+    for cita in datos['citas']:
+        filas.append([
+            cita.fecha.strftime('%d/%m/%Y'),
+            f'{cita.paciente.nombre} {cita.paciente.apellido}',
+            cita.tipo_estudio.nombre,
+            f'Q{cita.precio:.2f}',
+        ])
+    filas.append(['', '', 'Total:', f'Q{datos["total"]:.2f}'])
+
+    tabla = Table(filas, colWidths=[2.6 * cm, 5.5 * cm, 5.5 * cm, 3.0 * cm], repeatRows=1)
+    tabla.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), azul),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTNAME', (2, -1), (3, -1), 'Helvetica-Bold'),
+        ('ALIGN', (3, 0), (3, -1), 'RIGHT'),
+        ('GRID', (0, 0), (-1, -1), 0.5, gris),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+    ]))
+
+    etiqueta_periodo = periodo.get('etiqueta') or f'Pendiente de pago desde {periodo["desde"]:%d/%m/%Y}'
+    elementos = [
+        Paragraph(
+            f'<b>{CLINICA_NOMBRE}</b><br/>{CLINICA_RUBRO}<br/>'
+            f'Dirección: {CLINICA_DIRECCION}<br/>Tel: {CLINICA_TELEFONO}',
+            base,
+        ),
+        Spacer(1, 14),
+        Paragraph('COMISIÓN POR REFERENCIA DE MÉDICO TRATANTE', st_titulo),
+        Spacer(1, 4),
+        Paragraph(f'Generado el {hoy:%d/%m/%Y}', st_derecha),
+        Spacer(1, 10),
+        Paragraph(
+            f'<b>Médico tratante:</b> {medico.nombre}<br/>'
+            f'<b>Período:</b> {etiqueta_periodo}<br/>'
+            f'<b>Cantidad de estudios referidos:</b> {datos["cantidad"]}',
+            base,
+        ),
+        Spacer(1, 14),
+        tabla,
+    ]
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=letter, topMargin=1.6 * cm, bottomMargin=1.6 * cm,
+        leftMargin=1.8 * cm, rightMargin=1.8 * cm, title=f'Comisión {medico.nombre}',
+    )
+    doc.build(elementos)
+
+    respuesta = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+    respuesta['Content-Disposition'] = f'inline; filename="comision_{medico.id}_{hoy:%Y%m%d}.pdf"'
+    return respuesta
 
 
 ESTUDIOS_POR_PAGINA = 20
@@ -3481,12 +3672,20 @@ def adjuntar_informe(request, cita_id):
 
 
 def _registrar_estudio_extra(request, cita, form):
-    """Crea el EstudioExtra a partir de un form ya validado, notifica a
-    recepción y lo registra en la bitácora. Lo usan tanto
-    agregar_estudio_extra (el endpoint viejo, standalone) como
-    adjuntar_informe (cuando se agrega en el mismo envío que el informe).
-    Si queda marcado "procesar ahora", también avisa al técnico -- a partir
-    de acá entra a Cita.estudios (ver el modelo) y aparece como trabajo
+    """Crea el EstudioExtra a partir de un form ya validado y lo registra en
+    la bitácora. Lo usan tanto agregar_estudio_extra (el endpoint viejo,
+    standalone) como adjuntar_informe (cuando se agrega en el mismo envío
+    que el informe).
+
+    Por sí solo (sin "procesar ahora") es solo una sugerencia: no se cobra
+    ni se reabre el cobro, no se avisa a recepción/técnico, y no entra a
+    Cita.estudios (ver EstudioExtra). El paciente y el médico tratante se
+    enteran de la sugerencia al entrar a su visor de resultados (ver
+    visor_estudio), no por una notificación aparte.
+
+    Si queda marcado "procesar ahora", en cambio, sí se cobra de una vez
+    (reabre el cobro si ya estaba pagado) y se avisa a recepción y al
+    técnico -- a partir de acá entra a Cita.estudios y aparece como trabajo
     pendiente en su pantalla, igual que un estudio de combo."""
     extra = EstudioExtra.objects.create(
         cita=cita,
@@ -3495,33 +3694,33 @@ def _registrar_estudio_extra(request, cita, form):
         notas=form.cleaned_data['notas'],
         procesar_ahora=form.cleaned_data['procesar_ahora'],
     )
-    cobro, _ = Cobro.objects.get_or_create(cita=cita)
-    if cobro.estado == Cobro.ESTADO_PAGADO:
-        cobro.estado = Cobro.ESTADO_PENDIENTE
-        cobro.pagado_en = None
-        cobro.cobrado_por = None
-        cobro.forma_pago = ''
-        cobro.numero_boleta = ''
-        cobro.comprobante_bancario = None
-        cobro.notas = 'Ajuste pendiente por estudio extra agregado.'
-        cobro.save(update_fields=[
-            'estado', 'pagado_en', 'cobrado_por', 'forma_pago', 'numero_boleta',
-            'comprobante_bancario', 'notas',
-        ])
-    mensaje = (
-        f'{request.user.get_full_name() or request.user.username} agregó el estudio extra '
-        f'"{extra.tipo_estudio.nombre}" (Q{extra.precio:.2f}) para {cita.paciente.nombre} '
-        f'{cita.paciente.apellido}.'
-    )
-    recepcionistas = Usuario.objects.filter(rol=Usuario.ROL_RECEPCIONISTA, is_active=True)
-    Notificacion.notificar_a_varios(
-        usuarios=recepcionistas,
-        tipo=Notificacion.TIPO_ESTUDIO_EXTRA_AGREGADO,
-        mensaje=mensaje,
-        cita=cita,
-        url=reverse('pagos_pendientes'),
-    )
     if extra.procesar_ahora:
+        cobro, _ = Cobro.objects.get_or_create(cita=cita)
+        if cobro.estado == Cobro.ESTADO_PAGADO:
+            cobro.estado = Cobro.ESTADO_PENDIENTE
+            cobro.pagado_en = None
+            cobro.cobrado_por = None
+            cobro.forma_pago = ''
+            cobro.numero_boleta = ''
+            cobro.comprobante_bancario = None
+            cobro.notas = 'Ajuste pendiente por estudio extra agregado.'
+            cobro.save(update_fields=[
+                'estado', 'pagado_en', 'cobrado_por', 'forma_pago', 'numero_boleta',
+                'comprobante_bancario', 'notas',
+            ])
+        mensaje = (
+            f'{request.user.get_full_name() or request.user.username} agregó el estudio extra '
+            f'"{extra.tipo_estudio.nombre}" (Q{extra.precio:.2f}) para {cita.paciente.nombre} '
+            f'{cita.paciente.apellido}.'
+        )
+        recepcionistas = Usuario.objects.filter(rol=Usuario.ROL_RECEPCIONISTA, is_active=True)
+        Notificacion.notificar_a_varios(
+            usuarios=recepcionistas,
+            tipo=Notificacion.TIPO_ESTUDIO_EXTRA_AGREGADO,
+            mensaje=mensaje,
+            cita=cita,
+            url=reverse('pagos_pendientes'),
+        )
         _notificar_orden_pendiente(cita)
     Bitacora.registrar(
         request=request,
@@ -3530,7 +3729,7 @@ def _registrar_estudio_extra(request, cita, form):
         descripcion=(
             f'Agregó el estudio extra "{extra.tipo_estudio.nombre}" (Q{extra.precio:.2f}) '
             f'a la cita de {cita.paciente} (cita #{cita.id})'
-            + (', marcado para procesar ahora.' if extra.procesar_ahora else '.')
+            + (', marcado para procesar ahora.' if extra.procesar_ahora else ', como sugerencia.')
         ),
     )
     return extra
@@ -3559,10 +3758,14 @@ def agregar_estudio_extra(request, cita_id):
         return redirect(volver_url)
 
     extra = _registrar_estudio_extra(request, cita, form)
-    messages.success(
-        request,
-        f'Estudio extra "{extra.tipo_estudio.nombre}" agregado y notificado a recepción.',
-    )
+    if extra.procesar_ahora:
+        mensaje = f'Estudio extra "{extra.tipo_estudio.nombre}" agregado y notificado a recepción.'
+    else:
+        mensaje = (
+            f'Estudio extra "{extra.tipo_estudio.nombre}" agregado como sugerencia: el paciente y '
+            'el médico tratante la van a ver al entrar a su visor de resultados.'
+        )
+    messages.success(request, mensaje)
     return redirect(volver_url)
 
 
@@ -4910,6 +5113,48 @@ def _visor_orden_desde_request(request):
     return orden
 
 
+def _historial_clinico(paciente, orden_actual):
+    """Otros estudios ya procesados de este paciente (cualquier convenio,
+    médico tratante o no), para el panel lateral del visor -- el historial
+    clínico completo, no solo lo que el médico tratante actual refirió (ver
+    visor_estudio_historial)."""
+    return list(
+        OrdenTrabajo.objects.filter(
+            cita__paciente=paciente, cita__estado=Cita.ESTADO_PROCESADA,
+        )
+        .exclude(id=orden_actual.id)
+        .select_related('cita__tipo_estudio')
+        .order_by('-cita__fecha', '-cita__hora')
+    )
+
+
+def _render_visor_estudio(request, orden):
+    paciente = orden.cita.paciente
+    imagenes = list(
+        orden.imagenes.filter(seleccionada=True).exclude(archivo='').order_by('subida_en')
+    )
+    informes = list(orden.informes.select_related('tipo_estudio').all())
+    return render(request, 'pacientes/visor_estudio.html', {
+        'orden': orden,
+        'cita': orden.cita,
+        'paciente': paciente,
+        'imagenes': imagenes,
+        'tab': 'report' if request.GET.get('tab') == 'report' else 'images',
+        'informes': informes,
+        'tiene_pdf': any(i.archivo for i in informes),
+        'tiene_dicom': any(img.archivo_original for img in imagenes),
+        'edad': paciente.edad_en(orden.cita.fecha),
+        # Estudios extra que la radióloga dejó solo como sugerencia (sin
+        # "procesar ahora", ver EstudioExtra): ni el paciente ni el médico
+        # tratante reciben un correo aparte por esto -- se enteran acá, al
+        # entrar a ver sus resultados.
+        'sugerencias_estudio_extra': list(
+            orden.cita.estudios_extra.filter(procesar_ahora=False).select_related('tipo_estudio')
+        ),
+        'historial': _historial_clinico(paciente, orden),
+    })
+
+
 def visor_estudio(request):
     orden = _visor_orden_desde_request(request)
     paciente = orden.cita.paciente
@@ -4928,6 +5173,10 @@ def visor_estudio(request):
             dpi_ingresado = (request.POST.get('dpi_ultimos') or '').strip()
             if dpi_ingresado and dpi_ingresado == (paciente.dpi or ''):
                 request.session[clave_ok] = True
+                # El paciente queda autorizado a navegar TODO su historial
+                # clínico desde acá (ver _historial_clinico/
+                # visor_estudio_historial), no solo esta orden puntual.
+                request.session[f'visor_paciente_ok_{paciente.id}'] = True
                 request.session.pop(clave_intentos, None)
                 return redirect(f'{reverse("visor_estudio")}?{qs}')
             request.session[clave_intentos] = intentos + 1
@@ -4938,21 +5187,7 @@ def visor_estudio(request):
         contexto['bloqueado'] = intentos >= VISOR_MAX_INTENTOS
         return render(request, 'pacientes/visor_gate.html', contexto)
 
-    imagenes = list(
-        orden.imagenes.filter(seleccionada=True).exclude(archivo='').order_by('subida_en')
-    )
-    informes = list(orden.informes.select_related('tipo_estudio').all())
-    return render(request, 'pacientes/visor_estudio.html', {
-        'orden': orden,
-        'cita': orden.cita,
-        'paciente': paciente,
-        'imagenes': imagenes,
-        'tab': 'report' if request.GET.get('tab') == 'report' else 'images',
-        'informes': informes,
-        'tiene_pdf': any(i.archivo for i in informes),
-        'tiene_dicom': any(img.archivo_original for img in imagenes),
-        'edad': paciente.edad_en(orden.cita.fecha),
-    })
+    return _render_visor_estudio(request, orden)
 
 
 def visor_estudio_medico_tratante(request):
@@ -4981,6 +5216,11 @@ def visor_estudio_medico_tratante(request):
             dpi_ingresado = (request.POST.get('dpi_ultimos') or '').strip()
             if dpi_ingresado and dpi_ingresado == (medico.dpi or ''):
                 request.session[clave_ok] = True
+                # El médico tratante también queda autorizado a navegar todo
+                # el historial clínico de ESTE paciente desde acá, aunque no
+                # haya sido él el médico tratante en esos otros estudios (ver
+                # _historial_clinico/visor_estudio_historial).
+                request.session[f'visor_paciente_ok_{orden.cita.paciente_id}'] = True
                 request.session.pop(clave_intentos, None)
                 return redirect(f'{reverse("visor_estudio")}?{qs}')
             request.session[clave_intentos] = intentos + 1
@@ -4994,12 +5234,34 @@ def visor_estudio_medico_tratante(request):
     return redirect(f'{reverse("visor_estudio")}?{qs}')
 
 
-def _visor_orden_autorizada(request, orden_id):
-    if request.session.get(f'visor_ok_{orden_id}') is not True:
-        raise Http404
-    return get_object_or_404(
-        OrdenTrabajo, id=orden_id, resultados_enviados_en__isnull=False,
+def visor_estudio_historial(request, orden_id):
+    """Abre, desde el panel de historial clínico del visor, otro estudio ya
+    procesado del MISMO paciente -- aunque nunca se haya enviado por correo
+    ni este médico tratante haya participado en él (ver _historial_clinico).
+    No es un link público: solo funciona dentro de una sesión ya autorizada
+    para ese paciente (visor_paciente_ok_<paciente_id>, que ponen
+    visor_estudio y visor_estudio_medico_tratante al validar el DPI)."""
+    orden = get_object_or_404(
+        OrdenTrabajo.objects.select_related('cita__paciente', 'cita__tipo_estudio'),
+        id=orden_id, cita__estado=Cita.ESTADO_PROCESADA,
     )
+    if request.session.get(f'visor_paciente_ok_{orden.cita.paciente_id}') is not True:
+        raise Http404
+    # Reusa las mismas descargas de imágenes/informe que el estudio de
+    # entrada: _visor_orden_autorizada acepta esta misma bandera de sesión.
+    request.session[f'visor_ok_{orden.id}'] = True
+    return _render_visor_estudio(request, orden)
+
+
+def _visor_orden_autorizada(request, orden_id):
+    orden = get_object_or_404(OrdenTrabajo.objects.select_related('cita'), id=orden_id)
+    if request.session.get(f'visor_paciente_ok_{orden.cita.paciente_id}') is True:
+        return orden
+    if request.session.get(f'visor_ok_{orden_id}') is True and (
+        orden.resultados_enviados_en or orden.enviado_medico_tratante_en
+    ):
+        return orden
+    raise Http404
 
 
 def visor_imagen(request, orden_id, imagen_id):

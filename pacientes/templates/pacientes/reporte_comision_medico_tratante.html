@@ -1,0 +1,207 @@
+{% extends 'base.html' %}
+
+{% block title %}Comisión {{ medico.nombre }} - Clínica de Imágenes{% endblock %}
+{% block page_title %}Comisión · {{ medico.nombre }}{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .periodo-form { padding: 0.9rem 1rem; }
+        .periodo-form .modos { display: flex; gap: 0.4rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+        .periodo-form .modos a {
+            font-size: 0.8rem; font-weight: 600; padding: 0.35rem 0.9rem;
+            border-radius: 999px; text-decoration: none;
+            background: #f1f5f9; color: var(--text-muted);
+        }
+        .periodo-form .modos a.on { background: var(--primary); color: #fff; }
+        .periodo-form .fila { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; }
+        .periodo-form label {
+            display: block; margin: 0 0 0.2rem;
+            font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted);
+        }
+        .col-num { text-align: right; white-space: nowrap; }
+        table tfoot td { font-weight: 700; border-top: 2px solid var(--border-light); }
+        .resumen-totales { display: flex; gap: 2rem; padding: 0.9rem 1rem; }
+        .resumen-totales .dato { font-size: 1.3rem; font-weight: 700; }
+        .resumen-totales .etiqueta { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; }
+    </style>
+{% endblock %}
+
+{% block topbar_actions %}
+    <a class="btn btn-outline btn-sm" href="{% url 'lista_medicos_tratantes' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver a médicos tratantes
+    </a>
+{% endblock %}
+
+{% block content %}
+
+    <form method="get" class="card mb-2 periodo-form">
+        <div class="modos">
+            <a href="{% url 'reporte_comision_medico_tratante' medico.id %}" class="{% if periodo.modo == 'pendiente' %}on{% endif %}">Pendiente de pago</a>
+            <a href="?modo=mes" class="{% if periodo.modo == 'mes' %}on{% endif %}">Mes</a>
+            <a href="?modo=quincena&quincena={{ periodo.quincena_mes }}&q={{ periodo.quincena_q }}" class="{% if periodo.modo == 'quincena' %}on{% endif %}">Quincena</a>
+            <a href="?modo=semana&semana={{ periodo.semana_valor }}" class="{% if periodo.modo == 'semana' %}on{% endif %}">Semana</a>
+            <a href="?modo=rango" class="{% if periodo.modo == 'rango' %}on{% endif %}">Rango libre</a>
+        </div>
+
+        {% if periodo.modo == 'mes' %}
+            <input type="hidden" name="modo" value="mes">
+            <div class="fila">
+                <div><label for="mes">Mes</label>
+                    <input type="month" name="mes" id="mes" value="{{ periodo.mes_valor }}"></div>
+                <button type="submit" class="btn btn-primary btn-sm">Ver</button>
+            </div>
+        {% elif periodo.modo == 'quincena' %}
+            <input type="hidden" name="modo" value="quincena">
+            <div class="fila">
+                <div><label for="quincena">Mes</label>
+                    <input type="month" name="quincena" id="quincena" value="{{ periodo.quincena_mes }}"></div>
+                <div><label for="q">Quincena</label>
+                    <select name="q" id="q">
+                        <option value="1" {% if periodo.quincena_q == '1' %}selected{% endif %}>1ª (1–15)</option>
+                        <option value="2" {% if periodo.quincena_q == '2' %}selected{% endif %}>2ª (16–fin)</option>
+                    </select></div>
+                <button type="submit" class="btn btn-primary btn-sm">Ver</button>
+            </div>
+        {% elif periodo.modo == 'semana' %}
+            <input type="hidden" name="modo" value="semana">
+            <div class="fila">
+                <div><label for="semana">Un día de la semana</label>
+                    <input type="date" name="semana" id="semana" value="{{ periodo.semana_valor }}"></div>
+                <button type="submit" class="btn btn-primary btn-sm">Ver</button>
+            </div>
+        {% elif periodo.modo == 'rango' %}
+            <input type="hidden" name="modo" value="rango">
+            <div class="fila">
+                <div><label for="desde">Desde</label>
+                    <input type="date" name="desde" id="desde" value="{{ periodo.desde|date:'Y-m-d' }}"></div>
+                <div><label for="hasta">Hasta</label>
+                    <input type="date" name="hasta" id="hasta" value="{{ periodo.hasta|date:'Y-m-d' }}"></div>
+                <button type="submit" class="btn btn-primary btn-sm">Ver</button>
+            </div>
+        {% else %}
+            <p class="ayuda" style="margin:0;">
+                Desde la cita procesada más antigua que todavía no se pagó, hasta hoy. Si no hay
+                ninguna pendiente, no hay nada que mostrar.
+            </p>
+        {% endif %}
+    </form>
+
+    <div class="card mb-2 resumen-totales">
+        <div>
+            <div class="etiqueta">Período</div>
+            <div class="dato" style="font-size:1rem;">{{ periodo.etiqueta }}</div>
+        </div>
+        <div>
+            <div class="etiqueta">Estudios referidos</div>
+            <div class="dato">{{ datos.cantidad }}</div>
+        </div>
+        <div>
+            <div class="etiqueta">Total</div>
+            <div class="dato">Q{{ datos.total|floatformat:2 }}</div>
+        </div>
+        <div style="margin-left:auto;align-self:center;">
+            {% if datos.citas %}
+                <a class="btn btn-outline btn-sm" href="{% url 'comision_medico_tratante_pdf' medico.id %}{% if query %}?{{ query }}{% endif %}" target="_blank">
+                    <svg width="14" height="14"><use href="#i-download"/></svg>
+                    Descargar PDF
+                </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card mb-2">
+        <table>
+            <thead>
+                <tr>
+                    <th>Fecha</th>
+                    <th>Paciente</th>
+                    <th>DPI</th>
+                    <th>Estudio</th>
+                    <th class="col-num">Precio</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for cita in datos.citas %}
+                    <tr>
+                        <td>{{ cita.fecha|date:'d/m/Y' }}</td>
+                        <td>{{ cita.paciente.nombre }} {{ cita.paciente.apellido }}</td>
+                        <td>{{ cita.paciente.dpi }}</td>
+                        <td>{{ cita.tipo_estudio.nombre }}</td>
+                        <td class="col-num">Q{{ cita.precio|floatformat:2 }}</td>
+                    </tr>
+                {% empty %}
+                    <tr><td colspan="5" class="vacio">No hay estudios referidos pendientes de pago en este período.</td></tr>
+                {% endfor %}
+            </tbody>
+            {% if datos.citas %}
+                <tfoot>
+                    <tr><td colspan="4">Total</td><td class="col-num">Q{{ datos.total|floatformat:2 }}</td></tr>
+                </tfoot>
+            {% endif %}
+        </table>
+    </div>
+
+    {% if datos.citas %}
+        <div class="card mb-2" style="padding:1rem;">
+            <h3 style="margin-top:0;">Registrar pago de comisión</h3>
+            <p class="ayuda">
+                Escribí cuánto se le paga de comisión a {{ medico.nombre }} por estos
+                {{ datos.cantidad }} estudio(s) (Q{{ datos.total|floatformat:2 }} en total referido) y
+                adjuntá el comprobante. Al guardar, estos estudios quedan marcados como pagados de
+                comisión y no vuelven a aparecer en un próximo reporte.
+            </p>
+            <form method="post" enctype="multipart/form-data">
+                {% csrf_token %}
+                {{ form.non_field_errors }}
+
+                <label for="{{ form.monto.id_for_label }}">Monto a pagar (Q)</label>
+                {{ form.monto }}
+                {{ form.monto.errors }}
+
+                <label for="{{ form.comprobante.id_for_label }}">Comprobante (boleta o transferencia)</label>
+                {{ form.comprobante }}
+                {{ form.comprobante.errors }}
+
+                <label for="{{ form.numero_boleta.id_for_label }}">Número de boleta / referencia</label>
+                {{ form.numero_boleta }}
+                {{ form.numero_boleta.errors }}
+
+                <label for="{{ form.notas.id_for_label }}">Notas (opcional)</label>
+                {{ form.notas }}
+                {{ form.notas.errors }}
+
+                <button type="submit" class="btn btn-primary mt-2">Registrar pago</button>
+            </form>
+        </div>
+    {% endif %}
+
+    {% if pagos_anteriores %}
+        <div class="card" style="padding:1rem;">
+            <h3 style="margin-top:0;">Pagos anteriores</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Período</th>
+                        <th>Estudios</th>
+                        <th class="col-num">Monto</th>
+                        <th>Registrado por</th>
+                        <th>Comprobante</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for pago in pagos_anteriores %}
+                        <tr>
+                            <td>{{ pago.periodo_etiqueta }}</td>
+                            <td>{{ pago.lineas.count }}</td>
+                            <td class="col-num">Q{{ pago.monto|floatformat:2 }}</td>
+                            <td>{{ pago.registrado_por.get_full_name|default:pago.registrado_por.username }}</td>
+                            <td><a href="{{ pago.comprobante.url }}" target="_blank">Ver</a></td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+
+{% endblock %}

@@ -846,11 +846,21 @@ class Cita(models.Model):
         return self.tipo_estudio.precio_para(self.convenio, self.horario_habil, fecha=self.fecha)
 
     @property
+    def estudios_extra_cobrados(self):
+        """Los EstudioExtra que de verdad suman al precio de la cita (ver
+        `precio`) -- los marcados procesar_ahora. Uno que quedó solo como
+        sugerencia no aparece acá."""
+        return self.estudios_extra.filter(procesar_ahora=True)
+
+    @property
     def precio(self):
         """Precio total que debe pagar el paciente: el estudio agendado más
-        cualquier estudio extra que el radiólogo haya agregado (ver
-        EstudioExtra). Es lo que usan Caja y el reporte diario."""
-        extra = sum((e.precio for e in self.estudios_extra.all()), Decimal('0.00'))
+        cualquier estudio extra que el radiólogo haya marcado para procesar
+        ahora (ver EstudioExtra.procesar_ahora). Uno que quedó solo como
+        sugerencia todavía no se le hizo al paciente, así que no se cobra
+        hasta que alguien lo marque procesar_ahora. Es lo que usan Caja y el
+        reporte diario."""
+        extra = sum((e.precio for e in self.estudios_extra_cobrados), Decimal('0.00'))
         return self.precio_base + extra
 
 
@@ -1055,6 +1065,70 @@ class DetalleOrdenPago(models.Model):
 
     class Meta:
         db_table = 'detalles_orden_pago'
+
+
+class PagoComisionMedicoTratante(models.Model):
+    """Pago de la comisión por referir pacientes Privado a un médico
+    tratante, en un rango de fechas libre (semana, quincena, mes o
+    cualquier rango -- ver pacientes.comisiones_medico_tratante). El monto
+    lo escribe el administrador a mano: no hay un % fijo guardado, lo
+    decide según el contrato que tenga con ese médico al ver cuántos
+    estudios refirió y cuánto suman.
+
+    Qué citas cubre no se deduce del rango de fechas: quedan guardadas una
+    por una en PagoComisionMedicoTratanteLinea (ver ese modelo), así una
+    cita de un rango ya pagado a medias (más referencias después del pago)
+    queda pendiente para el próximo reporte, sin pagarse dos veces."""
+
+    medico_tratante = models.ForeignKey(
+        MedicoTratante, on_delete=models.PROTECT, related_name='pagos_comision',
+    )
+    desde = models.DateField()
+    hasta = models.DateField(help_text='Último día del período, incluido.')
+    monto = models.DecimalField(max_digits=10, decimal_places=2)
+    comprobante = models.FileField(
+        upload_to='comprobantes_comision_medico_tratante/%Y/%m/',
+        verbose_name='comprobante (boleta o transferencia)',
+    )
+    numero_boleta = models.CharField(
+        max_length=60, blank=True, verbose_name='número de boleta / referencia',
+    )
+    notas = models.CharField(max_length=255, blank=True)
+    registrado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='pagos_comision_medico_tratante_registrados',
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'pagos_comision_medico_tratante'
+        verbose_name = 'pago de comisión a médico tratante'
+        verbose_name_plural = 'pagos de comisión a médicos tratantes'
+        ordering = ['-hasta', '-desde']
+
+    def __str__(self):
+        return f'Comisión · {self.medico_tratante} · {self.desde:%d/%m/%Y}–{self.hasta:%d/%m/%Y} · Q{self.monto}'
+
+    @property
+    def periodo_etiqueta(self):
+        return f'{self.desde:%d/%m/%Y} – {self.hasta:%d/%m/%Y}'
+
+
+class PagoComisionMedicoTratanteLinea(models.Model):
+    """Una cita Privado concreta cubierta por un pago de comisión al médico
+    tratante que la refirió. El OneToOneField con `cita` garantiza que cada
+    referencia se pague una sola vez."""
+
+    pago = models.ForeignKey(
+        PagoComisionMedicoTratante, on_delete=models.CASCADE, related_name='lineas',
+    )
+    cita = models.OneToOneField(
+        Cita, on_delete=models.PROTECT, related_name='pago_comision_medico_tratante',
+    )
+    precio = models.DecimalField(max_digits=10, decimal_places=2)
+
+    class Meta:
+        db_table = 'pagos_comision_medico_tratante_lineas'
 
 
 class ReporteDiario(models.Model):
