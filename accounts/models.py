@@ -242,6 +242,9 @@ class Bitacora(models.Model):
     ACCION_CANCELAR_CAMBIO_PRECIO = 'cancelar_cambio_precio'
     ACCION_REAGENDAR_DESDE_TURNO = 'reagendar_desde_turno'
     ACCION_PAGAR_COMISION_MEDICO_TRATANTE = 'pagar_comision_medico_tratante'
+    ACCION_CREAR_RESPALDO = 'crear_respaldo'
+    ACCION_DESCARGAR_RESPALDO = 'descargar_respaldo'
+    ACCION_ELIMINAR_RESPALDO = 'eliminar_respaldo'
 
     ACCION_CHOICES = [
         (ACCION_LOGIN_EXITOSO, 'Inicio de sesión'),
@@ -284,6 +287,9 @@ class Bitacora(models.Model):
         (ACCION_CANCELAR_CAMBIO_PRECIO, 'Canceló un cambio de estudio programado'),
         (ACCION_REAGENDAR_DESDE_TURNO, 'Envío a reagendar desde la pantalla de turnos'),
         (ACCION_PAGAR_COMISION_MEDICO_TRATANTE, 'Pago de comisión a un médico tratante'),
+        (ACCION_CREAR_RESPALDO, 'Creó un respaldo del sistema'),
+        (ACCION_DESCARGAR_RESPALDO, 'Descargó un respaldo del sistema'),
+        (ACCION_ELIMINAR_RESPALDO, 'Eliminó un respaldo del sistema'),
     ]
 
     usuario = models.ForeignKey(

@@ -22,3 +22,7 @@ staticfiles/
 
 # Generado por collectstatic (WhiteNoise) al exponerlo a internet
 staticfiles/
+
+# Respaldos generados desde el módulo de admin (contienen datos de pacientes)
+respaldos/
+respaldos_test/

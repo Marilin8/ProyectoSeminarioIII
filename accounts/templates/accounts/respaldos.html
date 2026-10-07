@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+
+{% block title %}Respaldos - Clínica de Imágenes{% endblock %}
+{% block page_title %}
+    <svg width="14" height="14"><use href="#i-clipboard"/></svg>
+    Respaldos del sistema
+{% endblock %}
+
+{% block topbar_actions %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="card mb-2">
+        <div class="card-body">
+            <h3 style="margin:0 0 0.4rem;">Crear un respaldo</h3>
+            <p style="color:var(--text-muted);margin:0 0 0.9rem;font-size:0.9rem;">
+                Genera un archivo .zip con toda la información de la base de datos
+                (pacientes, citas, pagos, usuarios, bitácora...). Opcionalmente también
+                incluye las imágenes y los informes subidos, lo que lo hace más pesado.
+            </p>
+            <form method="post" action="{% url 'crear_respaldo' %}"
+                  onsubmit="var b=this.querySelector('button');b.disabled=true;b.textContent='Creando respaldo… no cierre la página';">
+                {% csrf_token %}
+                <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.9rem;cursor:pointer;">
+                    <input type="checkbox" name="incluir_archivos">
+                    Incluir también las imágenes e informes (carpeta de archivos)
+                </label>
+                <button type="submit" class="btn btn-primary">Crear respaldo ahora</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body" style="padding:0;overflow-x:auto;">
+            {% if respaldos %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Archivo</th>
+                            <th>Contenido</th>
+                            <th>Fecha</th>
+                            <th>Tamaño</th>
+                            <th style="text-align:right;">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in respaldos %}
+                            <tr>
+                                <td>{{ r.nombre }}</td>
+                                <td>{% if r.con_archivos %}Base de datos + archivos{% else %}Solo base de datos{% endif %}</td>
+                                <td>{{ r.fecha|date:'d/m/Y H:i' }}</td>
+                                <td>{{ r.tamano|filesizeformat }}</td>
+                                <td style="text-align:right;white-space:nowrap;">
+                                    <a class="btn btn-outline btn-sm" href="{% url 'descargar_respaldo' r.nombre %}">Descargar</a>
+                                    <form method="post" action="{% url 'eliminar_respaldo' r.nombre %}" style="display:inline;"
+                                          onsubmit="return confirm('¿Eliminar este respaldo? No se puede deshacer.');">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-outline btn-sm" style="color:#dc2626;">Eliminar</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <p style="padding:1.5rem;text-align:center;color:var(--text-muted);margin:0;">
+                    Todavía no hay respaldos. Cree el primero con el botón de arriba.
+                </p>
+            {% endif %}
+        </div>
+    </div>
+
+    <p style="color:var(--text-muted);font-size:0.82rem;margin-top:0.9rem;">
+        Los respaldos contienen datos personales de pacientes: descárguelos y guárdelos
+        en un lugar seguro (otro equipo o disco externo). En el servidor se guardan en
+        <code>{{ carpeta }}</code>; un respaldo que queda solo en el mismo equipo no
+        protege contra la pérdida de ese equipo.
+    </p>
+{% endblock %}

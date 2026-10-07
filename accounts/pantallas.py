@@ -24,6 +24,7 @@ PANTALLAS_POR_ROL = {
         {'nombre': 'Combos', 'url_name': 'lista_combos'},
         {'nombre': 'Médicos tratantes', 'url_name': 'lista_medicos_tratantes'},
         {'nombre': 'Bitácora del sistema', 'url_name': 'bitacora'},
+        {'nombre': 'Respaldos', 'url_name': 'respaldos'},
         {
             'nombre': 'Reportes diarios',
             'clave': 'reportes_diarios',

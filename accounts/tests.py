@@ -1070,3 +1070,119 @@ class MiPerfilFotoTests(TestCase):
     
 
     
+
+
+class RespaldosTests(TestCase):
+    """Módulo de admin para crear/descargar/eliminar respaldos del sistema."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        from django.test import override_settings
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.carpeta = Path(self._tmp.name) / 'respaldos'
+        self.media = Path(self._tmp.name) / 'media'
+        (self.media / 'imagenes').mkdir(parents=True)
+        (self.media / 'imagenes' / 'rx.txt').write_text('imagen de prueba')
+
+        configuracion = override_settings(BACKUP_DIR=self.carpeta, MEDIA_ROOT=self.media)
+        configuracion.enable()
+        self.addCleanup(configuracion.disable)
+
+        def falso_volcado(destino):
+            destino.write_text('-- volcado de prueba')
+
+        parche = mock.patch('accounts.respaldos._volcar_base_de_datos', side_effect=falso_volcado)
+        parche.start()
+        self.addCleanup(parche.stop)
+
+        self.admin = crear_usuario('admin_resp', rol=Usuario.ROL_ADMINISTRADOR)
+        self.client.force_login(self.admin)
+
+    def _crear(self, **datos):
+        return self.client.post(reverse('crear_respaldo'), datos)
+
+    def test_solo_el_administrador_entra(self):
+        recepcion = crear_usuario('recep_resp', rol=Usuario.ROL_RECEPCIONISTA)
+        self.client.force_login(recepcion)
+        self.assertEqual(self.client.get(reverse('respaldos')).status_code, 302)
+        self.assertEqual(self.client.post(reverse('crear_respaldo')).status_code, 302)
+        self.assertFalse(self.carpeta.exists() and any(self.carpeta.iterdir()))
+
+    def test_aparece_en_las_pantallas_del_admin(self):
+        from accounts.pantallas import pantallas_de
+        self.assertIn('Respaldos', [p['nombre'] for p in pantallas_de(self.admin)])
+
+    def test_crear_respaldo_solo_base_de_datos(self):
+        import zipfile
+        self._crear()
+        archivos = list(self.carpeta.glob('respaldo_*.zip'))
+        self.assertEqual(len(archivos), 1)
+        self.assertNotIn('_con_archivos', archivos[0].name)
+        with zipfile.ZipFile(archivos[0]) as zf:
+            self.assertEqual(zf.namelist(), ['base_de_datos.sql'])
+        self.assertTrue(Bitacora.objects.filter(accion=Bitacora.ACCION_CREAR_RESPALDO, usuario=self.admin).exists())
+
+    def test_crear_respaldo_con_archivos_incluye_media(self):
+        import zipfile
+        self._crear(incluir_archivos='on')
+        archivo = next(self.carpeta.glob('respaldo_*_con_archivos.zip'))
+        with zipfile.ZipFile(archivo) as zf:
+            self.assertIn('base_de_datos.sql', zf.namelist())
+            self.assertIn('media/imagenes/rx.txt', zf.namelist())
+
+    def test_si_el_volcado_falla_no_queda_archivo_a_medias(self):
+        from unittest import mock
+
+        from accounts.respaldos import ErrorRespaldo
+        with mock.patch('accounts.respaldos._volcar_base_de_datos', side_effect=ErrorRespaldo('boom')):
+            respuesta = self.client.post(reverse('crear_respaldo'), follow=True)
+        self.assertContains(respuesta, 'No se pudo crear el respaldo')
+        self.assertEqual(list(self.carpeta.iterdir()), [])
+        self.assertFalse(Bitacora.objects.filter(accion=Bitacora.ACCION_CREAR_RESPALDO).exists())
+
+    def test_listado_muestra_los_respaldos(self):
+        self._crear()
+        nombre = next(self.carpeta.glob('respaldo_*.zip')).name
+        self.assertContains(self.client.get(reverse('respaldos')), nombre)
+
+    def test_descargar_entrega_el_archivo_y_registra_bitacora(self):
+        self._crear()
+        nombre = next(self.carpeta.glob('respaldo_*.zip')).name
+        respuesta = self.client.get(reverse('descargar_respaldo', args=[nombre]))
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertIn('attachment', respuesta['Content-Disposition'])
+        # Cerrar una respuesta en streaming dispara close_old_connections, que
+        # cortaría la conexión de la transacción del test.
+        from django.core.signals import request_finished
+        from django.db import close_old_connections
+        request_finished.disconnect(close_old_connections)
+        try:
+            respuesta.close()
+        finally:
+            request_finished.connect(close_old_connections)
+        self.assertTrue(Bitacora.objects.filter(accion=Bitacora.ACCION_DESCARGAR_RESPALDO).exists())
+
+    def test_descargar_rechaza_nombres_que_no_son_respaldos(self):
+        (self.carpeta).mkdir(parents=True, exist_ok=True)
+        (self.carpeta / 'secreto.txt').write_text('x')
+        for nombre in ('secreto.txt', '..%2F..%2Fmanage.py', 'respaldo_x.zip'):
+            respuesta = self.client.get(reverse('descargar_respaldo', args=[nombre]))
+            self.assertEqual(respuesta.status_code, 404, nombre)
+
+    def test_eliminar_borra_el_archivo(self):
+        self._crear()
+        nombre = next(self.carpeta.glob('respaldo_*.zip')).name
+        self.client.post(reverse('eliminar_respaldo', args=[nombre]))
+        self.assertEqual(list(self.carpeta.glob('respaldo_*.zip')), [])
+        self.assertTrue(Bitacora.objects.filter(accion=Bitacora.ACCION_ELIMINAR_RESPALDO).exists())
+
+    def test_eliminar_no_acepta_get(self):
+        self._crear()
+        nombre = next(self.carpeta.glob('respaldo_*.zip')).name
+        self.assertEqual(self.client.get(reverse('eliminar_respaldo', args=[nombre])).status_code, 405)
+        self.assertTrue((self.carpeta / nombre).exists())

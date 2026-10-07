@@ -198,6 +198,11 @@ SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# Respaldos del módulo de admin. Fuera de media/ y static/ a propósito: nunca
+# deben poder servirse por URL; solo se descargan por la vista de admin.
+BACKUP_DIR = BASE_DIR / 'respaldos'
+MYSQLDUMP_PATH = config('MYSQLDUMP_PATH', default='')
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 

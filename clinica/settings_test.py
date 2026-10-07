@@ -25,6 +25,7 @@ PASSWORD_HASHERS = [
 # se guardan en una carpeta temporal separada de `media/` para no ensuciar
 # el proyecto real ni el workspace de Jenkins entre builds.
 MEDIA_ROOT = BASE_DIR / 'media_test'  # noqa: F405 (definida en settings.py)
+BACKUP_DIR = BASE_DIR / 'respaldos_test'  # noqa: F405
 
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
 

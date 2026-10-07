@@ -9,7 +9,7 @@ from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.paginator import Paginator
 from django.db.models import Count, Prefetch, Q
-from django.http import Http404
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -31,6 +31,7 @@ from .forms import (
     PerfilForm,
     RegistrarPagoForm,
 )
+from . import respaldos as servicio_respaldos
 from .models import Bitacora, HistorialComision, PagoSalario, Usuario
 from .pantallas import buscar_pantalla, pantallas_de
 
@@ -899,3 +900,65 @@ def bitacora(request):
         'busqueda': busqueda,
         'querystring_filtros': querystring_filtros,
     })
+
+
+@login_required
+@user_passes_test(es_administrador)
+def respaldos(request):
+    return render(request, 'accounts/respaldos.html', {
+        'respaldos': servicio_respaldos.listar_respaldos(),
+        'carpeta': servicio_respaldos.carpeta_respaldos(),
+    })
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def crear_respaldo_view(request):
+    incluir_archivos = request.POST.get('incluir_archivos') == 'on'
+    try:
+        nombre = servicio_respaldos.crear_respaldo(incluir_archivos=incluir_archivos)
+    except servicio_respaldos.ErrorRespaldo as error:
+        messages.error(request, f'No se pudo crear el respaldo: {error}')
+        return redirect('respaldos')
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_CREAR_RESPALDO,
+        descripcion=f'Creó el respaldo {nombre}' + (' (incluye archivos).' if incluir_archivos else ' (solo base de datos).'),
+    )
+    messages.success(request, f'Respaldo creado: {nombre}.')
+    return redirect('respaldos')
+
+
+@login_required
+@user_passes_test(es_administrador)
+def descargar_respaldo(request, nombre):
+    ruta = servicio_respaldos.ruta_respaldo(nombre)
+    if ruta is None:
+        raise Http404('Respaldo no encontrado.')
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_DESCARGAR_RESPALDO,
+        descripcion=f'Descargó el respaldo {nombre}.',
+    )
+    return FileResponse(open(ruta, 'rb'), as_attachment=True, filename=nombre)
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def eliminar_respaldo(request, nombre):
+    ruta = servicio_respaldos.ruta_respaldo(nombre)
+    if ruta is None:
+        raise Http404('Respaldo no encontrado.')
+    ruta.unlink()
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_ELIMINAR_RESPALDO,
+        descripcion=f'Eliminó el respaldo {nombre}.',
+    )
+    messages.success(request, f'Respaldo {nombre} eliminado.')
+    return redirect('respaldos')
