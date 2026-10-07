@@ -245,6 +245,8 @@ class Bitacora(models.Model):
     ACCION_CREAR_RESPALDO = 'crear_respaldo'
     ACCION_DESCARGAR_RESPALDO = 'descargar_respaldo'
     ACCION_ELIMINAR_RESPALDO = 'eliminar_respaldo'
+    ACCION_SUBIR_RESPALDO = 'subir_respaldo'
+    ACCION_CONFIGURAR_GOOGLE_DRIVE = 'configurar_google_drive'
 
     ACCION_CHOICES = [
         (ACCION_LOGIN_EXITOSO, 'Inicio de sesión'),
@@ -290,6 +292,8 @@ class Bitacora(models.Model):
         (ACCION_CREAR_RESPALDO, 'Creó un respaldo del sistema'),
         (ACCION_DESCARGAR_RESPALDO, 'Descargó un respaldo del sistema'),
         (ACCION_ELIMINAR_RESPALDO, 'Eliminó un respaldo del sistema'),
+        (ACCION_SUBIR_RESPALDO, 'Subió un respaldo a Google Drive'),
+        (ACCION_CONFIGURAR_GOOGLE_DRIVE, 'Conectó o desconectó Google Drive'),
     ]
 
     usuario = models.ForeignKey(
@@ -490,3 +494,39 @@ class PagoComisionLinea(models.Model):
     class Meta:
         db_table = 'pagos_comision_lineas'
         unique_together = ('cita', 'rol_en_cita')
+
+
+class ConexionGoogleDrive(models.Model):
+    """Credenciales de la cuenta de Google Drive donde se suben los respaldos
+    (una sola por sistema). El client secret y el refresh token se guardan
+    cifrados (ver accounts.nube) y nunca se vuelven a mostrar en pantalla."""
+
+    client_id = models.CharField(max_length=255)
+    client_secret_cifrado = models.TextField()
+    refresh_token_cifrado = models.TextField(blank=True)
+    carpeta_id = models.CharField(max_length=255, blank=True)
+    correo_cuenta = models.EmailField(blank=True)
+    conectado_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'conexion_google_drive'
+        verbose_name = 'conexión de Google Drive'
+        verbose_name_plural = 'conexión de Google Drive'
+
+    @property
+    def conectada(self):
+        return bool(self.refresh_token_cifrado and self.carpeta_id)
+
+
+class RespaldoEnNube(models.Model):
+    """Respaldos que ya se subieron a Google Drive (para marcarlos en el
+    listado y no subirlos dos veces por error)."""
+
+    nombre = models.CharField(max_length=120, unique=True)
+    drive_file_id = models.CharField(max_length=255)
+    subido_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'respaldos_en_nube'
+        verbose_name = 'respaldo en la nube'
+        verbose_name_plural = 'respaldos en la nube'

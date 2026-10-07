@@ -48,7 +48,11 @@ urlpatterns = [
     path('bitacora/', views.bitacora, name='bitacora'),
     path('respaldos/', views.respaldos, name='respaldos'),
     path('respaldos/crear/', views.crear_respaldo_view, name='crear_respaldo'),
+    path('respaldos/google-drive/guardar/', views.google_drive_guardar, name='google_drive_guardar'),
+    path('respaldos/google-drive/callback/', views.google_drive_callback, name='google_drive_callback'),
+    path('respaldos/google-drive/desconectar/', views.google_drive_desconectar, name='google_drive_desconectar'),
     path('respaldos/<str:nombre>/descargar/', views.descargar_respaldo, name='descargar_respaldo'),
+    path('respaldos/<str:nombre>/subir/', views.subir_respaldo_a_drive, name='subir_respaldo_a_drive'),
     path('respaldos/<str:nombre>/eliminar/', views.eliminar_respaldo, name='eliminar_respaldo'),
     path('pantalla/<slug:clave>/', views.pantalla_placeholder, name='pantalla_placeholder'),
 ]

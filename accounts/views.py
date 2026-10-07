@@ -31,8 +31,9 @@ from .forms import (
     PerfilForm,
     RegistrarPagoForm,
 )
+from . import nube as servicio_nube
 from . import respaldos as servicio_respaldos
-from .models import Bitacora, HistorialComision, PagoSalario, Usuario
+from .models import Bitacora, ConexionGoogleDrive, RespaldoEnNube, HistorialComision, PagoSalario, Usuario
 from .pantallas import buscar_pantalla, pantallas_de
 
 
@@ -908,6 +909,8 @@ def respaldos(request):
     return render(request, 'accounts/respaldos.html', {
         'respaldos': servicio_respaldos.listar_respaldos(),
         'carpeta': servicio_respaldos.carpeta_respaldos(),
+        'drive': ConexionGoogleDrive.objects.first(),
+        'uri_redireccion': servicio_nube.uri_de_redireccion(),
     })
 
 
@@ -928,6 +931,130 @@ def crear_respaldo_view(request):
         descripcion=f'Creó el respaldo {nombre}' + (' (incluye archivos).' if incluir_archivos else ' (solo base de datos).'),
     )
     messages.success(request, f'Respaldo creado: {nombre}.')
+    if request.POST.get('subir_drive') == 'on':
+        _subir_a_drive_y_registrar(request, nombre)
+    return redirect('respaldos')
+
+
+def _subir_a_drive_y_registrar(request, nombre):
+    conexion = ConexionGoogleDrive.objects.first()
+    ruta = servicio_respaldos.ruta_respaldo(nombre)
+    if conexion is None or not conexion.conectada or ruta is None:
+        messages.warning(request, 'El respaldo quedó en el servidor, pero Google Drive no está conectado.')
+        return
+    try:
+        token = servicio_nube.token_de_acceso(
+            conexion.client_id,
+            servicio_nube.descifrar(conexion.client_secret_cifrado),
+            servicio_nube.descifrar(conexion.refresh_token_cifrado),
+        )
+        file_id = servicio_nube.subir_archivo(token, ruta, conexion.carpeta_id)
+    except servicio_nube.ErrorNube as error:
+        messages.warning(request, f'El respaldo quedó en el servidor, pero no se subió a Google Drive: {error}')
+        return
+    RespaldoEnNube.objects.update_or_create(nombre=nombre, defaults={'drive_file_id': file_id})
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_SUBIR_RESPALDO,
+        descripcion=f'Subió el respaldo {nombre} a Google Drive ({conexion.correo_cuenta}).',
+    )
+    messages.success(request, f'Respaldo {nombre} subido a Google Drive ({conexion.correo_cuenta}).')
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def subir_respaldo_a_drive(request, nombre):
+    if servicio_respaldos.ruta_respaldo(nombre) is None:
+        raise Http404('Respaldo no encontrado.')
+    _subir_a_drive_y_registrar(request, nombre)
+    return redirect('respaldos')
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def google_drive_guardar(request):
+    """Guarda el Client ID/Secret escritos en la pantalla y manda al
+    administrador a Google para que autorice el acceso."""
+    client_id = (request.POST.get('client_id') or '').strip()
+    client_secret = (request.POST.get('client_secret') or '').strip()
+    conexion = ConexionGoogleDrive.objects.first()
+    if not client_id or (not client_secret and conexion is None):
+        messages.error(request, 'Escriba el Client ID y el Client Secret de Google.')
+        return redirect('respaldos')
+    if conexion is None:
+        conexion = ConexionGoogleDrive()
+    conexion.client_id = client_id
+    if client_secret:
+        conexion.client_secret_cifrado = servicio_nube.cifrar(client_secret)
+    conexion.save()
+    estado = servicio_nube.nuevo_estado()
+    request.session['google_drive_estado'] = estado
+    return redirect(servicio_nube.url_de_autorizacion(client_id, estado))
+
+
+@login_required
+@user_passes_test(es_administrador)
+def google_drive_callback(request):
+    estado_esperado = request.session.pop('google_drive_estado', None)
+    conexion = ConexionGoogleDrive.objects.first()
+    if request.GET.get('error'):
+        messages.error(request, 'Google Drive no se conectó: se canceló o se rechazó la autorización.')
+        return redirect('respaldos')
+    if conexion is None or not estado_esperado or request.GET.get('state') != estado_esperado:
+        messages.error(request, 'La conexión con Google expiró o no es válida. Inténtelo de nuevo.')
+        return redirect('respaldos')
+    try:
+        client_secret = servicio_nube.descifrar(conexion.client_secret_cifrado)
+        refresh_token = servicio_nube.canjear_codigo(
+            conexion.client_id, client_secret, request.GET.get('code', ''),
+        )
+        token = servicio_nube.token_de_acceso(conexion.client_id, client_secret, refresh_token)
+        conexion.correo_cuenta = servicio_nube.correo_de_la_cuenta(token)
+        conexion.carpeta_id = servicio_nube.crear_carpeta(token)
+    except servicio_nube.ErrorNube as error:
+        messages.error(request, f'No se pudo conectar Google Drive: {error}')
+        return redirect('respaldos')
+    conexion.refresh_token_cifrado = servicio_nube.cifrar(refresh_token)
+    conexion.conectado_en = timezone.now()
+    conexion.save()
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_CONFIGURAR_GOOGLE_DRIVE,
+        descripcion=f'Conectó Google Drive ({conexion.correo_cuenta}).',
+    )
+    messages.success(
+        request,
+        f'Google Drive conectado ({conexion.correo_cuenta}). Los respaldos se guardan en la carpeta '
+        f'"{servicio_nube.NOMBRE_CARPETA}" de esa cuenta.',
+    )
+    return redirect('respaldos')
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def google_drive_desconectar(request):
+    conexion = ConexionGoogleDrive.objects.first()
+    if conexion is not None:
+        if conexion.refresh_token_cifrado:
+            try:
+                servicio_nube.revocar(servicio_nube.descifrar(conexion.refresh_token_cifrado))
+            except servicio_nube.ErrorNube:
+                pass
+        correo = conexion.correo_cuenta
+        conexion.delete()
+        RespaldoEnNube.objects.all().delete()
+        Bitacora.registrar(
+            request=request,
+            usuario=request.user,
+            accion=Bitacora.ACCION_CONFIGURAR_GOOGLE_DRIVE,
+            descripcion=f'Desconectó Google Drive ({correo}).',
+        )
+        messages.success(request, 'Google Drive desconectado. Los archivos que ya estaban en Drive no se borran.')
     return redirect('respaldos')
 
 

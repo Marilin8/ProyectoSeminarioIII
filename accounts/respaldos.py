@@ -102,6 +102,8 @@ def crear_respaldo(incluir_archivos=False):
 
 def listar_respaldos():
     carpeta = carpeta_respaldos()
+    from .models import RespaldoEnNube
+    en_nube = set(RespaldoEnNube.objects.values_list('nombre', flat=True))
     respaldos = []
     for ruta in carpeta.iterdir():
         if ruta.is_file() and NOMBRE_VALIDO.match(ruta.name):
@@ -111,6 +113,7 @@ def listar_respaldos():
                 'tamano': info.st_size,
                 'fecha': datetime.datetime.fromtimestamp(info.st_mtime),
                 'con_archivos': ruta.name.endswith('_con_archivos.zip'),
+                'en_nube': ruta.name in en_nube,
             })
     return sorted(respaldos, key=lambda r: r['fecha'], reverse=True)
 

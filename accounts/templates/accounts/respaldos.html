@@ -29,8 +29,65 @@
                     <input type="checkbox" name="incluir_archivos">
                     Incluir también las imágenes e informes (carpeta de archivos)
                 </label>
+                {% if drive and drive.conectada %}
+                    <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.9rem;cursor:pointer;">
+                        <input type="checkbox" name="subir_drive" checked>
+                        Subir también a Google Drive ({{ drive.correo_cuenta }})
+                    </label>
+                {% endif %}
                 <button type="submit" class="btn btn-primary">Crear respaldo ahora</button>
             </form>
+        </div>
+    </div>
+
+    <div class="card mb-2">
+        <div class="card-body">
+            <h3 style="margin:0 0 0.4rem;">Google Drive</h3>
+            {% if drive and drive.conectada %}
+                <p style="margin:0 0 0.8rem;font-size:0.9rem;">
+                    <span class="badge" style="background:#dcfce7;color:#15803d;">Conectado</span>
+                    Cuenta <strong>{{ drive.correo_cuenta }}</strong> desde el {{ drive.conectado_en|date:'d/m/Y H:i' }}.
+                    Los respaldos se guardan en la carpeta «Respaldos Clinica» de esa cuenta.
+                </p>
+                <form method="post" action="{% url 'google_drive_desconectar' %}" style="display:inline;"
+                      onsubmit="return confirm('¿Desconectar Google Drive? Los archivos que ya están en Drive no se borran.');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline btn-sm" style="color:#dc2626;">Desconectar</button>
+                </form>
+            {% else %}
+                <p style="color:var(--text-muted);margin:0 0 0.8rem;font-size:0.9rem;">
+                    Conecte una cuenta de Google para subir los respaldos a su Drive desde esta pantalla.
+                    Solo se pide acceso a los archivos que este sistema crea, no al resto de su Drive.
+                </p>
+                <details style="margin-bottom:1rem;font-size:0.88rem;">
+                    <summary style="cursor:pointer;font-weight:600;">Cómo obtener el Client ID y el Client Secret (una sola vez)</summary>
+                    <ol style="margin:0.6rem 0 0 1.2rem;line-height:1.6;">
+                        <li>Entre a <strong>console.cloud.google.com</strong> con la cuenta de Google donde quiere guardar los respaldos y cree un proyecto.</li>
+                        <li>En <em>APIs y servicios → Biblioteca</em>, busque <strong>Google Drive API</strong> y actívela.</li>
+                        <li>En <em>Pantalla de consentimiento de OAuth</em>: tipo <strong>Externo</strong>, agregue el permiso <code>.../auth/drive.file</code> y pulse <strong>Publicar aplicación</strong> (si queda en «Prueba», Google cancela el acceso a los 7 días).</li>
+                        <li>En <em>Credenciales → Crear credenciales → ID de cliente de OAuth</em>: tipo <strong>Aplicación web</strong>. En «URI de redireccionamiento autorizados» pegue exactamente:<br>
+                            <code style="user-select:all;">{{ uri_redireccion }}</code></li>
+                        <li>Copie el <strong>ID de cliente</strong> y el <strong>Secreto</strong> en este formulario.</li>
+                    </ol>
+                </details>
+                <form method="post" action="{% url 'google_drive_guardar' %}">
+                    {% csrf_token %}
+                    <div style="display:flex;flex-wrap:wrap;gap:0.8rem;margin-bottom:0.9rem;">
+                        <div style="flex:1 1 18rem;">
+                            <label for="client_id" style="display:block;font-size:0.8rem;margin-bottom:0.2rem;">ID de cliente</label>
+                            <input type="text" id="client_id" name="client_id" required autocomplete="off"
+                                   value="{{ drive.client_id|default:'' }}" style="width:100%;">
+                        </div>
+                        <div style="flex:1 1 18rem;">
+                            <label for="client_secret" style="display:block;font-size:0.8rem;margin-bottom:0.2rem;">Secreto de cliente</label>
+                            <input type="password" id="client_secret" name="client_secret" autocomplete="new-password"
+                                   {% if not drive %}required{% endif %}
+                                   placeholder="{% if drive %}Ya guardado; déjelo vacío para conservarlo{% endif %}" style="width:100%;">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Guardar y conectar con Google</button>
+                </form>
+            {% endif %}
         </div>
     </div>
 
@@ -51,11 +108,21 @@
                         {% for r in respaldos %}
                             <tr>
                                 <td>{{ r.nombre }}</td>
-                                <td>{% if r.con_archivos %}Base de datos + archivos{% else %}Solo base de datos{% endif %}</td>
+                                <td>
+                                    {% if r.con_archivos %}Base de datos + archivos{% else %}Solo base de datos{% endif %}
+                                    {% if r.en_nube %}<br><span class="badge" style="background:#dbeafe;color:#1d4ed8;">En Google Drive</span>{% endif %}
+                                </td>
                                 <td>{{ r.fecha|date:'d/m/Y H:i' }}</td>
                                 <td>{{ r.tamano|filesizeformat }}</td>
                                 <td style="text-align:right;white-space:nowrap;">
                                     <a class="btn btn-outline btn-sm" href="{% url 'descargar_respaldo' r.nombre %}">Descargar</a>
+                                    {% if drive and drive.conectada and not r.en_nube %}
+                                        <form method="post" action="{% url 'subir_respaldo_a_drive' r.nombre %}" style="display:inline;"
+                                              onsubmit="var b=this.querySelector('button');b.disabled=true;b.textContent='Subiendo…';">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-outline btn-sm">Subir a Drive</button>
+                                        </form>
+                                    {% endif %}
                                     <form method="post" action="{% url 'eliminar_respaldo' r.nombre %}" style="display:inline;"
                                           onsubmit="return confirm('¿Eliminar este respaldo? No se puede deshacer.');">
                                         {% csrf_token %}
@@ -78,6 +145,6 @@
         Los respaldos contienen datos personales de pacientes: descárguelos y guárdelos
         en un lugar seguro (otro equipo o disco externo). En el servidor se guardan en
         <code>{{ carpeta }}</code>; un respaldo que queda solo en el mismo equipo no
-        protege contra la pérdida de ese equipo.
+        protege contra la pérdida de ese equipo. Eliminar un respaldo aquí no lo borra de Google Drive.
     </p>
 {% endblock %}

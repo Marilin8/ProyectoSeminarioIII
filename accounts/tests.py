@@ -1186,3 +1186,186 @@ class RespaldosTests(TestCase):
         nombre = next(self.carpeta.glob('respaldo_*.zip')).name
         self.assertEqual(self.client.get(reverse('eliminar_respaldo', args=[nombre])).status_code, 405)
         self.assertTrue((self.carpeta / nombre).exists())
+
+
+class GoogleDriveTests(TestCase):
+    """Conexión con Google Drive y subida de respaldos (Google simulado)."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from django.test import override_settings
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.carpeta = Path(self._tmp.name) / 'respaldos'
+        configuracion = override_settings(
+            BACKUP_DIR=self.carpeta, VISOR_BASE_URL='https://clinica.example.com',
+        )
+        configuracion.enable()
+        self.addCleanup(configuracion.disable)
+        self.admin = crear_usuario('admin_drive', rol=Usuario.ROL_ADMINISTRADOR)
+        self.client.force_login(self.admin)
+
+    def _respaldo_falso(self):
+        self.carpeta.mkdir(parents=True, exist_ok=True)
+        nombre = 'respaldo_20260101_120000.zip'
+        (self.carpeta / nombre).write_bytes(b'zip-de-prueba')
+        return nombre
+
+    def _conectar(self):
+        from accounts import nube
+        from accounts.models import ConexionGoogleDrive
+        return ConexionGoogleDrive.objects.create(
+            client_id='cid', client_secret_cifrado=nube.cifrar('secreto'),
+            refresh_token_cifrado=nube.cifrar('refresh'), carpeta_id='carpeta1',
+            correo_cuenta='clinica@gmail.com',
+        )
+
+    def test_cifrado_ida_y_vuelta_y_no_guarda_en_claro(self):
+        from accounts import nube
+        cifrado = nube.cifrar('mi-secreto')
+        self.assertNotIn('mi-secreto', cifrado)
+        self.assertEqual(nube.descifrar(cifrado), 'mi-secreto')
+
+    def test_url_de_autorizacion_pide_solo_drive_file_y_offline(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        from accounts import nube
+        url = nube.url_de_autorizacion('cid', 'estado123')
+        consulta = parse_qs(urlsplit(url).query)
+        self.assertEqual(consulta['scope'], ['https://www.googleapis.com/auth/drive.file'])
+        self.assertEqual(consulta['access_type'], ['offline'])
+        self.assertEqual(consulta['state'], ['estado123'])
+        self.assertEqual(
+            consulta['redirect_uri'], ['https://clinica.example.com/respaldos/google-drive/callback/'],
+        )
+
+    def test_guardar_credenciales_cifra_el_secreto_y_manda_a_google(self):
+        from accounts.models import ConexionGoogleDrive
+        respuesta = self.client.post(
+            reverse('google_drive_guardar'), {'client_id': 'cid', 'client_secret': 'super-secreto'},
+        )
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertTrue(respuesta['Location'].startswith('https://accounts.google.com/'))
+        conexion = ConexionGoogleDrive.objects.get()
+        self.assertEqual(conexion.client_id, 'cid')
+        self.assertNotIn('super-secreto', conexion.client_secret_cifrado)
+        self.assertFalse(conexion.conectada)
+        self.assertIn('google_drive_estado', self.client.session)
+
+    def test_guardar_sin_secreto_la_primera_vez_es_error(self):
+        respuesta = self.client.post(reverse('google_drive_guardar'), {'client_id': 'cid'}, follow=True)
+        self.assertContains(respuesta, 'Escriba el Client ID')
+
+    def test_callback_con_estado_incorrecto_no_conecta(self):
+        from accounts.models import ConexionGoogleDrive
+        self.client.post(reverse('google_drive_guardar'), {'client_id': 'cid', 'client_secret': 's'})
+        self.client.get(reverse('google_drive_callback'), {'code': 'x', 'state': 'falso'})
+        self.assertFalse(ConexionGoogleDrive.objects.get().conectada)
+
+    def test_callback_correcto_guarda_el_refresh_token_cifrado(self):
+        from unittest import mock
+
+        from accounts import nube
+        from accounts.models import ConexionGoogleDrive
+        self.client.post(reverse('google_drive_guardar'), {'client_id': 'cid', 'client_secret': 's'})
+        estado = self.client.session['google_drive_estado']
+        with mock.patch.multiple(
+            'accounts.nube', canjear_codigo=mock.DEFAULT, token_de_acceso=mock.DEFAULT,
+            correo_de_la_cuenta=mock.DEFAULT, crear_carpeta=mock.DEFAULT,
+        ) as falsos:
+            falsos['canjear_codigo'].return_value = 'refresh-123'
+            falsos['token_de_acceso'].return_value = 'acceso'
+            falsos['correo_de_la_cuenta'].return_value = 'clinica@gmail.com'
+            falsos['crear_carpeta'].return_value = 'carpeta-9'
+            self.client.get(reverse('google_drive_callback'), {'code': 'abc', 'state': estado})
+        conexion = ConexionGoogleDrive.objects.get()
+        self.assertTrue(conexion.conectada)
+        self.assertEqual(conexion.correo_cuenta, 'clinica@gmail.com')
+        self.assertNotIn('refresh-123', conexion.refresh_token_cifrado)
+        self.assertEqual(nube.descifrar(conexion.refresh_token_cifrado), 'refresh-123')
+        self.assertTrue(Bitacora.objects.filter(accion=Bitacora.ACCION_CONFIGURAR_GOOGLE_DRIVE).exists())
+
+    def test_la_pantalla_nunca_muestra_el_secreto(self):
+        self.client.post(reverse('google_drive_guardar'), {'client_id': 'cid', 'client_secret': 'super-secreto'})
+        pagina = self.client.get(reverse('respaldos')).content.decode()
+        self.assertNotIn('super-secreto', pagina)
+
+    def test_subir_respaldo_marca_en_google_drive_y_registra_bitacora(self):
+        from unittest import mock
+
+        from accounts.models import RespaldoEnNube
+        self._conectar()
+        nombre = self._respaldo_falso()
+        with mock.patch('accounts.nube.token_de_acceso', return_value='acceso'), \
+                mock.patch('accounts.nube.subir_archivo', return_value='file-77') as subir:
+            self.client.post(reverse('subir_respaldo_a_drive', args=[nombre]))
+        self.assertEqual(subir.call_args.args[2], 'carpeta1')
+        self.assertEqual(RespaldoEnNube.objects.get(nombre=nombre).drive_file_id, 'file-77')
+        self.assertTrue(Bitacora.objects.filter(accion=Bitacora.ACCION_SUBIR_RESPALDO).exists())
+        self.assertContains(self.client.get(reverse('respaldos')), 'En Google Drive')
+
+    def test_si_google_falla_el_respaldo_no_se_marca(self):
+        from unittest import mock
+
+        from accounts.models import RespaldoEnNube
+        from accounts.nube import ErrorNube
+        self._conectar()
+        nombre = self._respaldo_falso()
+        with mock.patch('accounts.nube.token_de_acceso', side_effect=ErrorNube('invalid_grant')):
+            respuesta = self.client.post(reverse('subir_respaldo_a_drive', args=[nombre]), follow=True)
+        self.assertContains(respuesta, 'no se subió a Google Drive')
+        self.assertFalse(RespaldoEnNube.objects.exists())
+
+    def test_crear_respaldo_con_casilla_sube_a_drive(self):
+        from unittest import mock
+
+        from accounts.models import RespaldoEnNube
+        self._conectar()
+        with mock.patch('accounts.respaldos._volcar_base_de_datos', side_effect=lambda d: d.write_text('x')), \
+                mock.patch('accounts.nube.token_de_acceso', return_value='acceso'), \
+                mock.patch('accounts.nube.subir_archivo', return_value='file-1'):
+            self.client.post(reverse('crear_respaldo'), {'subir_drive': 'on'})
+        self.assertEqual(RespaldoEnNube.objects.count(), 1)
+
+    def test_subir_rechaza_nombres_invalidos(self):
+        self._conectar()
+        respuesta = self.client.post('/respaldos/..%2Fmanage.py/subir/')
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_desconectar_borra_credenciales_y_marcas(self):
+        from unittest import mock
+
+        from accounts.models import ConexionGoogleDrive, RespaldoEnNube
+        self._conectar()
+        RespaldoEnNube.objects.create(nombre='respaldo_20260101_120000.zip', drive_file_id='f')
+        with mock.patch('accounts.nube.revocar'):
+            self.client.post(reverse('google_drive_desconectar'))
+        self.assertFalse(ConexionGoogleDrive.objects.exists())
+        self.assertFalse(RespaldoEnNube.objects.exists())
+
+    def test_solo_admin(self):
+        self.client.force_login(crear_usuario('recep_drive', rol=Usuario.ROL_RECEPCIONISTA))
+        for nombre in ('google_drive_guardar', 'google_drive_desconectar'):
+            self.assertEqual(self.client.post(reverse(nombre)).status_code, 302, nombre)
+        self.assertEqual(self.client.get(reverse('google_drive_callback')).status_code, 302)
+
+    def test_subir_archivo_hace_la_subida_reanudable_en_dos_pasos(self):
+        from unittest import mock
+
+        from accounts import nube
+        self._respaldo_falso()
+        url_subida = 'https://www.googleapis.com/upload/x?upload_id=1'
+        with mock.patch('accounts.nube._pedir_json_con_cabeceras', return_value=url_subida) as inicio, \
+                mock.patch('accounts.nube.http.client.HTTPSConnection') as conexion:
+            respuesta = conexion.return_value.getresponse.return_value
+            respuesta.status = 200
+            respuesta.read.return_value = b'{"id": "abc"}'
+            id_archivo = nube.subir_archivo('acceso', self.carpeta / 'respaldo_20260101_120000.zip', 'carpeta1')
+        self.assertEqual(id_archivo, 'abc')
+        self.assertEqual(inicio.call_args.args[1], {'name': 'respaldo_20260101_120000.zip', 'parents': ['carpeta1']})
+        metodo, ruta = conexion.return_value.request.call_args.args[:2]
+        self.assertEqual(metodo, 'PUT')
+        self.assertEqual(ruta, '/upload/x?upload_id=1')
