@@ -1369,3 +1369,144 @@ class GoogleDriveTests(TestCase):
         metodo, ruta = conexion.return_value.request.call_args.args[:2]
         self.assertEqual(metodo, 'PUT')
         self.assertEqual(ruta, '/upload/x?upload_id=1')
+
+
+class CifradoRespaldosTests(TestCase):
+    """Respaldos cifrados con la RESPALDOS_CLAVE del .env."""
+
+    CLAVE = 'clave-de-prueba-larga-123'
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        from django.test import override_settings
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.carpeta = Path(self._tmp.name) / 'respaldos'
+        self.media = Path(self._tmp.name) / 'media'
+        self.media.mkdir()
+        configuracion = override_settings(
+            BACKUP_DIR=self.carpeta, MEDIA_ROOT=self.media, RESPALDOS_CLAVE=self.CLAVE,
+        )
+        configuracion.enable()
+        self.addCleanup(configuracion.disable)
+        parche = mock.patch(
+            'accounts.respaldos._volcar_base_de_datos',
+            side_effect=lambda destino: destino.write_text('-- datos secretos de pacientes'),
+        )
+        parche.start()
+        self.addCleanup(parche.stop)
+        self.admin = crear_usuario('admin_cif', rol=Usuario.ROL_ADMINISTRADOR)
+        self.client.force_login(self.admin)
+
+    def test_ida_y_vuelta_del_cifrado_de_archivos(self):
+        from pathlib import Path
+
+        from accounts import cifrado
+        origen = Path(self._tmp.name) / 'a.bin'
+        origen.write_bytes(b'hola mundo' * 300_000)
+        sobre = Path(self._tmp.name) / 'a.cif'
+        salida = Path(self._tmp.name) / 'a.out'
+        cifrado.cifrar_archivo(origen, sobre, b'clave-larga-de-prueba')
+        self.assertTrue(cifrado.es_sobre(sobre))
+        self.assertNotIn(b'hola mundo', sobre.read_bytes())
+        cifrado.descifrar_archivo(sobre, salida, b'clave-larga-de-prueba')
+        self.assertEqual(salida.read_bytes(), origen.read_bytes())
+
+    def test_clave_incorrecta_o_archivo_alterado_falla(self):
+        from pathlib import Path
+
+        from accounts import cifrado
+        origen = Path(self._tmp.name) / 'a.bin'
+        origen.write_bytes(b'contenido importante')
+        sobre = Path(self._tmp.name) / 'a.cif'
+        cifrado.cifrar_archivo(origen, sobre, b'clave-correcta-12345')
+        with self.assertRaises(cifrado.ErrorCifrado):
+            cifrado.descifrar_archivo(sobre, Path(self._tmp.name) / 'x', b'otra-clave-distinta-1')
+        datos = bytearray(sobre.read_bytes())
+        datos[-20] ^= 0xFF
+        sobre.write_bytes(bytes(datos))
+        with self.assertRaises(cifrado.ErrorCifrado):
+            cifrado.descifrar_archivo(sobre, Path(self._tmp.name) / 'y', b'clave-correcta-12345')
+
+    def test_el_respaldo_se_guarda_cifrado_y_sin_copia_en_claro(self):
+        import zipfile
+
+        from accounts import cifrado
+        self.client.post(reverse('crear_respaldo'))
+        archivos = list(self.carpeta.iterdir())
+        self.assertEqual(len(archivos), 1)
+        self.assertTrue(archivos[0].name.endswith('.zip.cif'))
+        self.assertTrue(cifrado.es_sobre(archivos[0]))
+        self.assertNotIn(b'datos secretos', archivos[0].read_bytes())
+        salida = self.carpeta.parent / 'abierto.zip'
+        cifrado.descifrar_archivo(archivos[0], salida, self.CLAVE.encode())
+        with zipfile.ZipFile(salida) as zf:
+            self.assertIn(b'datos secretos', zf.read('base_de_datos.sql'))
+
+    def test_descargar_descifrado_entrega_el_zip_y_registra(self):
+        import io
+        import zipfile
+        self.client.post(reverse('crear_respaldo'))
+        nombre = next(self.carpeta.iterdir()).name
+        respuesta = self.client.get(reverse('descargar_respaldo_descifrado', args=[nombre]))
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertIn(nombre[:-4], respuesta['Content-Disposition'])
+        contenido = b''.join(respuesta.streaming_content)
+        with zipfile.ZipFile(io.BytesIO(contenido)) as zf:
+            self.assertIn('base_de_datos.sql', zf.namelist())
+        self.assertTrue(Bitacora.objects.filter(
+            accion=Bitacora.ACCION_DESCARGAR_RESPALDO, descripcion__contains='descifrado',
+        ).exists())
+
+    def test_descargar_descifrado_con_clave_cambiada_avisa_sin_romper(self):
+        from django.test import override_settings
+        self.client.post(reverse('crear_respaldo'))
+        nombre = next(self.carpeta.iterdir()).name
+        with override_settings(RESPALDOS_CLAVE='una-clave-totalmente-distinta'):
+            respuesta = self.client.get(reverse('descargar_respaldo_descifrado', args=[nombre]), follow=True)
+        self.assertContains(respuesta, 'No se pudo descifrar')
+
+    def test_clave_demasiado_corta_no_crea_respaldo(self):
+        from django.test import override_settings
+        with override_settings(RESPALDOS_CLAVE='corta'):
+            respuesta = self.client.post(reverse('crear_respaldo'), follow=True)
+        self.assertContains(respuesta, 'demasiado corta')
+        self.assertEqual(list(self.carpeta.iterdir()), [])
+
+    def test_sin_clave_se_guarda_sin_cifrar_y_la_pantalla_lo_avisa(self):
+        from django.test import override_settings
+        with override_settings(RESPALDOS_CLAVE=''):
+            self.client.post(reverse('crear_respaldo'))
+            self.assertTrue(next(self.carpeta.iterdir()).name.endswith('.zip'))
+            self.assertContains(self.client.get(reverse('respaldos')), 'Sin cifrar')
+
+    def test_pantalla_muestra_cifrado_activado(self):
+        self.client.post(reverse('crear_respaldo'))
+        pagina = self.client.get(reverse('respaldos'))
+        self.assertContains(pagina, 'Cifrado activado')
+        self.assertContains(pagina, 'Descargar descifrado')
+        self.assertNotContains(pagina, self.CLAVE)
+
+    def test_descargar_descifrado_rechaza_respaldos_sin_cifrar(self):
+        from django.test import override_settings
+        with override_settings(RESPALDOS_CLAVE=''):
+            self.client.post(reverse('crear_respaldo'))
+        nombre = next(self.carpeta.iterdir()).name
+        self.assertEqual(
+            self.client.get(reverse('descargar_respaldo_descifrado', args=[nombre])).status_code, 404,
+        )
+
+    def test_comando_descifrar_respaldo(self):
+        from io import StringIO
+        from pathlib import Path
+
+        from django.core.management import call_command
+        self.client.post(reverse('crear_respaldo'))
+        sobre = next(self.carpeta.iterdir())
+        salida = Path(self._tmp.name) / 'recuperado.zip'
+        call_command('descifrar_respaldo', str(sobre), str(salida), stdout=StringIO())
+        self.assertTrue(salida.is_file())

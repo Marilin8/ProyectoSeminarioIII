@@ -168,7 +168,7 @@ def subir_archivo(token, ruta, carpeta_id):
                 'PUT', destino.path + '?' + destino.query, body=archivo,
                 headers={
                     'Content-Length': str(ruta.stat().st_size),
-                    'Content-Type': 'application/zip',
+                    'Content-Type': 'application/octet-stream',
                 },
             )
             respuesta = conexion.getresponse()

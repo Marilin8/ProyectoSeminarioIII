@@ -29,6 +29,15 @@
                     <input type="checkbox" name="incluir_archivos">
                     Incluir también las imágenes e informes (carpeta de archivos)
                 </label>
+                <p style="font-size:0.85rem;margin:0 0 0.9rem;">
+                    {% if cifrado_activo %}
+                        <span class="badge" style="background:#dcfce7;color:#15803d;">Cifrado activado</span>
+                        Los respaldos se guardan cifrados (AES-256) con la clave del archivo .env.
+                    {% else %}
+                        <span class="badge" style="background:#fef3c7;color:#b45309;">Sin cifrar</span>
+                        Los respaldos se guardan sin cifrar. Para cifrarlos, agregue <code>RESPALDOS_CLAVE</code> al archivo .env.
+                    {% endif %}
+                </p>
                 {% if drive and drive.conectada %}
                     <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.9rem;cursor:pointer;">
                         <input type="checkbox" name="subir_drive" checked>
@@ -110,12 +119,16 @@
                                 <td>{{ r.nombre }}</td>
                                 <td>
                                     {% if r.con_archivos %}Base de datos + archivos{% else %}Solo base de datos{% endif %}
+                                    {% if r.cifrado %}<br><span class="badge" style="background:#dcfce7;color:#15803d;">Cifrado</span>{% endif %}
                                     {% if r.en_nube %}<br><span class="badge" style="background:#dbeafe;color:#1d4ed8;">En Google Drive</span>{% endif %}
                                 </td>
                                 <td>{{ r.fecha|date:'d/m/Y H:i' }}</td>
                                 <td>{{ r.tamano|filesizeformat }}</td>
                                 <td style="text-align:right;white-space:nowrap;">
-                                    <a class="btn btn-outline btn-sm" href="{% url 'descargar_respaldo' r.nombre %}">Descargar</a>
+                                    <a class="btn btn-outline btn-sm" href="{% url 'descargar_respaldo' r.nombre %}">Descargar{% if r.cifrado %} (cifrado){% endif %}</a>
+                                    {% if r.cifrado and cifrado_activo %}
+                                        <a class="btn btn-outline btn-sm" href="{% url 'descargar_respaldo_descifrado' r.nombre %}">Descargar descifrado</a>
+                                    {% endif %}
                                     {% if drive and drive.conectada and not r.en_nube %}
                                         <form method="post" action="{% url 'subir_respaldo_a_drive' r.nombre %}" style="display:inline;"
                                               onsubmit="var b=this.querySelector('button');b.disabled=true;b.textContent='Subiendo…';">
@@ -146,5 +159,9 @@
         en un lugar seguro (otro equipo o disco externo). En el servidor se guardan en
         <code>{{ carpeta }}</code>; un respaldo que queda solo en el mismo equipo no
         protege contra la pérdida de ese equipo. Eliminar un respaldo aquí no lo borra de Google Drive.
+        {% if cifrado_activo %}
+            <strong>Guarde la clave RESPALDOS_CLAVE del archivo .env en un lugar seguro fuera de este equipo:
+            sin ella, los respaldos cifrados no se pueden recuperar.</strong>
+        {% endif %}
     </p>
 {% endblock %}

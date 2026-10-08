@@ -10,12 +10,28 @@ from pathlib import Path
 from django.conf import settings
 from django.db import connection
 
-NOMBRE_VALIDO = re.compile(r'^respaldo_\d{8}_\d{6}(_con_archivos)?\.zip$')
+from . import cifrado
+
+NOMBRE_VALIDO = re.compile(r'^respaldo_\d{8}_\d{6}(_con_archivos)?\.zip(\.cif)?$')
+LARGO_MINIMO_CLAVE = 16
 TIMEOUT_DUMP_SEGUNDOS = 600
 
 
 class ErrorRespaldo(Exception):
     pass
+
+
+def clave_de_cifrado():
+    """Clave configurada en el .env como bytes, o None si el cifrado está desactivado."""
+    clave = (getattr(settings, 'RESPALDOS_CLAVE', '') or '').strip()
+    if not clave:
+        return None
+    if len(clave) < LARGO_MINIMO_CLAVE:
+        raise ErrorRespaldo(
+            'La RESPALDOS_CLAVE del archivo .env es demasiado corta '
+            f'(mínimo {LARGO_MINIMO_CLAVE} caracteres).'
+        )
+    return clave.encode('utf-8')
 
 
 def carpeta_respaldos():
@@ -72,11 +88,15 @@ def _volcar_base_de_datos(destino):
 
 
 def crear_respaldo(incluir_archivos=False):
-    """Genera un .zip en la carpeta de respaldos con el volcado SQL de la base
-    de datos y, si se pide, la carpeta media/ (imágenes e informes).
+    """Genera un respaldo en la carpeta de respaldos: un .zip con el volcado SQL
+    de la base de datos y, si se pide, la carpeta media/ (imágenes e informes).
+    Si hay RESPALDOS_CLAVE en el .env, el .zip se guarda cifrado (.zip.cif) y
+    nunca queda una copia sin cifrar en la carpeta de respaldos.
     Devuelve el nombre del archivo creado."""
+    clave = clave_de_cifrado()
     ahora = datetime.datetime.now()
-    nombre = f'respaldo_{ahora:%Y%m%d_%H%M%S}{"_con_archivos" if incluir_archivos else ""}.zip'
+    base = f'respaldo_{ahora:%Y%m%d_%H%M%S}{"_con_archivos" if incluir_archivos else ""}.zip'
+    nombre = base + ('.cif' if clave else '')
     carpeta = carpeta_respaldos()
     final = carpeta / nombre
     parcial = carpeta / (nombre + '.parcial')
@@ -85,7 +105,8 @@ def crear_respaldo(incluir_archivos=False):
         with tempfile.TemporaryDirectory() as tmp:
             sql = Path(tmp) / 'base_de_datos.sql'
             _volcar_base_de_datos(sql)
-            with zipfile.ZipFile(parcial, 'w', zipfile.ZIP_DEFLATED) as zf:
+            zip_plano = Path(tmp) / base
+            with zipfile.ZipFile(zip_plano, 'w', zipfile.ZIP_DEFLATED) as zf:
                 zf.write(sql, 'base_de_datos.sql')
                 if incluir_archivos:
                     media = Path(settings.MEDIA_ROOT)
@@ -93,11 +114,29 @@ def crear_respaldo(incluir_archivos=False):
                         for archivo in media.rglob('*'):
                             if archivo.is_file():
                                 zf.write(archivo, Path('media') / archivo.relative_to(media))
+            if clave:
+                cifrado.cifrar_archivo(zip_plano, parcial, clave)
+            else:
+                shutil.copyfile(zip_plano, parcial)
         parcial.replace(final)
     except Exception:
         parcial.unlink(missing_ok=True)
         raise
     return nombre
+
+
+def descifrar_a_archivo(nombre, destino):
+    """Descifra un respaldo .cif en `destino` (ruta o archivo abierto)."""
+    ruta = ruta_respaldo(nombre)
+    if ruta is None or not nombre.endswith('.cif'):
+        raise ErrorRespaldo('Ese respaldo no está cifrado o no existe.')
+    clave = clave_de_cifrado()
+    if clave is None:
+        raise ErrorRespaldo('No hay RESPALDOS_CLAVE en el archivo .env: no se puede descifrar.')
+    try:
+        cifrado.descifrar_archivo(ruta, destino, clave)
+    except cifrado.ErrorCifrado as error:
+        raise ErrorRespaldo(str(error))
 
 
 def listar_respaldos():
@@ -112,7 +151,8 @@ def listar_respaldos():
                 'nombre': ruta.name,
                 'tamano': info.st_size,
                 'fecha': datetime.datetime.fromtimestamp(info.st_mtime),
-                'con_archivos': ruta.name.endswith('_con_archivos.zip'),
+                'con_archivos': '_con_archivos' in ruta.name,
+                'cifrado': ruta.name.endswith('.cif'),
                 'en_nube': ruta.name in en_nube,
             })
     return sorted(respaldos, key=lambda r: r['fecha'], reverse=True)

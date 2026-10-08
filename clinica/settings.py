@@ -203,6 +203,12 @@ MEDIA_ROOT = BASE_DIR / 'media'
 BACKUP_DIR = BASE_DIR / 'respaldos'
 MYSQLDUMP_PATH = config('MYSQLDUMP_PATH', default='')
 
+# Clave con la que se cifran los respaldos (AES-256-GCM). Vive solo en el .env,
+# nunca dentro de un respaldo. Si se pierde, los respaldos cifrados NO se
+# pueden recuperar: guardar una copia en un lugar seguro fuera del servidor.
+# Vacía = los respaldos se guardan sin cifrar.
+RESPALDOS_CLAVE = config('RESPALDOS_CLAVE', default='')
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 

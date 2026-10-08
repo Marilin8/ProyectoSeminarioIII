@@ -1,8 +1,10 @@
 import base64
 import datetime
 import io
+import tempfile
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login as auth_login
 from django.contrib.auth import update_session_auth_hash
@@ -910,6 +912,7 @@ def respaldos(request):
         'respaldos': servicio_respaldos.listar_respaldos(),
         'carpeta': servicio_respaldos.carpeta_respaldos(),
         'drive': ConexionGoogleDrive.objects.first(),
+        'cifrado_activo': bool((getattr(settings, 'RESPALDOS_CLAVE', '') or '').strip()),
         'uri_redireccion': servicio_nube.uri_de_redireccion(),
     })
 
@@ -1071,6 +1074,30 @@ def descargar_respaldo(request, nombre):
         descripcion=f'Descargó el respaldo {nombre}.',
     )
     return FileResponse(open(ruta, 'rb'), as_attachment=True, filename=nombre)
+
+
+@login_required
+@user_passes_test(es_administrador)
+def descargar_respaldo_descifrado(request, nombre):
+    """Entrega el .zip ya descifrado de un respaldo .zip.cif. El archivo en
+    claro vive solo en un temporal que se borra al terminar la descarga."""
+    if servicio_respaldos.ruta_respaldo(nombre) is None or not nombre.endswith('.cif'):
+        raise Http404('Respaldo no encontrado.')
+    temporal = tempfile.TemporaryFile()
+    try:
+        servicio_respaldos.descifrar_a_archivo(nombre, temporal)
+    except servicio_respaldos.ErrorRespaldo as error:
+        temporal.close()
+        messages.error(request, f'No se pudo descifrar el respaldo: {error}')
+        return redirect('respaldos')
+    temporal.seek(0)
+    Bitacora.registrar(
+        request=request,
+        usuario=request.user,
+        accion=Bitacora.ACCION_DESCARGAR_RESPALDO,
+        descripcion=f'Descargó el respaldo {nombre} descifrado.',
+    )
+    return FileResponse(temporal, as_attachment=True, filename=nombre[:-len('.cif')])
 
 
 @login_required
