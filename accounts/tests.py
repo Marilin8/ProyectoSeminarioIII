@@ -1599,6 +1599,15 @@ class TrabajosYProgresoTests(TestCase):
         self.assertContains(pagina, 'listo')
         self.assertEqual(self.client.get(reverse('respaldo_estado')).json(), {'estado': 'ninguno'})
 
+    def test_el_script_de_progreso_esta_en_el_contenido_y_no_en_el_titulo(self):
+        import re
+        pagina = self.client.get(reverse('respaldos')).content.decode()
+        titulo = re.search(r'<title>(.*?)</title>', pagina, re.S).group(1)
+        self.assertNotIn('function', titulo)
+        self.assertNotIn('<script', titulo)
+        self.assertIn("fetch('/respaldos/estado/'", pagina)
+        self.assertLess(pagina.index('id="panel-progreso"'), pagina.index("fetch('/respaldos/estado/'"))
+
     def test_el_panel_esta_oculto_sin_trabajo(self):
         self.assertContains(self.client.get(reverse('respaldos')), 'id="panel-progreso" hidden')
 

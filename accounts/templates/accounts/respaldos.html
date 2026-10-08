@@ -1,84 +1,6 @@
 {% extends 'base.html' %}
 
 {% block title %}Respaldos - Clínica de Imágenes
-    <script>
-    (function () {
-        var panel = document.getElementById('panel-progreso');
-        var relleno = document.getElementById('progreso-relleno');
-        var barra = document.getElementById('progreso-barra');
-        var etapa = document.getElementById('progreso-etapa');
-        var titulo = document.getElementById('progreso-titulo');
-        var porcentaje = document.getElementById('progreso-porcentaje');
-        var tiempo = document.getElementById('progreso-tiempo');
-        var fallos = 0;
-        var consultando = false;
-
-        function mostrar(datos) {
-            panel.hidden = false;
-            titulo.textContent = datos.titulo || 'Trabajando…';
-            etapa.textContent = datos.etapa || '';
-            relleno.style.width = datos.porcentaje + '%';
-            porcentaje.textContent = datos.porcentaje + '%';
-            tiempo.textContent = datos.segundos;
-        }
-
-        function consultar() {
-            fetch('{% url "respaldo_estado" %}', {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
-                .then(function (r) {
-                    var tipo = r.headers.get('Content-Type') || '';
-                    if (r.redirected || tipo.indexOf('json') === -1) { throw new Error('sesion'); }
-                    return r.json();
-                })
-                .then(function (datos) {
-                    fallos = 0;
-                    if (datos.estado === 'corriendo') {
-                        mostrar(datos);
-                        setTimeout(consultar, 1000);
-                    } else {
-                        window.location.reload();
-                    }
-                })
-                .catch(function (e) {
-                    fallos += 1;
-                    if (e && e.message === 'sesion') {
-                        // Al restaurar se reemplazan también las sesiones: hay que entrar de nuevo.
-                        etapa.textContent = 'Terminó. Si la página pide iniciar sesión, ya puede entrar de nuevo.';
-                        window.location.reload();
-                        return;
-                    }
-                    // Mientras se restaura la base el servidor responde con errores un rato: seguir intentando.
-                    if (fallos < 600) { setTimeout(consultar, 1500); }
-                });
-        }
-
-        if (!panel.hidden) {
-            consultar();
-        }
-
-        var zona = document.getElementById('zona-subida');
-        var entrada = document.getElementById('archivo-restaurar');
-        var texto = document.getElementById('zona-texto');
-        if (zona && entrada) {
-            function nombre() {
-                if (entrada.files.length) {
-                    var mb = (entrada.files[0].size / 1048576).toFixed(1);
-                    texto.innerHTML = '<strong></strong> (' + mb + ' MB)';
-                    texto.firstChild.textContent = entrada.files[0].name;
-                }
-            }
-            entrada.addEventListener('change', nombre);
-            ['dragenter', 'dragover'].forEach(function (ev) {
-                zona.addEventListener(ev, function (e) { e.preventDefault(); zona.classList.add('arrastrando'); });
-            });
-            ['dragleave', 'drop'].forEach(function (ev) {
-                zona.addEventListener(ev, function (e) { e.preventDefault(); zona.classList.remove('arrastrando'); });
-            });
-            zona.addEventListener('drop', function (e) {
-                if (e.dataTransfer.files.length) { entrada.files = e.dataTransfer.files; nombre(); }
-            });
-        }
-    })();
-    </script>
 {% endblock %}
 {% block page_title %}
     <svg width="14" height="14"><use href="#i-clipboard"/></svg>
@@ -329,4 +251,82 @@
             sin ella, los respaldos cifrados no se pueden recuperar.</strong>
         {% endif %}
     </p>
+    <script>
+    (function () {
+        var panel = document.getElementById('panel-progreso');
+        var relleno = document.getElementById('progreso-relleno');
+        var barra = document.getElementById('progreso-barra');
+        var etapa = document.getElementById('progreso-etapa');
+        var titulo = document.getElementById('progreso-titulo');
+        var porcentaje = document.getElementById('progreso-porcentaje');
+        var tiempo = document.getElementById('progreso-tiempo');
+        var fallos = 0;
+        var consultando = false;
+
+        function mostrar(datos) {
+            panel.hidden = false;
+            titulo.textContent = datos.titulo || 'Trabajando…';
+            etapa.textContent = datos.etapa || '';
+            relleno.style.width = datos.porcentaje + '%';
+            porcentaje.textContent = datos.porcentaje + '%';
+            tiempo.textContent = datos.segundos;
+        }
+
+        function consultar() {
+            fetch('{% url "respaldo_estado" %}', {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
+                .then(function (r) {
+                    var tipo = r.headers.get('Content-Type') || '';
+                    if (r.redirected || tipo.indexOf('json') === -1) { throw new Error('sesion'); }
+                    return r.json();
+                })
+                .then(function (datos) {
+                    fallos = 0;
+                    if (datos.estado === 'corriendo') {
+                        mostrar(datos);
+                        setTimeout(consultar, 1000);
+                    } else {
+                        window.location.reload();
+                    }
+                })
+                .catch(function (e) {
+                    fallos += 1;
+                    if (e && e.message === 'sesion') {
+                        // Al restaurar se reemplazan también las sesiones: hay que entrar de nuevo.
+                        etapa.textContent = 'Terminó. Si la página pide iniciar sesión, ya puede entrar de nuevo.';
+                        window.location.reload();
+                        return;
+                    }
+                    // Mientras se restaura la base el servidor responde con errores un rato: seguir intentando.
+                    if (fallos < 600) { setTimeout(consultar, 1500); }
+                });
+        }
+
+        if (!panel.hidden) {
+            consultar();
+        }
+
+        var zona = document.getElementById('zona-subida');
+        var entrada = document.getElementById('archivo-restaurar');
+        var texto = document.getElementById('zona-texto');
+        if (zona && entrada) {
+            function nombre() {
+                if (entrada.files.length) {
+                    var mb = (entrada.files[0].size / 1048576).toFixed(1);
+                    texto.innerHTML = '<strong></strong> (' + mb + ' MB)';
+                    texto.firstChild.textContent = entrada.files[0].name;
+                }
+            }
+            entrada.addEventListener('change', nombre);
+            ['dragenter', 'dragover'].forEach(function (ev) {
+                zona.addEventListener(ev, function (e) { e.preventDefault(); zona.classList.add('arrastrando'); });
+            });
+            ['dragleave', 'drop'].forEach(function (ev) {
+                zona.addEventListener(ev, function (e) { e.preventDefault(); zona.classList.remove('arrastrando'); });
+            });
+            zona.addEventListener('drop', function (e) {
+                if (e.dataTransfer.files.length) { entrada.files = e.dataTransfer.files; nombre(); }
+            });
+        }
+    })();
+    </script>
 {% endblock %}
