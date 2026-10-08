@@ -883,12 +883,24 @@ class CrearOrdenPagoForm(forms.Form):
         choices=[(Cita.CONVENIO_COEX, 'COEX'), (Cita.CONVENIO_EMERGENCIA_IGSS, 'Emergencia IGSS')],
         label='Convenio',
     )
-    desde = forms.DateField(label='Desde', widget=forms.DateInput(attrs={'type': 'date'}))
-    hasta = forms.DateField(label='Hasta', widget=forms.DateInput(attrs={'type': 'date'}))
+    desde = forms.DateField(label='Desde', required=False, widget=forms.DateInput(attrs={'type': 'date'}))
+    hasta = forms.DateField(label='Hasta', required=False, widget=forms.DateInput(attrs={'type': 'date'}))
+    monto_maximo = forms.DecimalField(
+        label='Monto máximo', required=False, min_value=Decimal('0.01'), max_digits=10, decimal_places=2,
+        help_text='Se agrupan los estudios de la más antigua a la más reciente mientras quepan.',
+    )
+    tipo_estudio = forms.ModelChoiceField(
+        label='Tipo de estudio', required=False,
+        queryset=TipoEstudio.objects.filter(activo=True).order_by('nombre'),
+    )
+    codigo_igss = forms.CharField(label='Código IGSS', required=False, max_length=50)
     notas = forms.CharField(
         label='Notas', max_length=255, required=False,
         widget=forms.Textarea(attrs={'rows': 2}),
     )
+
+    def clean_codigo_igss(self):
+        return (self.cleaned_data.get('codigo_igss') or '').strip()
 
     def clean(self):
         cleaned = super().clean()

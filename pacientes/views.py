@@ -901,9 +901,61 @@ def editar_contacto_paciente(request, paciente_id):
 @login_required
 @user_passes_test(es_caja)
 def pagos_pendientes_igss(request):
-    """Acceso directo a Caja ya filtrado por Emergencia IGSS, para el botón
-    "Pagos IGSS" del panel (ver accounts.pantallas)."""
-    return redirect(f"{reverse('pagos_pendientes')}?convenio={Cita.CONVENIO_EMERGENCIA_IGSS}")
+    """Pantalla "Pagos IGSS": COEX y Emergencia IGSS se cobran solo por orden
+    agrupada. La orden la definen dos datos: el monto máximo (se agrupan los
+    estudios pendientes de la más antigua a la más reciente mientras quepan)
+    y, opcionalmente, un tipo de estudio y/o un código IGSS. Al crearla, los
+    estudios quedan agrupados en una orden pendiente de comprobante; recién
+    cuando se sube la boleta pasan a pagados (ver crear_orden_pago/
+    pagar_orden_pago)."""
+    convenios_igss = (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS)
+    convenio = request.GET.get('convenio', '')
+    tipo_estudio = request.GET.get('tipo_estudio', '')
+    codigo_igss = (request.GET.get('codigo_igss') or '').strip()
+    try:
+        monto_maximo = Decimal((request.GET.get('monto_maximo') or '').replace(',', '.') or '0')
+    except ArithmeticError:
+        monto_maximo = Decimal('0')
+    if monto_maximo < 0:
+        monto_maximo = Decimal('0')
+
+    previa = None
+    if convenio in convenios_igss:
+        candidatas = _citas_pendientes_para_orden(
+            convenio,
+            tipo_estudio_id=int(tipo_estudio) if tipo_estudio.isdigit() else None,
+            codigo_igss=codigo_igss,
+        )
+        incluidas, fuera = _citas_hasta_monto(candidatas, monto_maximo or None)
+        previa = {
+            'citas': incluidas,
+            'cantidad': len(incluidas),
+            'pacientes': len({c.paciente_id for c in incluidas}),
+            'total': _total_citas_para_orden(incluidas),
+            'fuera_cantidad': len(fuera),
+            'fuera_total': _total_citas_para_orden(fuera),
+        }
+
+    ordenes = OrdenPago.objects.filter(convenio__in=convenios_igss).select_related('creado_por')
+    pendientes = ordenes.filter(estado=OrdenPago.ESTADO_PENDIENTE).prefetch_related('detalles').order_by('-creado_en')
+    pagadas = ordenes.filter(estado=OrdenPago.ESTADO_PAGADA).prefetch_related('detalles').order_by('-pagado_en')[:15]
+
+    sin_agrupar = [c for conv in convenios_igss for c in _citas_pendientes_para_orden(conv)]
+
+    return render(request, 'pacientes/pagos_igss.html', {
+        'convenios': [(v, dict(Cita.CONVENIO_CHOICES)[v]) for v in convenios_igss],
+        'tipos_estudio': TipoEstudio.objects.filter(activo=True).order_by('nombre'),
+        'convenio': convenio,
+        'tipo_estudio': tipo_estudio,
+        'codigo_igss': codigo_igss,
+        'monto_maximo': monto_maximo or '',
+        'previa': previa,
+        'pendientes': pendientes,
+        'pagadas': pagadas,
+        'total_pendiente': sum((o.total for o in pendientes), Decimal('0.00')),
+        'sin_agrupar_cantidad': len(sin_agrupar),
+        'sin_agrupar_total': _total_citas_para_orden(sin_agrupar),
+    })
 
 
 @login_required
@@ -1015,32 +1067,62 @@ def pagos_pendientes(request):
     })
 
 
-def _citas_pendientes_para_orden(convenio, desde, hasta, *, para_actualizar=False):
-    """Citas de `convenio` entre `desde` y `hasta` (inclusive) listas para
-    agruparse en una orden de pago: el técnico ya confirmó el estudio,
-    tienen cobro pendiente y no están ya en otra orden agrupada abierta.
-    No importa de qué paciente sean -- una orden agrupada cubre el
-    convenio/rango elegido, no una sola visita de un paciente."""
+def _citas_pendientes_para_orden(
+    convenio, desde=None, hasta=None, *, tipo_estudio_id=None, codigo_igss='', para_actualizar=False,
+):
+    """Citas de `convenio` listas para agruparse en una orden de pago: el
+    técnico ya confirmó el estudio, tienen cobro pendiente y no están ya en
+    otra orden agrupada abierta. Opcionalmente solo entre `desde` y `hasta`
+    (inclusive), solo de un tipo de estudio, y/o solo con un código IGSS
+    puntual. Las más antiguas primero. No importa de qué paciente sean --
+    una orden agrupada cubre el convenio elegido, no una sola visita."""
     qs = Cita.objects.filter(
         convenio=convenio,
-        fecha__gte=desde, fecha__lte=hasta,
         orden_trabajo__validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO,
         cobro__estado=Cobro.ESTADO_PENDIENTE,
     ).exclude(
         detalles_orden_pago__orden_pago__estado=OrdenPago.ESTADO_PENDIENTE,
-    ).select_related('paciente', 'tipo_estudio').prefetch_related('estudios_extra').order_by('fecha', 'hora')
+    ).select_related('paciente', 'tipo_estudio').prefetch_related('estudios_extra').order_by('fecha', 'hora', 'id')
+    if desde:
+        qs = qs.filter(fecha__gte=desde)
+    if hasta:
+        qs = qs.filter(fecha__lte=hasta)
+    if tipo_estudio_id:
+        qs = qs.filter(tipo_estudio_id=tipo_estudio_id)
+    if codigo_igss:
+        qs = qs.filter(codigo_igss__iexact=codigo_igss)
     if para_actualizar:
         qs = qs.select_for_update()
     return list(qs)
 
 
-def _total_citas_para_orden(citas):
-    total = Decimal('0.00')
-    for cita in citas:
-        total += cita.precio_base
-        for extra in cita.estudios_extra_cobrados:
-            total += extra.precio
+def _total_cita_para_orden(cita):
+    total = cita.precio_base
+    for extra in cita.estudios_extra_cobrados:
+        total += extra.precio
     return total
+
+
+def _total_citas_para_orden(citas):
+    return sum((_total_cita_para_orden(c) for c in citas), Decimal('0.00'))
+
+
+def _citas_hasta_monto(citas, monto_maximo):
+    """Reparte `citas` (ya ordenadas de la más antigua a la más reciente) en
+    (incluidas, excluidas): entran en orden mientras el acumulado no pase de
+    `monto_maximo`; en la primera que ya no cabe se corta (no se saltea para
+    meter una más barata, así nunca queda un estudio viejo atrás de uno más
+    nuevo). Sin monto máximo entran todas."""
+    if not monto_maximo:
+        return list(citas), []
+    incluidas, acumulado = [], Decimal('0.00')
+    for posicion, cita in enumerate(citas):
+        total = _total_cita_para_orden(cita)
+        if acumulado + total > monto_maximo:
+            return incluidas, list(citas[posicion:])
+        incluidas.append(cita)
+        acumulado += total
+    return incluidas, []
 
 
 @login_required
@@ -1058,21 +1140,30 @@ def crear_orden_pago(request):
         for error in form.non_field_errors():
             messages.error(request, error)
         if not form.non_field_errors():
-            messages.error(request, 'Revisá el convenio y el rango de fechas.')
-        return redirect('pagos_pendientes')
+            messages.error(request, 'Revisá el convenio y los criterios de la orden.')
+        return redirect(_volver_seguro(request, reverse('pagos_pendientes')))
 
     convenio = form.cleaned_data['convenio']
     desde = form.cleaned_data['desde']
     hasta = form.cleaned_data['hasta']
+    monto_maximo = form.cleaned_data['monto_maximo']
+    tipo_filtro = form.cleaned_data['tipo_estudio']
+    codigo_igss = form.cleaned_data['codigo_igss']
 
     with transaction.atomic():
-        citas = _citas_pendientes_para_orden(convenio, desde, hasta, para_actualizar=True)
+        candidatas = _citas_pendientes_para_orden(
+            convenio, desde, hasta,
+            tipo_estudio_id=tipo_filtro.id if tipo_filtro else None,
+            codigo_igss=codigo_igss, para_actualizar=True,
+        )
+        citas, _fuera = _citas_hasta_monto(candidatas, monto_maximo)
         if not citas:
             messages.error(
                 request,
-                'No hay estudios pendientes de cobro para ese convenio en ese rango de fechas.',
+                'No hay estudios pendientes de cobro que cumplan esos criterios'
+                + (' dentro del monto máximo.' if monto_maximo and candidatas else '.'),
             )
-            return redirect('pagos_pendientes')
+            return redirect(_volver_seguro(request, reverse('pagos_pendientes')))
 
         detalles = []
         subtotal = Decimal('0.00')
@@ -1086,9 +1177,16 @@ def crear_orden_pago(request):
                 subtotal += precio_extra
 
         pacientes_distintos = {c.paciente_id for c in citas}
-        notas = form.cleaned_data['notas'] or (
-            f'{dict(Cita.CONVENIO_CHOICES).get(convenio, convenio)} del {desde:%d/%m/%Y} al {hasta:%d/%m/%Y}'
-        )
+        criterios = [dict(Cita.CONVENIO_CHOICES).get(convenio, convenio)]
+        if desde and hasta:
+            criterios.append(f'del {desde:%d/%m/%Y} al {hasta:%d/%m/%Y}')
+        if tipo_filtro:
+            criterios.append(tipo_filtro.nombre)
+        if codigo_igss:
+            criterios.append(f'código {codigo_igss}')
+        if monto_maximo:
+            criterios.append(f'máx. Q{monto_maximo:.2f}')
+        notas = form.cleaned_data['notas'] or ' · '.join(criterios)
         orden = OrdenPago.objects.create(
             convenio=convenio,
             paciente=citas[0].paciente if len(pacientes_distintos) == 1 else None,
@@ -1116,7 +1214,7 @@ def crear_orden_pago(request):
         f'de {len(pacientes_distintos)} paciente{"s" if len(pacientes_distintos) != 1 else ""}, '
         f'total Q{subtotal:.2f}.',
     )
-    return redirect('pagos_pendientes')
+    return redirect(_volver_seguro(request, reverse('pagos_pendientes')))
 
 
 @login_required
@@ -1132,10 +1230,10 @@ def pagar_orden_pago(request, orden_id):
     form = RegistrarPagoEstudioForm(request.POST, request.FILES)
     if not form.is_valid():
         messages.error(request, 'Adjunte una boleta válida y complete los datos del pago.')
-        return redirect('pagos_pendientes')
+        return redirect(_volver_seguro(request, reverse('pagos_pendientes')))
     if not form.cleaned_data['comprobante_bancario']:
         messages.error(request, 'La orden agrupada requiere adjuntar la boleta global.')
-        return redirect('pagos_pendientes')
+        return redirect(_volver_seguro(request, reverse('pagos_pendientes')))
 
     with transaction.atomic():
         orden.numero_boleta = form.cleaned_data['numero_boleta']
@@ -1158,7 +1256,7 @@ def pagar_orden_pago(request, orden_id):
     messages.success(request, f'Orden de pago #{orden.id} confirmada y estudios liberados.')
     for cita in citas_pagadas:
         _intentar_envio_automatico(request, cita)
-    return redirect('pagos_pendientes')
+    return redirect(_volver_seguro(request, reverse('pagos_pendientes')))
 
 
 @login_required
@@ -1978,7 +2076,7 @@ def reporte_comision_medico_tratante(request, medico_id):
             destino = reverse('reporte_comision_medico_tratante', args=[medico.id])
             return redirect(f'{destino}?{query}' if query else destino)
     else:
-        form = PagoComisionMedicoTratanteForm(initial={'monto': datos['total']})
+        form = PagoComisionMedicoTratanteForm()
 
     pagos_anteriores = (
         medico.pagos_comision.select_related('registrado_por').prefetch_related('lineas__cita__paciente')
@@ -3923,12 +4021,29 @@ def descargar_dicom_orden(request, orden_id):
 @login_required
 @user_passes_test(es_radiologo)
 def solicitudes_pendientes(request):
+    busqueda = (request.GET.get('q') or '').strip()
+    convenio = (request.GET.get('convenio') or '').strip()
     citas = (
         Cita.objects.filter(estado=Cita.ESTADO_PENDIENTE, radiologo=request.user)
         .select_related('paciente', 'tipo_estudio')
         .order_by('fecha_sugerida', 'hora_sugerida')
     )
-    return render(request, 'pacientes/solicitudes_pendientes.html', {'citas': citas})
+    if busqueda:
+        citas = citas.filter(
+            Q(paciente__nombre__icontains=busqueda)
+            | Q(paciente__apellido__icontains=busqueda)
+            | Q(paciente__dpi__icontains=busqueda)
+            | Q(paciente__telefono__icontains=busqueda)
+            | Q(tipo_estudio__nombre__icontains=busqueda)
+        )
+    if convenio in dict(Cita.CONVENIO_CHOICES):
+        citas = citas.filter(convenio=convenio)
+    return render(request, 'pacientes/solicitudes_pendientes.html', {
+        'citas': citas,
+        'busqueda': busqueda,
+        'convenio': convenio,
+        'convenios': Cita.CONVENIO_CHOICES,
+    })
 
 
 @login_required

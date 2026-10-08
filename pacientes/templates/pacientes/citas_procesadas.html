@@ -10,8 +10,6 @@
         .orden .titulo strong { color: var(--text); font-size: 1rem; }
         .orden .datos { font-size: 0.85rem; color: var(--text); margin-bottom: 0.5rem; }
         .orden .motivo { font-size: 0.85rem; color: var(--text); background: #f8fafc; border-left: 3px solid var(--primary); padding: 0.5rem 0.75rem; margin-bottom: 0.75rem; border-radius: 0 var(--radius) var(--radius) 0; }
-        .filtros-radiologia label { display:flex; flex-direction:column; gap:.3rem; font-size:.76rem; color:var(--text-muted); font-weight:600; }
-        @media (max-width: 800px) { .filtros-radiologia { grid-template-columns:1fr !important; } }
     </style>
 {% endblock %}
 
@@ -22,26 +20,28 @@
 {% endblock %}
 
 {% block content %}
-    <form method="get" class="card mb-2 filtros-radiologia" style="padding:1rem;display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:.7rem;align-items:end;">
-        <label>Paciente, DPI o teléfono
-            <input type="search" name="q" value="{{ busqueda }}" placeholder="Buscar mientras escribe...">
-        </label>
-        <label>Convenio
-            <select name="convenio">
+    <form method="get" data-buscar-vivo class="card mb-2" style="padding:0.85rem 1rem;display:flex;gap:0.6rem;align-items:flex-end;flex-wrap:wrap;">
+        <div style="display:flex;flex-direction:column;gap:0.2rem;">
+            <label for="q" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Paciente / DPI / teléfono</label>
+            <input type="text" name="q" id="q" value="{{ busqueda }}" placeholder="Buscar mientras escribe..." style="min-width:16rem;" autocomplete="off">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:0.2rem;">
+            <label for="convenio" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Convenio</label>
+            <select name="convenio" id="convenio">
                 <option value="">Todos</option>
                 {% for valor, etiqueta in convenios %}
                     <option value="{{ valor }}" {% if convenio == valor %}selected{% endif %}>{{ etiqueta }}</option>
                 {% endfor %}
             </select>
-        </label>
-        <label>Tipo de cobro
-            <select name="agrupacion">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:0.2rem;">
+            <label for="agrupacion" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Tipo de cobro</label>
+            <select name="agrupacion" id="agrupacion">
                 <option value="">Todos</option>
                 <option value="agrupado" {% if agrupacion == 'agrupado' %}selected{% endif %}>Combo / agrupada</option>
                 <option value="individual" {% if agrupacion == 'individual' %}selected{% endif %}>Individual</option>
             </select>
-        </label>
-        <button class="btn btn-primary btn-sm" type="submit">Filtrar</button>
+        </div>
         <a class="btn btn-outline btn-sm" href="{% url 'citas_procesadas' %}">Limpiar</a>
     </form>
     {% if ordenes %}
@@ -76,20 +76,4 @@
             No hay citas pendientes de informe por el momento.
         </div>
     {% endif %}
-    <script>
-        (function () {
-            var formulario = document.querySelector('.filtros-radiologia');
-            var buscador = formulario && formulario.querySelector('input[name="q"]');
-            var temporizador;
-            if (!buscador) return;
-            function enviar() {
-                clearTimeout(temporizador);
-                temporizador = setTimeout(function () { formulario.submit(); }, 250);
-            }
-            buscador.addEventListener('input', enviar);
-            formulario.querySelectorAll('select').forEach(function (select) {
-                select.addEventListener('change', enviar);
-            });
-        })();
-    </script>
 {% endblock %}

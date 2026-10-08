@@ -145,12 +145,6 @@
     {% if datos.citas %}
         <div class="card mb-2" style="padding:1rem;">
             <h3 style="margin-top:0;">Registrar pago de comisión</h3>
-            <p class="ayuda">
-                Escribí cuánto se le paga de comisión a {{ medico.nombre }} por estos
-                {{ datos.cantidad }} estudio(s) (Q{{ datos.total|floatformat:2 }} en total referido) y
-                adjuntá el comprobante. Al guardar, estos estudios quedan marcados como pagados de
-                comisión y no vuelven a aparecer en un próximo reporte.
-            </p>
             <form method="post" enctype="multipart/form-data">
                 {% csrf_token %}
                 {{ form.non_field_errors }}

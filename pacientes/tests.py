@@ -4967,3 +4967,153 @@ class ComisionMedicoTratanteTests(TestCase):
         })
 
         self.assertEqual(respuesta.context['datos']['cantidad'], 1)
+
+
+class PantallaPagosIgssTests(OrdenPagoTests):
+    """Pantalla "Pagos IGSS": solo órdenes agrupadas de COEX/Emergencia IGSS
+    (vista previa, crear orden, boleta global), sin lista de cobros sueltos."""
+
+    def test_muestra_la_vista_previa_del_convenio(self):
+        respuesta = self.client.get(reverse('pagos_pendientes_igss'), {'convenio': Cita.CONVENIO_COEX})
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta.context['previa']['cantidad'], 2)
+        self.assertEqual(respuesta.context['previa']['total'], Decimal('180.00'))
+        self.assertEqual(respuesta.context['sin_agrupar_cantidad'], 2)
+
+    def test_monto_maximo_agrupa_de_la_mas_antigua_a_la_mas_reciente_mientras_quepa(self):
+        # cita_a (9:00, Q100) es la más antigua; cita_b (9:30, Q80) ya no cabe en Q150.
+        respuesta = self.client.get(reverse('pagos_pendientes_igss'), {
+            'convenio': Cita.CONVENIO_COEX, 'monto_maximo': '150',
+        })
+
+        previa = respuesta.context['previa']
+        self.assertEqual([c.id for c in previa['citas']], [self.cita_a.id])
+        self.assertEqual(previa['total'], Decimal('100.00'))
+        self.assertEqual(previa['fuera_cantidad'], 1)
+        self.assertEqual(previa['fuera_total'], Decimal('80.00'))
+
+    def test_si_la_mas_antigua_no_cabe_no_se_salta_para_meter_una_mas_barata(self):
+        respuesta = self.client.get(reverse('pagos_pendientes_igss'), {
+            'convenio': Cita.CONVENIO_COEX, 'monto_maximo': '90',
+        })
+
+        self.assertEqual(respuesta.context['previa']['cantidad'], 0)
+
+    def test_filtra_por_tipo_de_estudio_y_por_codigo_igss(self):
+        self.cita_a.codigo_igss = 'IGSS-777'
+        self.cita_a.save(update_fields=['codigo_igss'])
+
+        por_tipo = self.client.get(reverse('pagos_pendientes_igss'), {
+            'convenio': Cita.CONVENIO_COEX, 'tipo_estudio': self.estudio_b.id,
+        })
+        por_codigo = self.client.get(reverse('pagos_pendientes_igss'), {
+            'convenio': Cita.CONVENIO_COEX, 'codigo_igss': 'igss-777',
+        })
+
+        self.assertEqual([c.id for c in por_tipo.context['previa']['citas']], [self.cita_b.id])
+        self.assertEqual([c.id for c in por_codigo.context['previa']['citas']], [self.cita_a.id])
+
+    def test_crear_orden_respeta_monto_maximo_y_deja_el_resto_pendiente(self):
+        respuesta = self._crear_orden(monto_maximo='150', volver=reverse('pagos_pendientes_igss'))
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes_igss'))
+        orden = OrdenPago.objects.get()
+        self.assertEqual(orden.total, Decimal('100.00'))
+        self.assertEqual([d.cita_id for d in orden.detalles.all()], [self.cita_a.id])
+        # La que quedó fuera sigue disponible para la próxima orden.
+        siguiente = self.client.get(reverse('pagos_pendientes_igss'), {'convenio': Cita.CONVENIO_COEX})
+        self.assertEqual([c.id for c in siguiente.context['previa']['citas']], [self.cita_b.id])
+
+    def test_crear_orden_solo_del_tipo_de_estudio_elegido(self):
+        self._crear_orden(tipo_estudio=self.estudio_b.id)
+
+        orden = OrdenPago.objects.get()
+        self.assertEqual([d.cita_id for d in orden.detalles.all()], [self.cita_b.id])
+        self.assertIn(self.estudio_b.nombre, orden.notas)
+
+    def test_los_estudios_agrupados_no_vuelven_a_entrar_hasta_que_se_pague(self):
+        self._crear_orden()
+
+        respuesta = self.client.get(reverse('pagos_pendientes_igss'), {'convenio': Cita.CONVENIO_COEX})
+
+        self.assertEqual(respuesta.context['previa']['cantidad'], 0)
+        self.assertEqual(respuesta.context['sin_agrupar_cantidad'], 0)
+
+    def test_sin_filtros_no_hay_vista_previa(self):
+        respuesta = self.client.get(reverse('pagos_pendientes_igss'))
+
+        self.assertIsNone(respuesta.context['previa'])
+        self.assertNotContains(respuesta, 'Paciente / DPI')
+
+    def test_crear_orden_desde_la_pantalla_vuelve_a_pagos_igss(self):
+        respuesta = self._crear_orden(volver=reverse('pagos_pendientes_igss'))
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes_igss'))
+        respuesta = self.client.get(reverse('pagos_pendientes_igss'))
+        self.assertEqual(len(respuesta.context['pendientes']), 1)
+
+    def test_pagar_orden_desde_la_pantalla_la_pasa_a_pagadas(self):
+        self._crear_orden()
+        orden = OrdenPago.objects.get()
+
+        respuesta = self.client.post(reverse('pagar_orden_pago', args=[orden.id]), {
+            'forma_pago': 'transferencia', 'numero_boleta': 'B-1', 'volver': reverse('pagos_pendientes_igss'),
+            'comprobante_bancario': SimpleUploadedFile('b.pdf', b'%PDF-1.4 x', content_type='application/pdf'),
+        })
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes_igss'))
+        respuesta = self.client.get(reverse('pagos_pendientes_igss'))
+        self.assertEqual(len(respuesta.context['pendientes']), 0)
+        self.assertEqual(len(respuesta.context['pagadas']), 1)
+
+    def test_ignora_un_volver_de_otro_sitio(self):
+        respuesta = self._crear_orden(volver='https://malo.example.com/')
+
+        self.assertRedirects(respuesta, reverse('pagos_pendientes'))
+
+
+class BuscadoresRadiologoTests(TestCase):
+    """Buscador en vivo de Citas procesadas y de Solicitudes pendientes del
+    radiólogo (mismo layout que el resto de las pantallas con data-buscar-vivo)."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_buscador', rol=Usuario.ROL_RECEPCIONISTA)
+        self.radiologo = crear_usuario('rad_buscador', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.estudio = TipoEstudio.objects.create(nombre='RX buscador')
+        manana = timezone.localdate() + datetime.timedelta(days=1)
+        for dpi, nombre, convenio in (
+            ('4141414141411', 'Lucia', Cita.CONVENIO_COEX),
+            ('4141414141412', 'Mario', Cita.CONVENIO_PRIVADO),
+        ):
+            crear_cita(
+                self.recepcion, paciente=crear_paciente(dpi=dpi, nombre=nombre),
+                tipo_estudio=self.estudio, radiologo=self.radiologo, convenio=convenio,
+                estado=Cita.ESTADO_PENDIENTE, fecha=manana, fecha_sugerida=manana,
+                hora_sugerida=datetime.time(9, 0),
+            )
+        self.client.force_login(self.radiologo)
+
+    def test_solicitudes_pendientes_trae_el_buscador(self):
+        respuesta = self.client.get(reverse('solicitudes_pendientes'))
+
+        self.assertContains(respuesta, 'data-buscar-vivo')
+        self.assertEqual(len(respuesta.context['citas']), 2)
+
+    def test_solicitudes_pendientes_filtra_por_nombre_y_convenio(self):
+        por_nombre = self.client.get(reverse('solicitudes_pendientes'), {'q': 'lucia'})
+        por_convenio = self.client.get(reverse('solicitudes_pendientes'), {'convenio': Cita.CONVENIO_PRIVADO})
+
+        self.assertEqual([c.paciente.nombre for c in por_nombre.context['citas']], ['Lucia'])
+        self.assertEqual([c.paciente.nombre for c in por_convenio.context['citas']], ['Mario'])
+
+    def test_solicitudes_pendientes_sin_resultados_avisa(self):
+        respuesta = self.client.get(reverse('solicitudes_pendientes'), {'q': 'zzzz'})
+
+        self.assertContains(respuesta, 'Ninguna solicitud coincide')
+
+    def test_citas_procesadas_usa_el_mismo_buscador_en_vivo(self):
+        respuesta = self.client.get(reverse('citas_procesadas'))
+
+        self.assertContains(respuesta, 'data-buscar-vivo')
+        self.assertNotContains(respuesta, 'filtros-radiologia')

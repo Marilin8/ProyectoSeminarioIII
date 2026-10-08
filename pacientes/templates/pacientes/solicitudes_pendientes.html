@@ -11,6 +11,22 @@
 {% endblock %}
 
 {% block content %}
+    <form method="get" data-buscar-vivo class="card mb-2" style="padding:0.85rem 1rem;display:flex;gap:0.6rem;align-items:flex-end;flex-wrap:wrap;">
+        <div style="display:flex;flex-direction:column;gap:0.2rem;">
+            <label for="q" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Paciente / DPI / estudio</label>
+            <input type="text" name="q" id="q" value="{{ busqueda }}" placeholder="Buscar mientras escribe..." style="min-width:16rem;" autocomplete="off">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:0.2rem;">
+            <label for="convenio" style="margin:0;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.03em;color:var(--text-muted);">Convenio</label>
+            <select name="convenio" id="convenio">
+                <option value="">Todos</option>
+                {% for valor, etiqueta in convenios %}
+                    <option value="{{ valor }}" {% if convenio == valor %}selected{% endif %}>{{ etiqueta }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <a class="btn btn-outline btn-sm" href="{% url 'solicitudes_pendientes' %}">Limpiar</a>
+    </form>
 {% if citas %}
     <div class="grid" style="grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));">
         {% for cita in citas %}
@@ -41,6 +57,6 @@
         {% endfor %}
     </div>
 {% else %}
-    <div class="alert alert-info">No hay solicitudes de citas pendientes de confirmación.</div>
+    <div class="alert alert-info">{% if busqueda or convenio %}Ninguna solicitud coincide con la búsqueda.{% else %}No hay solicitudes de citas pendientes de confirmación.{% endif %}</div>
 {% endif %}
 {% endblock %}
