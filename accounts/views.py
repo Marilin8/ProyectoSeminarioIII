@@ -1,7 +1,9 @@
 import base64
 import datetime
 import io
+import shutil
 import tempfile
+from pathlib import Path
 from decimal import Decimal
 
 from django.conf import settings
@@ -11,7 +13,7 @@ from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.paginator import Paginator
 from django.db.models import Count, Prefetch, Q
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -35,7 +37,11 @@ from .forms import (
 )
 from . import nube as servicio_nube
 from . import respaldos as servicio_respaldos
-from .models import Bitacora, ConexionGoogleDrive, RespaldoEnNube, HistorialComision, PagoSalario, Usuario
+from . import tareas_respaldo, trabajos
+from .models import (
+    Bitacora, ConexionGoogleDrive, HistorialComision, PagoSalario, RespaldoEnNube, Usuario,
+    _ip_real_del_visitante,
+)
 from .pantallas import buscar_pantalla, pantallas_de
 
 
@@ -908,61 +914,43 @@ def bitacora(request):
 @login_required
 @user_passes_test(es_administrador)
 def respaldos(request):
+    trabajos.entregar_mensajes(request)
     return render(request, 'accounts/respaldos.html', {
         'respaldos': servicio_respaldos.listar_respaldos(),
         'carpeta': servicio_respaldos.carpeta_respaldos(),
         'drive': ConexionGoogleDrive.objects.first(),
         'cifrado_activo': bool((getattr(settings, 'RESPALDOS_CLAVE', '') or '').strip()),
         'uri_redireccion': servicio_nube.uri_de_redireccion(),
+        'trabajo': trabajos.estado(),
     })
+
+
+@login_required
+@user_passes_test(es_administrador)
+def respaldo_estado(request):
+    """Avance del respaldo o la restauración en curso, para la barra de progreso."""
+    return JsonResponse(trabajos.estado() or {'estado': 'ninguno'})
+
+
+def _iniciar_trabajo(request, tipo, titulo, tarea):
+    if not trabajos.iniciar(tipo, titulo, tarea):
+        messages.warning(request, 'Ya hay un respaldo o una restauración en curso. Espere a que termine.')
+        return False
+    trabajos.entregar_mensajes(request)  # no hace nada si sigue corriendo en segundo plano
+    return True
 
 
 @login_required
 @user_passes_test(es_administrador)
 @require_POST
 def crear_respaldo_view(request):
-    incluir_archivos = request.POST.get('incluir_archivos') == 'on'
-    try:
-        nombre = servicio_respaldos.crear_respaldo(incluir_archivos=incluir_archivos)
-    except servicio_respaldos.ErrorRespaldo as error:
-        messages.error(request, f'No se pudo crear el respaldo: {error}')
-        return redirect('respaldos')
-    Bitacora.registrar(
-        request=request,
-        usuario=request.user,
-        accion=Bitacora.ACCION_CREAR_RESPALDO,
-        descripcion=f'Creó el respaldo {nombre}' + (' (incluye archivos).' if incluir_archivos else ' (solo base de datos).'),
+    tarea = tareas_respaldo.crear(
+        request.POST.get('incluir_archivos') == 'on',
+        request.POST.get('subir_drive') == 'on',
+        request.user.pk, _ip_real_del_visitante(request),
     )
-    messages.success(request, f'Respaldo creado: {nombre}.')
-    if request.POST.get('subir_drive') == 'on':
-        _subir_a_drive_y_registrar(request, nombre)
+    _iniciar_trabajo(request, 'respaldo', 'Creando el respaldo', tarea)
     return redirect('respaldos')
-
-
-def _subir_a_drive_y_registrar(request, nombre):
-    conexion = ConexionGoogleDrive.objects.first()
-    ruta = servicio_respaldos.ruta_respaldo(nombre)
-    if conexion is None or not conexion.conectada or ruta is None:
-        messages.warning(request, 'El respaldo quedó en el servidor, pero Google Drive no está conectado.')
-        return
-    try:
-        token = servicio_nube.token_de_acceso(
-            conexion.client_id,
-            servicio_nube.descifrar(conexion.client_secret_cifrado),
-            servicio_nube.descifrar(conexion.refresh_token_cifrado),
-        )
-        file_id = servicio_nube.subir_archivo(token, ruta, conexion.carpeta_id)
-    except servicio_nube.ErrorNube as error:
-        messages.warning(request, f'El respaldo quedó en el servidor, pero no se subió a Google Drive: {error}')
-        return
-    RespaldoEnNube.objects.update_or_create(nombre=nombre, defaults={'drive_file_id': file_id})
-    Bitacora.registrar(
-        request=request,
-        usuario=request.user,
-        accion=Bitacora.ACCION_SUBIR_RESPALDO,
-        descripcion=f'Subió el respaldo {nombre} a Google Drive ({conexion.correo_cuenta}).',
-    )
-    messages.success(request, f'Respaldo {nombre} subido a Google Drive ({conexion.correo_cuenta}).')
 
 
 @login_required
@@ -971,7 +959,40 @@ def _subir_a_drive_y_registrar(request, nombre):
 def subir_respaldo_a_drive(request, nombre):
     if servicio_respaldos.ruta_respaldo(nombre) is None:
         raise Http404('Respaldo no encontrado.')
-    _subir_a_drive_y_registrar(request, nombre)
+    tarea = tareas_respaldo.subir(nombre, request.user.pk, _ip_real_del_visitante(request))
+    _iniciar_trabajo(request, 'subida', 'Subiendo a Google Drive', tarea)
+    return redirect('respaldos')
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def restaurar_respaldo(request):
+    """Reemplaza toda la información por la de un respaldo subido por el
+    administrador. Pide la contraseña y escribir RESTAURAR porque borra los
+    datos actuales (antes se guarda un respaldo de seguridad)."""
+    archivo = request.FILES.get('archivo')
+    if archivo is None:
+        messages.error(request, 'Seleccione el archivo del respaldo (.zip o .zip.cif).')
+        return redirect('respaldos')
+    if not request.user.check_password(request.POST.get('password', '')):
+        messages.error(request, 'La contraseña no es correcta. No se restauró nada.')
+        return redirect('respaldos')
+    if (request.POST.get('confirmacion') or '').strip().upper() != 'RESTAURAR':
+        messages.error(request, 'Escriba la palabra RESTAURAR para confirmar. No se restauró nada.')
+        return redirect('respaldos')
+
+    carpeta = tempfile.mkdtemp(prefix='restaurar_')
+    ruta = Path(carpeta) / 'subido.bin'
+    with open(ruta, 'wb') as destino:
+        for bloque in archivo.chunks():
+            destino.write(bloque)
+    tarea = tareas_respaldo.restaurar(
+        str(ruta), request.POST.get('restaurar_archivos') == 'on',
+        request.user.pk, _ip_real_del_visitante(request), archivo.name,
+    )
+    if not _iniciar_trabajo(request, 'restauracion', 'Restaurando el sistema', tarea):
+        shutil.rmtree(carpeta, ignore_errors=True)
     return redirect('respaldos')
 
 
@@ -1057,7 +1078,9 @@ def google_drive_desconectar(request):
             accion=Bitacora.ACCION_CONFIGURAR_GOOGLE_DRIVE,
             descripcion=f'Desconectó Google Drive ({correo}).',
         )
-        messages.success(request, 'Google Drive desconectado. Los archivos que ya estaban en Drive no se borran.')
+        messages.success(
+            request, 'Google Drive desconectado. Los archivos que ya estaban en Drive no se borran.',
+        )
     return redirect('respaldos')
 
 
@@ -1107,7 +1130,18 @@ def eliminar_respaldo(request, nombre):
     ruta = servicio_respaldos.ruta_respaldo(nombre)
     if ruta is None:
         raise Http404('Respaldo no encontrado.')
-    ruta.unlink()
+    try:
+        ruta.unlink()
+    except PermissionError:
+        # Windows no deja borrar un archivo abierto: casi siempre es una subida a
+        # Google Drive que sigue en curso.
+        messages.error(
+            request,
+            f'No se puede eliminar {nombre} porque el sistema todavía lo está usando '
+            '(por ejemplo, subiéndolo a Google Drive). Espere a que termine e inténtelo de nuevo.',
+        )
+        return redirect('respaldos')
+    RespaldoEnNube.objects.filter(nombre=nombre).delete()
     Bitacora.registrar(
         request=request,
         usuario=request.user,

@@ -33,15 +33,20 @@ def es_sobre(ruta):
         return archivo.read(len(MAGIA)) == MAGIA
 
 
-def cifrar_archivo(ruta_entrada, ruta_salida, clave):
+def cifrar_archivo(ruta_entrada, ruta_salida, clave, progreso=None):
     sal, nonce = os.urandom(LARGO_SAL), os.urandom(LARGO_NONCE)
     cabecera = MAGIA + bytes([VERSION_SOBRE]) + sal + nonce
     cifrador = Cipher(algorithms.AES(_derivar_clave(clave, sal)), modes.GCM(nonce)).encryptor()
     cifrador.authenticate_additional_data(cabecera)
+    total = max(os.path.getsize(ruta_entrada), 1)
+    leido = 0
     with open(ruta_entrada, 'rb') as origen, open(ruta_salida, 'wb') as destino:
         destino.write(cabecera)
         for bloque in iter(lambda: origen.read(BLOQUE), b''):
             destino.write(cifrador.update(bloque))
+            leido += len(bloque)
+            if progreso:
+                progreso(min(leido / total, 1.0))
         destino.write(cifrador.finalize())
         destino.write(cifrador.tag)
 

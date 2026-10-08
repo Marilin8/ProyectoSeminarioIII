@@ -1510,3 +1510,360 @@ class CifradoRespaldosTests(TestCase):
         salida = Path(self._tmp.name) / 'recuperado.zip'
         call_command('descifrar_respaldo', str(sobre), str(salida), stdout=StringIO())
         self.assertTrue(salida.is_file())
+
+
+SQL_VALIDO = (
+    '-- MySQL dump 10.13\nCREATE TABLE `prueba` (`id` int);\nINSERT INTO `prueba` VALUES (1);\n'
+    '-- Dump completed on 2026-10-08 10:00:00\n'
+)
+
+
+def crear_zip_respaldo(ruta, sql=SQL_VALIDO, extras=None):
+    import zipfile
+    with zipfile.ZipFile(ruta, 'w') as zf:
+        if sql is not None:
+            zf.writestr('base_de_datos.sql', sql)
+        for nombre, contenido in (extras or {}).items():
+            zf.writestr(nombre, contenido)
+
+
+class TrabajosYProgresoTests(TestCase):
+    """Barra de progreso: un solo trabajo a la vez, con estado consultable."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        from django.test import override_settings
+
+        from accounts import trabajos
+        trabajos.reiniciar()
+        self.addCleanup(trabajos.reiniciar)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.carpeta = Path(self._tmp.name) / 'respaldos'
+        configuracion = override_settings(BACKUP_DIR=self.carpeta, MEDIA_ROOT=Path(self._tmp.name) / 'media')
+        configuracion.enable()
+        self.addCleanup(configuracion.disable)
+        parche = mock.patch(
+            'accounts.respaldos._volcar_base_de_datos', side_effect=lambda d: d.write_text('-- x'),
+        )
+        parche.start()
+        self.addCleanup(parche.stop)
+        self.admin = crear_usuario('admin_prog', rol=Usuario.ROL_ADMINISTRADOR)
+        self.client.force_login(self.admin)
+
+    def test_estado_sin_trabajo(self):
+        respuesta = self.client.get(reverse('respaldo_estado'))
+        self.assertEqual(respuesta.json(), {'estado': 'ninguno'})
+
+    def test_estado_solo_para_admin(self):
+        self.client.force_login(crear_usuario('recep_prog', rol=Usuario.ROL_RECEPCIONISTA))
+        self.assertEqual(self.client.get(reverse('respaldo_estado')).status_code, 302)
+
+    def test_progreso_visible_mientras_corre_y_un_solo_trabajo_a_la_vez(self):
+        import threading
+        import time
+
+        from django.test import override_settings
+
+        from accounts import trabajos
+        avanzar, seguir = threading.Event(), threading.Event()
+
+        def tarea_lenta(progreso):
+            progreso(40, 'Comprimiendo…')
+            avanzar.set()
+            seguir.wait(5)
+            return [('success', 'listo')]
+
+        with override_settings(RESPALDOS_EN_SEGUNDO_PLANO=True):
+            self.assertTrue(trabajos.iniciar('respaldo', 'Creando el respaldo', tarea_lenta))
+            self.assertTrue(avanzar.wait(5))
+            datos = self.client.get(reverse('respaldo_estado')).json()
+            self.assertEqual(datos['estado'], 'corriendo')
+            self.assertEqual(datos['porcentaje'], 40)
+            self.assertEqual(datos['etapa'], 'Comprimiendo…')
+            self.assertFalse(trabajos.iniciar('respaldo', 'otro', tarea_lenta))
+            respuesta = self.client.post(reverse('crear_respaldo'), follow=True)
+            self.assertContains(respuesta, 'Ya hay un respaldo o una restauración en curso')
+            self.assertContains(self.client.get(reverse('respaldos')), 'id="panel-progreso"')
+            self.assertNotContains(self.client.get(reverse('respaldos')), 'id="panel-progreso" hidden')
+            seguir.set()
+            for _ in range(50):
+                if self.client.get(reverse('respaldo_estado')).json()['estado'] != 'corriendo':
+                    break
+                time.sleep(0.1)
+        self.assertEqual(self.client.get(reverse('respaldo_estado')).json()['estado'], 'ok')
+        pagina = self.client.get(reverse('respaldos'))
+        self.assertContains(pagina, 'listo')
+        self.assertEqual(self.client.get(reverse('respaldo_estado')).json(), {'estado': 'ninguno'})
+
+    def test_el_panel_esta_oculto_sin_trabajo(self):
+        self.assertContains(self.client.get(reverse('respaldos')), 'id="panel-progreso" hidden')
+
+    def test_eliminar_un_respaldo_en_uso_avisa_en_vez_de_dar_error(self):
+        from unittest import mock
+        self.client.post(reverse('crear_respaldo'))
+        nombre = next(self.carpeta.glob('respaldo_*.zip')).name
+        with mock.patch('pathlib.Path.unlink', side_effect=PermissionError):
+            respuesta = self.client.post(reverse('eliminar_respaldo', args=[nombre]), follow=True)
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, 'todavía lo está usando')
+        self.assertTrue((self.carpeta / nombre).exists())
+
+    def test_eliminar_un_respaldo_quita_su_marca_de_google_drive(self):
+        from accounts.models import RespaldoEnNube
+        self.client.post(reverse('crear_respaldo'))
+        nombre = next(self.carpeta.glob('respaldo_*.zip')).name
+        RespaldoEnNube.objects.create(nombre=nombre, drive_file_id='f')
+        self.client.post(reverse('eliminar_respaldo', args=[nombre]))
+        self.assertFalse(RespaldoEnNube.objects.filter(nombre=nombre).exists())
+
+
+class RestaurarRespaldoTests(TestCase):
+    """Restaurar desde un archivo subido: verificaciones, contraseña y marcha atrás.
+    Los pasos que tocan la base real (borrar tablas, cargar el SQL) van simulados."""
+
+    CLAVE = 'clave-de-prueba-larga-123'
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from django.test import override_settings
+
+        from accounts import trabajos
+        trabajos.reiniciar()
+        self.addCleanup(trabajos.reiniciar)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.base = Path(self._tmp.name)
+        self.carpeta = self.base / 'respaldos'
+        self.media = self.base / 'media'
+        self.media.mkdir()
+        configuracion = override_settings(BACKUP_DIR=self.carpeta, MEDIA_ROOT=self.media, RESPALDOS_CLAVE='')
+        configuracion.enable()
+        self.addCleanup(configuracion.disable)
+        self.admin = crear_usuario('admin_rest', rol=Usuario.ROL_ADMINISTRADOR)
+        self.client.force_login(self.admin)
+
+    def _subido(self, nombre='respaldo.zip', **kwargs):
+        ruta = self.base / nombre
+        crear_zip_respaldo(ruta, **kwargs)
+        return SimpleUploadedFile(nombre, ruta.read_bytes())
+
+    def _post(self, **cambios):
+        datos = {
+            'archivo': self._subido(), 'password': 'clave-segura-123', 'confirmacion': 'RESTAURAR',
+            'restaurar_archivos': 'on',
+        }
+        datos.update(cambios)
+        datos = {k: v for k, v in datos.items() if v is not None}
+        return self.client.post(reverse('restaurar_respaldo'), datos, follow=True)
+
+    def _respaldo_de_seguridad_falso(self):
+        self.carpeta.mkdir(parents=True, exist_ok=True)
+        nombre = 'respaldo_20260101_000000.zip'
+        crear_zip_respaldo(self.carpeta / nombre)
+        return nombre
+
+    # --- vista ---
+    def test_solo_admin(self):
+        self.client.force_login(crear_usuario('recep_rest', rol=Usuario.ROL_RECEPCIONISTA))
+        self.assertEqual(self.client.post(reverse('restaurar_respaldo')).status_code, 302)
+
+    def test_sin_archivo_no_hace_nada(self):
+        from unittest import mock
+        with mock.patch('accounts.respaldos.restaurar') as restaurar:
+            respuesta = self._post(archivo=None)
+        self.assertContains(respuesta, 'Seleccione el archivo')
+        restaurar.assert_not_called()
+
+    def test_contrasena_incorrecta_no_restaura(self):
+        from unittest import mock
+        with mock.patch('accounts.respaldos.restaurar') as restaurar:
+            respuesta = self._post(password='otra-clave')
+        self.assertContains(respuesta, 'La contraseña no es correcta')
+        restaurar.assert_not_called()
+
+    def test_sin_escribir_restaurar_no_restaura(self):
+        from unittest import mock
+        with mock.patch('accounts.respaldos.restaurar') as restaurar:
+            respuesta = self._post(confirmacion='si')
+        self.assertContains(respuesta, 'Escriba la palabra RESTAURAR')
+        restaurar.assert_not_called()
+
+    def test_restauracion_correcta_registra_bitacora_y_avisa(self):
+        from unittest import mock
+        with mock.patch('accounts.respaldos.restaurar', return_value=('respaldo_seg.zip', 3)) as restaurar:
+            respuesta = self._post()
+        self.assertContains(respuesta, 'Restauración completa')
+        self.assertContains(respuesta, 'respaldo_seg.zip')
+        self.assertTrue(restaurar.call_args.kwargs['restaurar_archivos'])
+        self.assertTrue(Bitacora.objects.filter(accion=Bitacora.ACCION_RESTAURAR_RESPALDO).exists())
+
+    def test_restauracion_que_falla_muestra_el_motivo(self):
+        from unittest import mock
+
+        from accounts.respaldos import ErrorRespaldo
+        with mock.patch('accounts.respaldos.restaurar', side_effect=ErrorRespaldo('archivo dañado')):
+            respuesta = self._post()
+        self.assertContains(respuesta, 'No se restauró nada: archivo dañado')
+        self.assertFalse(Bitacora.objects.filter(accion=Bitacora.ACCION_RESTAURAR_RESPALDO).exists())
+
+    def test_se_borra_el_temporal_subido(self):
+        import glob
+        import tempfile
+        from unittest import mock
+        antes = set(glob.glob(tempfile.gettempdir() + '/restaurar_*'))
+        with mock.patch('accounts.respaldos.restaurar', return_value=('x.zip', 0)):
+            self._post()
+        despues = set(glob.glob(tempfile.gettempdir() + '/restaurar_*'))
+        self.assertEqual(despues - antes, set())
+
+    # --- verificaciones del archivo ---
+    def test_zip_sin_base_de_datos_se_rechaza(self):
+        from accounts import respaldos
+        crear_zip_respaldo(self.base / 'a.zip', sql=None, extras={'otra_cosa.txt': 'x'})
+        with self.assertRaisesMessage(respaldos.ErrorRespaldo, 'no contiene la base de datos'):
+            respaldos._extraer_y_validar(self.base / 'a.zip', self.base)
+
+    def test_zip_con_rutas_peligrosas_se_rechaza(self):
+        from accounts import respaldos
+        crear_zip_respaldo(self.base / 'a.zip', extras={'media/../../evil.txt': 'x'})
+        with self.assertRaisesMessage(respaldos.ErrorRespaldo, 'rutas no permitidas'):
+            respaldos._extraer_y_validar(self.base / 'a.zip', self.base)
+
+    def test_zip_con_archivos_ajenos_se_rechaza(self):
+        from accounts import respaldos
+        crear_zip_respaldo(self.base / 'a.zip', extras={'.env': 'SECRET=1'})
+        with self.assertRaisesMessage(respaldos.ErrorRespaldo, 'no corresponden'):
+            respaldos._extraer_y_validar(self.base / 'a.zip', self.base)
+
+    def test_volcado_truncado_se_rechaza(self):
+        from accounts import respaldos
+        crear_zip_respaldo(self.base / 'a.zip', sql='CREATE TABLE `x` (`id` int);\nINSERT INTO')
+        with self.assertRaisesMessage(respaldos.ErrorRespaldo, 'incompleto'):
+            respaldos._extraer_y_validar(self.base / 'a.zip', self.base)
+
+    def test_archivo_que_no_es_zip_se_rechaza(self):
+        from accounts import respaldos
+        (self.base / 'a.zip').write_bytes(b'esto no es un zip')
+        with self.assertRaisesMessage(respaldos.ErrorRespaldo, 'no es un respaldo válido'):
+            respaldos._abrir_zip_del_respaldo(self.base / 'a.zip', self.base)
+
+    def test_respaldo_cifrado_sin_clave_se_rechaza_y_con_clave_se_abre(self):
+        from django.test import override_settings
+
+        from accounts import cifrado, respaldos
+        crear_zip_respaldo(self.base / 'plano.zip')
+        cifrado.cifrar_archivo(self.base / 'plano.zip', self.base / 'a.zip.cif', self.CLAVE.encode())
+        with self.assertRaisesMessage(respaldos.ErrorRespaldo, 'no hay RESPALDOS_CLAVE'):
+            respaldos._abrir_zip_del_respaldo(self.base / 'a.zip.cif', self.base)
+        with override_settings(RESPALDOS_CLAVE='otra-clave-diferente-1234'):
+            with self.assertRaisesMessage(respaldos.ErrorRespaldo, 'no corresponde'):
+                respaldos._abrir_zip_del_respaldo(self.base / 'a.zip.cif', self.base)
+        with override_settings(RESPALDOS_CLAVE=self.CLAVE):
+            abierto = respaldos._abrir_zip_del_respaldo(self.base / 'a.zip.cif', self.base)
+            sql, hay_media = respaldos._extraer_y_validar(abierto, self.base)
+        self.assertFalse(hay_media)
+        self.assertIn('CREATE TABLE', sql.read_text())
+
+    def test_restaurar_archivos_no_sale_de_la_carpeta_media(self):
+        from accounts import respaldos
+        crear_zip_respaldo(self.base / 'a.zip', extras={'media/../../evil.txt': 'x'})
+        with self.assertRaisesMessage(respaldos.ErrorRespaldo, 'rutas no permitidas'):
+            respaldos._restaurar_archivos_media(self.base / 'a.zip')
+        self.assertFalse((self.base / 'evil.txt').exists())
+
+    def test_restaurar_archivos_copia_las_imagenes(self):
+        from accounts import respaldos
+        crear_zip_respaldo(self.base / 'a.zip', extras={'media/estudios/rx.jpg': 'imagen'})
+        self.assertEqual(respaldos._restaurar_archivos_media(self.base / 'a.zip'), 1)
+        self.assertEqual((self.media / 'estudios' / 'rx.jpg').read_text(), 'imagen')
+
+    # --- orquestación (sin tocar la base) ---
+    def _simular(self, **parches):
+        from unittest import mock
+        seguridad = self._respaldo_de_seguridad_falso()
+        valores = {
+            'crear_respaldo': mock.patch('accounts.respaldos.crear_respaldo', return_value=seguridad),
+            'vaciar': mock.patch('accounts.respaldos._vaciar_base_de_datos'),
+            'cargar': mock.patch('accounts.respaldos._cargar_sql'),
+            'migrar': mock.patch('django.core.management.call_command'),
+        }
+        valores.update(parches)
+        dobles = {}
+        for nombre, parche in valores.items():
+            dobles[nombre] = parche.start()
+            self.addCleanup(parche.stop)
+        return seguridad, dobles
+
+    def test_orden_de_la_restauracion_y_progreso(self):
+        from accounts import respaldos
+        seguridad, dobles = self._simular()
+        pasos = []
+        crear_zip_respaldo(self.base / 'respaldo_subido.zip')
+        resultado = respaldos.restaurar(
+            self.base / 'respaldo_subido.zip',
+            restaurar_archivos=True, progreso=lambda p, e: pasos.append((p, e)),
+        )
+        self.assertEqual(resultado, (seguridad, 0))
+        dobles['crear_respaldo'].assert_called_once()
+        dobles['vaciar'].assert_called_once()
+        dobles['cargar'].assert_called_once()
+        dobles['migrar'].assert_called_once()
+        porcentajes = [p for p, _ in pasos]
+        self.assertEqual(porcentajes, sorted(porcentajes))
+        self.assertEqual(porcentajes[0], 3)
+
+    def test_si_la_carga_falla_se_devuelve_el_estado_anterior(self):
+        from unittest import mock
+
+        from accounts import respaldos
+        _, dobles = self._simular(cargar=mock.patch(
+            'accounts.respaldos._cargar_sql', side_effect=[respaldos.ErrorRespaldo('mysql falló'), None],
+        ))
+        crear_zip_respaldo(self.base / 'subido.zip')
+        with self.assertRaisesMessage(respaldos.ErrorRespaldo, 'no se perdió nada'):
+            respaldos.restaurar(self.base / 'subido.zip')
+        self.assertEqual(dobles['cargar'].call_count, 2)
+        self.assertEqual(dobles['vaciar'].call_count, 2)
+
+    def test_si_tampoco_se_puede_devolver_el_estado_anterior_lo_dice(self):
+        from unittest import mock
+
+        from accounts import respaldos
+        seguridad, _ = self._simular(cargar=mock.patch(
+            'accounts.respaldos._cargar_sql', side_effect=respaldos.ErrorRespaldo('mysql falló'),
+        ))
+        crear_zip_respaldo(self.base / 'subido.zip')
+        with self.assertRaises(respaldos.ErrorRespaldo) as contexto:
+            respaldos.restaurar(self.base / 'subido.zip')
+        self.assertIn('tampoco', str(contexto.exception))
+        self.assertIn(seguridad, str(contexto.exception))
+
+    def test_un_archivo_invalido_no_toca_nada(self):
+        from accounts import respaldos
+        _, dobles = self._simular()
+        crear_zip_respaldo(self.base / 'malo.zip', sql=None)
+        with self.assertRaises(respaldos.ErrorRespaldo):
+            respaldos.restaurar(self.base / 'malo.zip')
+        dobles['crear_respaldo'].assert_not_called()
+        dobles['vaciar'].assert_not_called()
+        dobles['cargar'].assert_not_called()
+
+    def test_comando_restaurar_respaldo(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+        seguridad, dobles = self._simular()
+        crear_zip_respaldo(self.base / 'subido.zip')
+        salida = StringIO()
+        call_command('restaurar_respaldo', str(self.base / 'subido.zip'), '--si', stdout=salida)
+        self.assertIn('Restauración completa', salida.getvalue())
+        dobles['cargar'].assert_called_once()
+        with self.assertRaises(CommandError):
+            call_command('restaurar_respaldo', str(self.base / 'no_existe.zip'), '--si')

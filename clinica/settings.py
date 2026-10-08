@@ -209,6 +209,10 @@ MYSQLDUMP_PATH = config('MYSQLDUMP_PATH', default='')
 # Vacía = los respaldos se guardan sin cifrar.
 RESPALDOS_CLAVE = config('RESPALDOS_CLAVE', default='')
 
+# Crear/restaurar respaldos corre en un hilo aparte para mostrar la barra de
+# progreso; las pruebas lo apagan para que todo ocurra dentro de la petición.
+RESPALDOS_EN_SEGUNDO_PLANO = True
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 

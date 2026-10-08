@@ -246,6 +246,7 @@ class Bitacora(models.Model):
     ACCION_DESCARGAR_RESPALDO = 'descargar_respaldo'
     ACCION_ELIMINAR_RESPALDO = 'eliminar_respaldo'
     ACCION_SUBIR_RESPALDO = 'subir_respaldo'
+    ACCION_RESTAURAR_RESPALDO = 'restaurar_respaldo'
     ACCION_CONFIGURAR_GOOGLE_DRIVE = 'configurar_google_drive'
 
     ACCION_CHOICES = [
@@ -293,6 +294,7 @@ class Bitacora(models.Model):
         (ACCION_DESCARGAR_RESPALDO, 'Descargó un respaldo del sistema'),
         (ACCION_ELIMINAR_RESPALDO, 'Eliminó un respaldo del sistema'),
         (ACCION_SUBIR_RESPALDO, 'Subió un respaldo a Google Drive'),
+        (ACCION_RESTAURAR_RESPALDO, 'Restauró el sistema desde un respaldo'),
         (ACCION_CONFIGURAR_GOOGLE_DRIVE, 'Conectó o desconectó Google Drive'),
     ]
 

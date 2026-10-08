@@ -1,6 +1,85 @@
 {% extends 'base.html' %}
 
-{% block title %}Respaldos - Clínica de Imágenes{% endblock %}
+{% block title %}Respaldos - Clínica de Imágenes
+    <script>
+    (function () {
+        var panel = document.getElementById('panel-progreso');
+        var relleno = document.getElementById('progreso-relleno');
+        var barra = document.getElementById('progreso-barra');
+        var etapa = document.getElementById('progreso-etapa');
+        var titulo = document.getElementById('progreso-titulo');
+        var porcentaje = document.getElementById('progreso-porcentaje');
+        var tiempo = document.getElementById('progreso-tiempo');
+        var fallos = 0;
+        var consultando = false;
+
+        function mostrar(datos) {
+            panel.hidden = false;
+            titulo.textContent = datos.titulo || 'Trabajando…';
+            etapa.textContent = datos.etapa || '';
+            relleno.style.width = datos.porcentaje + '%';
+            porcentaje.textContent = datos.porcentaje + '%';
+            tiempo.textContent = datos.segundos;
+        }
+
+        function consultar() {
+            fetch('{% url "respaldo_estado" %}', {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
+                .then(function (r) {
+                    var tipo = r.headers.get('Content-Type') || '';
+                    if (r.redirected || tipo.indexOf('json') === -1) { throw new Error('sesion'); }
+                    return r.json();
+                })
+                .then(function (datos) {
+                    fallos = 0;
+                    if (datos.estado === 'corriendo') {
+                        mostrar(datos);
+                        setTimeout(consultar, 1000);
+                    } else {
+                        window.location.reload();
+                    }
+                })
+                .catch(function (e) {
+                    fallos += 1;
+                    if (e && e.message === 'sesion') {
+                        // Al restaurar se reemplazan también las sesiones: hay que entrar de nuevo.
+                        etapa.textContent = 'Terminó. Si la página pide iniciar sesión, ya puede entrar de nuevo.';
+                        window.location.reload();
+                        return;
+                    }
+                    // Mientras se restaura la base el servidor responde con errores un rato: seguir intentando.
+                    if (fallos < 600) { setTimeout(consultar, 1500); }
+                });
+        }
+
+        if (!panel.hidden) {
+            consultar();
+        }
+
+        var zona = document.getElementById('zona-subida');
+        var entrada = document.getElementById('archivo-restaurar');
+        var texto = document.getElementById('zona-texto');
+        if (zona && entrada) {
+            function nombre() {
+                if (entrada.files.length) {
+                    var mb = (entrada.files[0].size / 1048576).toFixed(1);
+                    texto.innerHTML = '<strong></strong> (' + mb + ' MB)';
+                    texto.firstChild.textContent = entrada.files[0].name;
+                }
+            }
+            entrada.addEventListener('change', nombre);
+            ['dragenter', 'dragover'].forEach(function (ev) {
+                zona.addEventListener(ev, function (e) { e.preventDefault(); zona.classList.add('arrastrando'); });
+            });
+            ['dragleave', 'drop'].forEach(function (ev) {
+                zona.addEventListener(ev, function (e) { e.preventDefault(); zona.classList.remove('arrastrando'); });
+            });
+            zona.addEventListener('drop', function (e) {
+                if (e.dataTransfer.files.length) { entrada.files = e.dataTransfer.files; nombre(); }
+            });
+        }
+    })();
+    </script>
+{% endblock %}
 {% block page_title %}
     <svg width="14" height="14"><use href="#i-clipboard"/></svg>
     Respaldos del sistema
@@ -14,6 +93,45 @@
 {% endblock %}
 
 {% block content %}
+    <style>
+        #panel-progreso[hidden] { display: none; }
+        .barra-progreso {
+            height: 14px; background: var(--border-light); border-radius: 999px; overflow: hidden;
+        }
+        .barra-progreso > div {
+            height: 100%; width: 0; background: var(--primary-light); border-radius: 999px;
+            transition: width 0.4s ease;
+        }
+        .barra-progreso.indeterminada > div { animation: pulso-barra 1.2s ease-in-out infinite; }
+        @keyframes pulso-barra { 50% { opacity: 0.55; } }
+        .zona-subida {
+            display: block; border: 2px dashed var(--border); border-radius: var(--radius-lg);
+            padding: 1.2rem; text-align: center; cursor: pointer; color: var(--text-muted);
+            transition: border-color var(--transition), background var(--transition);
+        }
+        .zona-subida:hover, .zona-subida.arrastrando { border-color: var(--primary-light); background: var(--info-light); }
+        .zona-subida input[type=file] { display: none; }
+        .zona-subida strong { color: var(--text); }
+        .aviso-peligro {
+            background: var(--danger-light); color: #991b1b; border-radius: var(--radius);
+            padding: 0.7rem 0.9rem; font-size: 0.85rem; margin-bottom: 0.9rem;
+        }
+    </style>
+
+    <div class="card mb-2" id="panel-progreso" {% if not trabajo or trabajo.estado != 'corriendo' %}hidden{% endif %}>
+        <div class="card-body">
+            <h3 id="progreso-titulo" style="margin:0 0 0.2rem;">{{ trabajo.titulo|default:'Trabajando…' }}</h3>
+            <p id="progreso-etapa" style="margin:0 0 0.7rem;color:var(--text-muted);font-size:0.9rem;">
+                {{ trabajo.etapa|default:'Iniciando…' }}
+            </p>
+            <div class="barra-progreso" id="progreso-barra"><div id="progreso-relleno" style="width:{{ trabajo.porcentaje|default:0 }}%;"></div></div>
+            <p style="margin:0.5rem 0 0;font-size:0.82rem;color:var(--text-muted);">
+                <strong id="progreso-porcentaje">{{ trabajo.porcentaje|default:0 }}%</strong>
+                · <span id="progreso-tiempo">{{ trabajo.segundos|default:0 }}</span> s
+                · No cierre esta página ni apague el servidor hasta que termine.
+            </p>
+        </div>
+    </div>
     <div class="card mb-2">
         <div class="card-body">
             <h3 style="margin:0 0 0.4rem;">Crear un respaldo</h3>
@@ -151,6 +269,53 @@
                     Todavía no hay respaldos. Cree el primero con el botón de arriba.
                 </p>
             {% endif %}
+        </div>
+    </div>
+
+    <div class="card mt-2" style="margin-top:1rem;">
+        <div class="card-body">
+            <h3 style="margin:0 0 0.4rem;">Restaurar desde un archivo</h3>
+            <p style="color:var(--text-muted);margin:0 0 0.9rem;font-size:0.9rem;">
+                Suba un respaldo (<code>.zip</code> o <code>.zip.cif</code>), por ejemplo uno bajado de Google Drive,
+                y el sistema vuelve a cargar toda la información que contiene.
+            </p>
+            <details>
+                <summary style="cursor:pointer;font-weight:600;">Abrir el formulario de restauración</summary>
+                <div class="aviso-peligro" style="margin-top:0.9rem;">
+                    <strong>Esto reemplaza TODA la información actual</strong> (pacientes, citas, pagos, usuarios…)
+                    por la del respaldo. Antes de tocar nada el sistema verifica el archivo y guarda un respaldo de
+                    seguridad del estado actual; si algo falla, deja todo como estaba. Hágalo fuera del horario de
+                    atención: todos los usuarios tendrán que iniciar sesión de nuevo.
+                </div>
+                <form method="post" action="{% url 'restaurar_respaldo' %}" enctype="multipart/form-data" id="form-restaurar"
+                      onsubmit="return confirm('¿Seguro? Se reemplazará toda la información actual por la del respaldo.');">
+                    {% csrf_token %}
+                    <label class="zona-subida" id="zona-subida">
+                        <input type="file" name="archivo" id="archivo-restaurar" accept=".zip,.cif" required>
+                        <span id="zona-texto">Arrastre el archivo aquí o <strong>pulse para elegirlo</strong></span>
+                    </label>
+                    <p style="font-size:0.78rem;color:var(--text-muted);margin:0.4rem 0 0.9rem;">
+                        Por la web se pueden subir archivos de hasta unos 100 MB. Si el respaldo pesa más (por las
+                        imágenes), use en el servidor <code>python manage.py restaurar_respaldo ARCHIVO</code>.
+                        {% if not cifrado_activo %}Si el archivo es .cif hace falta la RESPALDOS_CLAVE en el .env.{% endif %}
+                    </p>
+                    <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.9rem;cursor:pointer;">
+                        <input type="checkbox" name="restaurar_archivos" checked>
+                        Restaurar también las imágenes e informes (si el respaldo los trae)
+                    </label>
+                    <div style="display:flex;flex-wrap:wrap;gap:0.8rem;margin-bottom:0.9rem;">
+                        <div style="flex:1 1 14rem;">
+                            <label for="password-restaurar" style="display:block;font-size:0.8rem;margin-bottom:0.2rem;">Su contraseña</label>
+                            <input type="password" id="password-restaurar" name="password" required autocomplete="current-password" style="width:100%;">
+                        </div>
+                        <div style="flex:1 1 14rem;">
+                            <label for="confirmacion-restaurar" style="display:block;font-size:0.8rem;margin-bottom:0.2rem;">Escriba RESTAURAR para confirmar</label>
+                            <input type="text" id="confirmacion-restaurar" name="confirmacion" required autocomplete="off" style="width:100%;">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="background:var(--danger);">Restaurar ahora</button>
+                </form>
+            </details>
         </div>
     </div>
 
