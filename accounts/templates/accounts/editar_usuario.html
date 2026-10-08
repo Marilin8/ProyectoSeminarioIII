@@ -55,6 +55,13 @@
                 <p class="form-help">{{ form.puede_operar_caja.help_text }}</p>
                 {{ form.puede_operar_caja.errors }}
 
+                <label for="{{ form.mfa_requerido.id_for_label }}" style="display:flex;align-items:center;gap:0.5rem;margin-top:0.75rem;">
+                    {{ form.mfa_requerido }}
+                    <span>{{ form.mfa_requerido.label }}</span>
+                </label>
+                <p class="form-help">{{ form.mfa_requerido.help_text }}</p>
+                {{ form.mfa_requerido.errors }}
+
                 <label for="{{ form.sala.id_for_label }}">Sala / consultorio</label>
                 {{ form.sala }}
                 <p class="form-help">{{ form.sala.help_text }}</p>

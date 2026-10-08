@@ -4,6 +4,7 @@ from django import forms
 from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm, UserCreationForm
 from django.utils import timezone
+from django_otp.plugins.otp_totp.models import TOTPDevice
 
 from clinica.validators import validar_correo_existente, validar_dominio_correo
 from pacientes.models import TipoEstudio
@@ -172,7 +173,7 @@ class CrearUsuarioForm(UserCreationForm):
         model = Usuario
         fields = (
             'username', 'first_name', 'last_name', 'email', 'rol', 'salario_base',
-            'puede_operar_caja', 'sala',
+            'puede_operar_caja', 'mfa_requerido', 'sala',
             'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
         )
 
@@ -287,7 +288,7 @@ class EditarUsuarioForm(forms.ModelForm):
         model = Usuario
         fields = (
             'first_name', 'last_name', 'email', 'rol', 'salario_base',
-            'puede_operar_caja', 'sala',
+            'puede_operar_caja', 'mfa_requerido', 'sala',
             'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
             'is_active',
         )
@@ -326,6 +327,10 @@ class EditarUsuarioForm(forms.ModelForm):
             usuario.save()
             guardar_estudios()
             _guardar_roles_adicionales(usuario, self.cleaned_data.get('roles_adicionales'))
+            if not usuario.mfa_requerido:
+                # Al desactivar el MFA se borra también su app vinculada, para
+                # que al volver a activarlo tenga que vincular una nueva.
+                TOTPDevice.objects.filter(user=usuario).delete()
         else:
             self._guardar_estudios = guardar_estudios
         return usuario

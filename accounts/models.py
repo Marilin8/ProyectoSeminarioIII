@@ -42,6 +42,17 @@ class Usuario(AbstractUser):
         help_text='Permite consultar y registrar pagos de estudios.',
     )
 
+    # Verificación en dos pasos (MFA): SOLO la puede activar o desactivar un
+    # administrador (desde Crear/Editar usuario). Cuando está activa y el
+    # usuario todavía no vinculó su app, el próximo inicio de sesión lo obliga
+    # a hacerlo. El usuario nunca puede apagarla por su cuenta.
+    mfa_requerido = models.BooleanField(
+        default=False,
+        verbose_name='verificación en dos pasos (MFA)',
+        help_text='Pide un código de la app de autenticación en cada inicio de sesión. '
+                  'Solo un administrador puede activarla o desactivarla.',
+    )
+
     # Sala / consultorio donde atiende un radiólogo. Sale en la pantalla
     # pública de sala de espera ("PASE A ...") cuando se llama a un turno
     # asignado a ese radiólogo.

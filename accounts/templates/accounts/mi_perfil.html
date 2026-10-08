@@ -240,13 +240,16 @@
                 <p class="text-sm text-muted" style="margin:0;">
                     {% if mfa_activo %}
                         Activada — cada inicio de sesión pide un código de tu app de autenticación.
+                        Solo un administrador puede desactivarla.
+                    {% elif mfa_pendiente %}
+                        El administrador la activó en tu cuenta: falta vincular tu app de autenticación.
                     {% else %}
-                        Agregá una capa extra de seguridad con un código de 6 dígitos de tu celular.
+                        Desactivada. Solo un administrador puede activarla en tu cuenta.
                     {% endif %}
                 </p>
-                <a href="{% url 'configurar_mfa' %}" class="btn btn-outline btn-sm" style="flex-shrink:0;">
-                    {% if mfa_activo %}Administrar{% else %}Activar{% endif %}
-                </a>
+                {% if mfa_pendiente %}
+                    <a href="{% url 'configurar_mfa' %}" class="btn btn-primary btn-sm" style="flex-shrink:0;">Vincular</a>
+                {% endif %}
             </div>
         </div>
 
