@@ -1447,28 +1447,7 @@ class CifradoRespaldosTests(TestCase):
         with zipfile.ZipFile(salida) as zf:
             self.assertIn(b'datos secretos', zf.read('base_de_datos.sql'))
 
-    def test_descargar_descifrado_entrega_el_zip_y_registra(self):
-        import io
-        import zipfile
-        self.client.post(reverse('crear_respaldo'))
-        nombre = next(self.carpeta.iterdir()).name
-        respuesta = self.client.get(reverse('descargar_respaldo_descifrado', args=[nombre]))
-        self.assertEqual(respuesta.status_code, 200)
-        self.assertIn(nombre[:-4], respuesta['Content-Disposition'])
-        contenido = b''.join(respuesta.streaming_content)
-        with zipfile.ZipFile(io.BytesIO(contenido)) as zf:
-            self.assertIn('base_de_datos.sql', zf.namelist())
-        self.assertTrue(Bitacora.objects.filter(
-            accion=Bitacora.ACCION_DESCARGAR_RESPALDO, descripcion__contains='descifrado',
-        ).exists())
 
-    def test_descargar_descifrado_con_clave_cambiada_avisa_sin_romper(self):
-        from django.test import override_settings
-        self.client.post(reverse('crear_respaldo'))
-        nombre = next(self.carpeta.iterdir()).name
-        with override_settings(RESPALDOS_CLAVE='una-clave-totalmente-distinta'):
-            respuesta = self.client.get(reverse('descargar_respaldo_descifrado', args=[nombre]), follow=True)
-        self.assertContains(respuesta, 'No se pudo descifrar')
 
     def test_clave_demasiado_corta_no_crea_respaldo(self):
         from django.test import override_settings
@@ -1488,17 +1467,10 @@ class CifradoRespaldosTests(TestCase):
         self.client.post(reverse('crear_respaldo'))
         pagina = self.client.get(reverse('respaldos'))
         self.assertContains(pagina, 'Cifrado activado')
-        self.assertContains(pagina, 'Descargar descifrado')
+        self.assertNotContains(pagina, 'Descargar descifrado')
+        self.assertContains(pagina, 'data-cargar=')
         self.assertNotContains(pagina, self.CLAVE)
 
-    def test_descargar_descifrado_rechaza_respaldos_sin_cifrar(self):
-        from django.test import override_settings
-        with override_settings(RESPALDOS_CLAVE=''):
-            self.client.post(reverse('crear_respaldo'))
-        nombre = next(self.carpeta.iterdir()).name
-        self.assertEqual(
-            self.client.get(reverse('descargar_respaldo_descifrado', args=[nombre])).status_code, 404,
-        )
 
     def test_comando_descifrar_respaldo(self):
         from io import StringIO
@@ -1876,3 +1848,152 @@ class RestaurarRespaldoTests(TestCase):
         dobles['cargar'].assert_called_once()
         with self.assertRaises(CommandError):
             call_command('restaurar_respaldo', str(self.base / 'no_existe.zip'), '--si')
+
+
+class CargarRespaldoGuardadoTests(TestCase):
+    """Botón "Cargar" de cada respaldo: restaura desde un archivo ya guardado en el servidor."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from django.test import override_settings
+
+        from accounts import trabajos
+        trabajos.reiniciar()
+        self.addCleanup(trabajos.reiniciar)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.carpeta = Path(self._tmp.name) / 'respaldos'
+        self.carpeta.mkdir()
+        self.nombre = 'respaldo_20260101_120000.zip'
+        crear_zip_respaldo(self.carpeta / self.nombre)
+        configuracion = override_settings(
+            BACKUP_DIR=self.carpeta, MEDIA_ROOT=Path(self._tmp.name) / 'media', RESPALDOS_CLAVE='',
+        )
+        configuracion.enable()
+        self.addCleanup(configuracion.disable)
+        self.admin = crear_usuario('admin_cargar', rol=Usuario.ROL_ADMINISTRADOR)
+        self.client.force_login(self.admin)
+        self.url = reverse('cargar_respaldo', args=[self.nombre])
+
+    def _cargar(self, **cambios):
+        datos = {'password': 'clave-segura-123', 'confirmacion': 'RESTAURAR', 'restaurar_archivos': 'on'}
+        datos.update(cambios)
+        return self.client.post(self.url, datos, follow=True)
+
+    def test_la_pantalla_ofrece_cargar_en_cada_respaldo(self):
+        pagina = self.client.get(reverse('respaldos'))
+        self.assertContains(pagina, f'data-cargar="{self.nombre}"')
+        self.assertContains(pagina, 'id="dialogo-cargar"')
+
+    def test_solo_admin(self):
+        self.client.force_login(crear_usuario('recep_cargar', rol=Usuario.ROL_RECEPCIONISTA))
+        self.assertEqual(self.client.post(self.url).status_code, 302)
+
+    def test_nombres_invalidos_dan_404(self):
+        for nombre in ('secreto.txt', 'respaldo_x.zip', '..%2Fmanage.py'):
+            respuesta = self.client.post(f'/respaldos/{nombre}/cargar/')
+            self.assertEqual(respuesta.status_code, 404, nombre)
+
+    def test_contrasena_incorrecta_no_restaura(self):
+        from unittest import mock
+        with mock.patch('accounts.respaldos.restaurar') as restaurar:
+            respuesta = self._cargar(password='otra')
+        self.assertContains(respuesta, 'La contraseña no es correcta')
+        restaurar.assert_not_called()
+
+    def test_sin_escribir_restaurar_no_restaura(self):
+        from unittest import mock
+        with mock.patch('accounts.respaldos.restaurar') as restaurar:
+            respuesta = self._cargar(confirmacion='')
+        self.assertContains(respuesta, 'Escriba la palabra RESTAURAR')
+        restaurar.assert_not_called()
+
+    def test_carga_el_respaldo_guardado_y_no_lo_borra(self):
+        from unittest import mock
+        with mock.patch('accounts.respaldos.restaurar', return_value=('respaldo_seg.zip', 0)) as restaurar:
+            respuesta = self._cargar()
+        self.assertContains(respuesta, 'Restauración completa')
+        self.assertEqual(restaurar.call_args.args[0], str(self.carpeta / self.nombre))
+        self.assertTrue((self.carpeta / self.nombre).exists())
+        self.assertTrue(Bitacora.objects.filter(
+            accion=Bitacora.ACCION_RESTAURAR_RESPALDO, descripcion__contains=self.nombre,
+        ).exists())
+
+    def test_si_falla_el_motivo_se_muestra_y_el_respaldo_sigue_ahi(self):
+        from unittest import mock
+
+        from accounts.respaldos import ErrorRespaldo
+        with mock.patch('accounts.respaldos.restaurar', side_effect=ErrorRespaldo('archivo dañado')):
+            respuesta = self._cargar()
+        self.assertContains(respuesta, 'No se restauró nada: archivo dañado')
+        self.assertTrue((self.carpeta / self.nombre).exists())
+
+
+class ModoRestauracionTests(TestCase):
+    """Mientras se restaura, el sistema responde una pantalla de mantenimiento
+    sin tocar la base de datos (que queda sin tablas unos instantes)."""
+
+    def setUp(self):
+        from accounts import trabajos
+        trabajos.reiniciar()
+        self.addCleanup(trabajos.reiniciar)
+        self.admin = crear_usuario('admin_mant', rol=Usuario.ROL_ADMINISTRADOR)
+        self.client.force_login(self.admin)
+
+    def _durante(self, tipo, comprobar):
+        import threading
+
+        from django.test import override_settings
+
+        from accounts import trabajos
+        listo, seguir = threading.Event(), threading.Event()
+
+        def tarea(progreso):
+            progreso(55, 'Cargando la base de datos…')
+            listo.set()
+            seguir.wait(5)
+            return [('success', 'fin')]
+
+        with override_settings(RESPALDOS_EN_SEGUNDO_PLANO=True):
+            self.assertTrue(trabajos.iniciar(tipo, 'Trabajo', tarea))
+            self.assertTrue(listo.wait(5))
+            try:
+                comprobar()
+            finally:
+                seguir.set()
+                for _ in range(50):
+                    if trabajos.estado()['estado'] != 'corriendo':
+                        break
+                    import time
+                    time.sleep(0.1)
+
+    def test_durante_una_restauracion_todo_responde_503_de_mantenimiento(self):
+        def comprobar():
+            for url in ('/', '/respaldos/', '/planilla/'):
+                respuesta = self.client.get(url)
+                self.assertEqual(respuesta.status_code, 503, url)
+                self.assertContains(respuesta, 'Restaurando el sistema', status_code=503)
+        self._durante('restauracion', comprobar)
+
+    def test_el_avance_sigue_disponible_sin_iniciar_sesion(self):
+        from django.test import Client
+
+        def comprobar():
+            respuesta = Client().get('/respaldos/estado/')
+            self.assertEqual(respuesta.status_code, 200)
+            datos = respuesta.json()
+            self.assertEqual(datos['estado'], 'corriendo')
+            self.assertEqual(datos['porcentaje'], 55)
+            self.assertEqual(set(datos), {'tipo', 'titulo', 'estado', 'porcentaje', 'etapa', 'segundos'})
+        self._durante('restauracion', comprobar)
+
+    def test_otros_trabajos_no_bloquean_el_sistema(self):
+        def comprobar():
+            self.assertEqual(self.client.get('/respaldos/').status_code, 200)
+        self._durante('respaldo', comprobar)
+
+    def test_al_terminar_el_sistema_vuelve_a_la_normalidad(self):
+        self._durante('restauracion', lambda: None)
+        self.assertEqual(self.client.get('/respaldos/').status_code, 200)

@@ -155,20 +155,6 @@ def crear_respaldo(incluir_archivos=False, progreso=None):
     return nombre
 
 
-def descifrar_a_archivo(nombre, destino):
-    """Descifra un respaldo .cif en `destino` (ruta o archivo abierto)."""
-    ruta = ruta_respaldo(nombre)
-    if ruta is None or not nombre.endswith('.cif'):
-        raise ErrorRespaldo('Ese respaldo no está cifrado o no existe.')
-    clave = clave_de_cifrado()
-    if clave is None:
-        raise ErrorRespaldo('No hay RESPALDOS_CLAVE en el archivo .env: no se puede descifrar.')
-    try:
-        cifrado.descifrar_archivo(ruta, destino, clave)
-    except cifrado.ErrorCifrado as error:
-        raise ErrorRespaldo(str(error))
-
-
 def listar_respaldos():
     carpeta = carpeta_respaldos()
     from .models import RespaldoEnNube

@@ -66,7 +66,7 @@ def subir(nombre, usuario_id, ip):
     return tarea
 
 
-def restaurar(ruta_subida, restaurar_archivos, usuario_id, ip, nombre_original):
+def restaurar(ruta_subida, restaurar_archivos, usuario_id, ip, nombre_original, borrar_origen=True):
     def tarea(progreso):
         try:
             seguridad, archivos = servicio_respaldos.restaurar(
@@ -75,7 +75,8 @@ def restaurar(ruta_subida, restaurar_archivos, usuario_id, ip, nombre_original):
         except servicio_respaldos.ErrorRespaldo as error:
             return [('error', f'No se restauró nada: {error}')]
         finally:
-            shutil.rmtree(Path(ruta_subida).parent, ignore_errors=True)
+            if borrar_origen:
+                shutil.rmtree(Path(ruta_subida).parent, ignore_errors=True)
         _bitacora(
             usuario_id, ip, Bitacora.ACCION_RESTAURAR_RESPALDO,
             f'Restauró el sistema desde {nombre_original}. Estado anterior guardado en {seguridad}.',

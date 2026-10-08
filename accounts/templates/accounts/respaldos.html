@@ -166,9 +166,9 @@
                                 <td>{{ r.tamano|filesizeformat }}</td>
                                 <td style="text-align:right;white-space:nowrap;">
                                     <a class="btn btn-outline btn-sm" href="{% url 'descargar_respaldo' r.nombre %}">Descargar{% if r.cifrado %} (cifrado){% endif %}</a>
-                                    {% if r.cifrado and cifrado_activo %}
-                                        <a class="btn btn-outline btn-sm" href="{% url 'descargar_respaldo_descifrado' r.nombre %}">Descargar descifrado</a>
-                                    {% endif %}
+                                    <button type="button" class="btn btn-outline btn-sm" data-cargar="{{ r.nombre }}"
+                                            data-url="{% url 'cargar_respaldo' r.nombre %}"
+                                            data-archivos="{% if r.con_archivos %}1{% endif %}">Cargar</button>
                                     {% if drive and drive.conectada and not r.en_nube %}
                                         <form method="post" action="{% url 'subir_respaldo_a_drive' r.nombre %}" style="display:inline;"
                                               onsubmit="var b=this.querySelector('button');b.disabled=true;b.textContent='Subiendo…';">
@@ -327,6 +327,50 @@
                 if (e.dataTransfer.files.length) { entrada.files = e.dataTransfer.files; nombre(); }
             });
         }
+    })();
+    </script>
+
+    <dialog id="dialogo-cargar" style="margin:auto;border:none;border-radius:var(--radius-lg);padding:1.4rem;max-width:30rem;width:92%;box-shadow:var(--shadow-lg);">
+        <h3 style="margin:0 0 0.3rem;">Cargar este respaldo</h3>
+        <p id="cargar-nombre" style="margin:0 0 0.8rem;font-size:0.85rem;color:var(--text-muted);word-break:break-all;"></p>
+        <div class="aviso-peligro">
+            <strong>Esto reemplaza TODA la información actual</strong> (pacientes, citas, pagos, usuarios…) por la
+            de este respaldo. Antes se guarda un respaldo de seguridad del estado actual y, si algo falla, todo
+            queda como estaba. Todos los usuarios tendrán que iniciar sesión de nuevo.
+        </div>
+        <form method="post" id="form-cargar">
+            {% csrf_token %}
+            <label id="cargar-archivos" style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.8rem;cursor:pointer;">
+                <input type="checkbox" name="restaurar_archivos" checked>
+                Cargar también las imágenes e informes
+            </label>
+            <label for="cargar-password" style="display:block;font-size:0.8rem;margin-bottom:0.2rem;">Su contraseña</label>
+            <input type="password" id="cargar-password" name="password" required autocomplete="current-password" style="width:100%;margin-bottom:0.8rem;">
+            <label for="cargar-confirmacion" style="display:block;font-size:0.8rem;margin-bottom:0.2rem;">Escriba RESTAURAR para confirmar</label>
+            <input type="text" id="cargar-confirmacion" name="confirmacion" required autocomplete="off" style="width:100%;margin-bottom:1rem;">
+            <div style="display:flex;gap:0.6rem;justify-content:flex-end;">
+                <button type="button" class="btn btn-outline" id="cargar-cancelar">Cancelar</button>
+                <button type="submit" class="btn btn-primary" style="background:var(--danger);">Cargar ahora</button>
+            </div>
+        </form>
+    </dialog>
+
+    <script>
+    (function () {
+        var dialogo = document.getElementById('dialogo-cargar');
+        var formulario = document.getElementById('form-cargar');
+        if (!dialogo || !formulario) { return; }
+        document.querySelectorAll('[data-cargar]').forEach(function (boton) {
+            boton.addEventListener('click', function () {
+                formulario.action = boton.getAttribute('data-url');
+                document.getElementById('cargar-nombre').textContent = boton.getAttribute('data-cargar');
+                document.getElementById('cargar-archivos').style.display =
+                    boton.getAttribute('data-archivos') ? 'flex' : 'none';
+                formulario.reset();
+                dialogo.showModal();
+            });
+        });
+        document.getElementById('cargar-cancelar').addEventListener('click', function () { dialogo.close(); });
     })();
     </script>
 {% endblock %}

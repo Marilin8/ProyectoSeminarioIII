@@ -964,6 +964,36 @@ def subir_respaldo_a_drive(request, nombre):
     return redirect('respaldos')
 
 
+def _restauracion_confirmada(request):
+    """Restaurar borra los datos actuales: exige la contraseña de quien lo pide
+    y que escriba RESTAURAR. Deja el motivo en los mensajes si no cumple."""
+    if not request.user.check_password(request.POST.get('password', '')):
+        messages.error(request, 'La contraseña no es correcta. No se restauró nada.')
+        return False
+    if (request.POST.get('confirmacion') or '').strip().upper() != 'RESTAURAR':
+        messages.error(request, 'Escriba la palabra RESTAURAR para confirmar. No se restauró nada.')
+        return False
+    return True
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def cargar_respaldo(request, nombre):
+    """Restaura el sistema desde un respaldo que ya está guardado en el servidor."""
+    ruta = servicio_respaldos.ruta_respaldo(nombre)
+    if ruta is None:
+        raise Http404('Respaldo no encontrado.')
+    if not _restauracion_confirmada(request):
+        return redirect('respaldos')
+    tarea = tareas_respaldo.restaurar(
+        str(ruta), request.POST.get('restaurar_archivos') == 'on',
+        request.user.pk, _ip_real_del_visitante(request), nombre, borrar_origen=False,
+    )
+    _iniciar_trabajo(request, 'restauracion', 'Restaurando el sistema', tarea)
+    return redirect('respaldos')
+
+
 @login_required
 @user_passes_test(es_administrador)
 @require_POST
@@ -975,11 +1005,7 @@ def restaurar_respaldo(request):
     if archivo is None:
         messages.error(request, 'Seleccione el archivo del respaldo (.zip o .zip.cif).')
         return redirect('respaldos')
-    if not request.user.check_password(request.POST.get('password', '')):
-        messages.error(request, 'La contraseña no es correcta. No se restauró nada.')
-        return redirect('respaldos')
-    if (request.POST.get('confirmacion') or '').strip().upper() != 'RESTAURAR':
-        messages.error(request, 'Escriba la palabra RESTAURAR para confirmar. No se restauró nada.')
+    if not _restauracion_confirmada(request):
         return redirect('respaldos')
 
     carpeta = tempfile.mkdtemp(prefix='restaurar_')
@@ -1097,30 +1123,6 @@ def descargar_respaldo(request, nombre):
         descripcion=f'Descargó el respaldo {nombre}.',
     )
     return FileResponse(open(ruta, 'rb'), as_attachment=True, filename=nombre)
-
-
-@login_required
-@user_passes_test(es_administrador)
-def descargar_respaldo_descifrado(request, nombre):
-    """Entrega el .zip ya descifrado de un respaldo .zip.cif. El archivo en
-    claro vive solo en un temporal que se borra al terminar la descarga."""
-    if servicio_respaldos.ruta_respaldo(nombre) is None or not nombre.endswith('.cif'):
-        raise Http404('Respaldo no encontrado.')
-    temporal = tempfile.TemporaryFile()
-    try:
-        servicio_respaldos.descifrar_a_archivo(nombre, temporal)
-    except servicio_respaldos.ErrorRespaldo as error:
-        temporal.close()
-        messages.error(request, f'No se pudo descifrar el respaldo: {error}')
-        return redirect('respaldos')
-    temporal.seek(0)
-    Bitacora.registrar(
-        request=request,
-        usuario=request.user,
-        accion=Bitacora.ACCION_DESCARGAR_RESPALDO,
-        descripcion=f'Descargó el respaldo {nombre} descifrado.',
-    )
-    return FileResponse(temporal, as_attachment=True, filename=nombre[:-len('.cif')])
 
 
 @login_required
