@@ -1683,6 +1683,8 @@ def marcar_cobrado(request, cita_id):
             monto_recibido = Decimal((request.POST.get('monto_recibido') or '').strip())
         except InvalidOperation:
             monto_recibido = None
+        if monto_recibido is not None and not monto_recibido.is_finite():
+            monto_recibido = None  # NaN / Infinity llegan como "válidos" a Decimal
         if monto_recibido is None or monto_recibido < cita.precio:
             messages.error(
                 request,

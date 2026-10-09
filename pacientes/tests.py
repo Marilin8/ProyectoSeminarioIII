@@ -2903,6 +2903,14 @@ class CajaTests(TestCase):
 
         self.assertFalse(Cobro.objects.get(cita=cita).pagado)
 
+    def test_efectivo_con_nan_o_infinito_no_marca_pagado_ni_da_error(self):
+        cita = self._cita_privada_con_precio('230.00')
+        for valor in ('NaN', 'Infinity', '-Infinity'):
+            respuesta = self._pagar_efectivo(cita, valor)
+
+            self.assertEqual(respuesta.status_code, 302, valor)
+            self.assertFalse(Cobro.objects.get(cita=cita).pagado, valor)
+
     def test_efectivo_con_el_monto_exacto_marca_pagado(self):
         cita = self._cita_privada_con_precio('230.00')
 
