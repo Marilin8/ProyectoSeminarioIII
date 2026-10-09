@@ -2137,3 +2137,152 @@ class ModoRestauracionTests(TestCase):
     def test_al_terminar_el_sistema_vuelve_a_la_normalidad(self):
         self._durante('restauracion', lambda: None)
         self.assertEqual(self.client.get('/respaldos/').status_code, 200)
+
+
+CACHE_REAL = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache', 'LOCATION': 'limites-prueba'}}
+
+
+class LimiteIntentosLoginTests(TestCase):
+    """Fuerza bruta: se bloquean los intentos fallidos repetidos, sin afectar a los demás usuarios
+    que salen por la misma IP pública."""
+
+    def setUp(self):
+        from django.core.cache import cache
+        from django.test import override_settings
+        configuracion = override_settings(CACHES=CACHE_REAL)
+        configuracion.enable()
+        self.addCleanup(configuracion.disable)
+        cache.clear()
+        self.addCleanup(cache.clear)
+        self.usuario = crear_usuario('limite_ok', rol=Usuario.ROL_RECEPCIONISTA)
+        self.otro = crear_usuario('limite_otro', rol=Usuario.ROL_RECEPCIONISTA)
+        self.url = reverse('login')
+
+    def _intento(self, usuario, clave='incorrecta', ip='203.0.113.5'):
+        return self.client.post(
+            self.url, {'username': usuario, 'password': clave}, HTTP_CF_CONNECTING_IP=ip,
+        )
+
+    def test_cinco_fallos_bloquean_aunque_despues_la_clave_sea_correcta(self):
+        for _ in range(5):
+            self.assertEqual(self._intento('limite_ok').status_code, 200)
+        bloqueado = self._intento('limite_ok', 'clave-segura-123')
+        self.assertEqual(bloqueado.status_code, 429)
+        self.assertContains(bloqueado, 'Demasiados intentos fallidos', status_code=429)
+        self.assertNotIn('_auth_user_id', self.client.session)
+
+    def test_otro_usuario_desde_la_misma_ip_no_se_ve_afectado(self):
+        for _ in range(5):
+            self._intento('limite_ok')
+        respuesta = self._intento('limite_otro', 'clave-segura-123')
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertIn('_auth_user_id', self.client.session)
+
+    def test_el_mismo_usuario_desde_otra_ip_no_queda_bloqueado(self):
+        for _ in range(5):
+            self._intento('limite_ok', ip='203.0.113.5')
+        respuesta = self._intento('limite_ok', 'clave-segura-123', ip='198.51.100.9')
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_los_accesos_correctos_no_cuentan(self):
+        for _ in range(8):
+            self.client.logout()
+            self.assertEqual(self._intento('limite_ok', 'clave-segura-123').status_code, 302)
+
+    def test_un_acceso_correcto_reinicia_el_contador(self):
+        for _ in range(4):
+            self._intento('limite_ok')
+        self.assertEqual(self._intento('limite_ok', 'clave-segura-123').status_code, 302)
+        self.client.logout()
+        for _ in range(4):
+            self.assertEqual(self._intento('limite_ok').status_code, 200)
+
+    def test_el_bloqueo_se_registra_una_sola_vez_en_la_bitacora(self):
+        for _ in range(5):
+            self._intento('limite_ok')
+        for _ in range(4):
+            self._intento('limite_ok')
+        self.assertEqual(
+            Bitacora.objects.filter(descripcion__contains='bloqueado temporalmente').count(), 1,
+        )
+
+    def test_mucha_actividad_fallida_desde_una_ip_bloquea_a_esa_ip(self):
+        for numero in range(30):
+            self._intento(f'inexistente_{numero}')
+        self.assertEqual(self._intento('limite_otro', 'clave-segura-123').status_code, 429)
+
+    def test_el_bloqueo_termina_al_pasar_la_ventana(self):
+        from unittest import mock
+
+        from accounts import limitador
+        for _ in range(5):
+            self._intento('limite_ok')
+        self.assertEqual(self._intento('limite_ok', 'clave-segura-123').status_code, 429)
+        futuro = __import__('time').time() + limitador.MINUTOS * 60 + 5
+        with mock.patch('accounts.limitador.time.time', return_value=futuro):
+            self.assertEqual(limitador.espera_login('203.0.113.5', 'limite_ok'), 0)
+
+    def test_get_de_la_pagina_de_login_nunca_se_bloquea(self):
+        for _ in range(5):
+            self._intento('limite_ok')
+        self.assertEqual(self.client.get(self.url).status_code, 200)
+
+
+class LimiteCodigoMfaTests(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+        from django.test import override_settings
+        # django-otp ya retrasa cada reintento de código (throttling propio); se apaga acá para
+        # probar solo el tope duro del sistema.
+        configuracion = override_settings(CACHES=CACHE_REAL, OTP_TOTP_THROTTLE_FACTOR=0)
+        configuracion.enable()
+        self.addCleanup(configuracion.disable)
+        cache.clear()
+        self.addCleanup(cache.clear)
+        self.usuario = crear_usuario('mfa_limite', rol=Usuario.ROL_RECEPCIONISTA)
+        self.dispositivo = TOTPDevice.objects.create(user=self.usuario, confirmed=True)
+
+    def _preparar_sesion(self):
+        sesion = self.client.session
+        sesion['mfa_user_id'] = self.usuario.pk
+        sesion.save()
+
+    def _codigo(self, valor):
+        return self.client.post(reverse('login_otp'), {'codigo': valor}, HTTP_CF_CONNECTING_IP='203.0.113.7')
+
+    def test_cinco_codigos_malos_bloquean_aunque_el_sexto_sea_correcto(self):
+        self._preparar_sesion()
+        for _ in range(5):
+            self.assertEqual(self._codigo('000000').status_code, 200)
+        bueno = totp(self.dispositivo.bin_key, step=self.dispositivo.step, t0=self.dispositivo.t0, digits=6)
+        respuesta = self._codigo(f'{bueno:06d}')
+        self.assertEqual(respuesta.status_code, 429)
+        self.assertNotIn('_auth_user_id', self.client.session)
+
+    def test_un_codigo_correcto_dentro_del_limite_entra(self):
+        self._preparar_sesion()
+        for _ in range(3):
+            self._codigo('000000')
+        bueno = totp(self.dispositivo.bin_key, step=self.dispositivo.step, t0=self.dispositivo.t0, digits=6)
+        respuesta = self._codigo(f'{bueno:06d}')
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertIn('_auth_user_id', self.client.session)
+
+
+class EncabezadosDeSeguridadTests(TestCase):
+    def test_hsts_se_envia_en_respuestas_https(self):
+        from django.test import override_settings
+        with override_settings(SECURE_HSTS_SECONDS=31536000):
+            respuesta = self.client.get(reverse('login'), secure=True)
+        self.assertEqual(respuesta['Strict-Transport-Security'], 'max-age=31536000')
+
+    def test_hsts_no_incluye_subdominios_ni_precarga(self):
+        from django.test import override_settings
+        with override_settings(SECURE_HSTS_SECONDS=31536000):
+            respuesta = self.client.get(reverse('login'), secure=True)
+        self.assertNotIn('includeSubDomains', respuesta['Strict-Transport-Security'])
+        self.assertNotIn('preload', respuesta['Strict-Transport-Security'])
+
+    def test_el_acceso_http_de_la_lan_no_se_redirige(self):
+        respuesta = self.client.get(reverse('login'))
+        self.assertEqual(respuesta.status_code, 200)

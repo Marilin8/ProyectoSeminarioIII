@@ -27,6 +27,9 @@ PASSWORD_HASHERS = [
 MEDIA_ROOT = BASE_DIR / 'media_test'  # noqa: F405 (definida en settings.py)
 BACKUP_DIR = BASE_DIR / 'respaldos_test'  # noqa: F405
 RESPALDOS_EN_SEGUNDO_PLANO = False
+# Sin memoria entre pruebas (los límites de intentos viven en la caché); las pruebas
+# del limitador activan una caché real con override_settings.
+CACHES = {'default': {'BACKEND': 'django.core.cache.backends.dummy.DummyCache'}}
 RESPALDOS_CLAVE = ''  # nunca usar la clave real del .env en pruebas
 
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'

@@ -178,6 +178,19 @@ STORAGES = {
 # y redirige/rompe cookies en loop. Cloudflare manda X-Forwarded-Proto.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
+# HSTS: el navegador solo recordará usar HTTPS para el dominio público (el header solo se
+# envía en respuestas HTTPS, así que el acceso por la LAN con http:// no se ve afectado).
+# NO se activa SECURE_SSL_REDIRECT por defecto: hay equipos que entran por http:// de la
+# red local (ver ALLOWED_HOSTS) y quedarían sin acceso. Se puede activar con
+# SECURE_SSL_REDIRECT=True en el .env si todos pasan a usar el dominio con HTTPS.
+SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=0 if DEBUG else 31536000, cast=int)
+SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
+# Avisos de `check --deploy` que se dejan sin atender a propósito (ver SECURITY_AUDIT.md):
+# W008: sin redirección forzada porque hay acceso por http:// desde la LAN.
+# W005/W021: incluir subdominios y precarga HSTS comprometen a todo el dominio y son
+# difíciles de revertir; no hacen falta para esta instalación.
+SILENCED_SYSTEM_CHECKS = ['security.W005', 'security.W008', 'security.W021']
+
 # Dominio(s) públicos que van a apuntar acá (además del ALLOWED_HOSTS de LAN).
 # Ej: CSRF_TRUSTED_ORIGINS=https://clinica.tudominio.com
 CSRF_TRUSTED_ORIGINS = [

@@ -19,6 +19,7 @@
             </div>
             <form method="post">
                 {% csrf_token %}
+                {% if aviso_bloqueo %}<ul class="errorlist nonfield"><li>{{ aviso_bloqueo }}</li></ul>{% endif %}
                 {{ form.non_field_errors }}
                 <label for="{{ form.username.id_for_label }}">Usuario</label>
                 {{ form.username }}

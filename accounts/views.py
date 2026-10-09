@@ -35,6 +35,7 @@ from .forms import (
     PerfilForm,
     RegistrarPagoForm,
 )
+from . import limitador
 from . import nube as servicio_nube
 from . import respaldos as servicio_respaldos
 from . import tareas_respaldo, trabajos
@@ -82,8 +83,30 @@ def login(request):
     if request.user.is_authenticated:
         return redirect('dashboard')
 
+    ip = _ip_real_del_visitante(request) or ''
+    nombre = (request.POST.get('username') or '').strip().lower()[:150]
+    if request.method == 'POST':
+        espera = limitador.espera_login(ip, nombre)
+        if espera:
+            if limitador.LOGIN_USUARIO.primera_vez(ip, nombre):
+                Bitacora.registrar(
+                    request=request, username_intento=nombre, accion=Bitacora.ACCION_LOGIN_FALLIDO,
+                    descripcion='Acceso bloqueado temporalmente por demasiados intentos fallidos.',
+                )
+            aviso = (
+                'Demasiados intentos fallidos. Por seguridad, espere '
+                f'{limitador.minutos_de_espera(espera)} minuto(s) antes de intentarlo de nuevo.'
+            )
+            return render(
+                request, 'registration/login.html',
+                {'form': LoginForm(request), 'aviso_bloqueo': aviso}, status=429,
+            )
+
     form = LoginForm(request, data=request.POST or None)
+    if request.method == 'POST' and not form.is_valid():
+        limitador.fallo_login(ip, nombre)
     if request.method == 'POST' and form.is_valid():
+        limitador.exito_login(ip, nombre)
         user = form.get_user()
         if _dispositivo_totp(user):
             request.session['mfa_user_id'] = user.pk
@@ -99,6 +122,24 @@ def login(request):
     return render(request, 'registration/login.html', {'form': form})
 
 
+def _codigo_mfa_bloqueado(request, ip, user):
+    """True (y deja el aviso) si ya hubo demasiados códigos MFA incorrectos."""
+    espera = limitador.CODIGO_MFA.espera(ip, user.pk)
+    if not espera:
+        return False
+    if limitador.CODIGO_MFA.primera_vez(ip, user.pk):
+        Bitacora.registrar(
+            request=request, usuario=user, accion=Bitacora.ACCION_LOGIN_FALLIDO,
+            descripcion='Verificación en dos pasos bloqueada temporalmente por demasiados códigos incorrectos.',
+        )
+    messages.error(
+        request,
+        'Demasiados códigos incorrectos. Por seguridad, espere '
+        f'{limitador.minutos_de_espera(espera)} minuto(s) antes de intentarlo de nuevo.',
+    )
+    return True
+
+
 def login_otp(request):
     """Segundo paso: código de 6 dígitos de la app de autenticación. Solo
     llega acá quien ya pasó usuario+contraseña en `login`."""
@@ -111,13 +152,18 @@ def login_otp(request):
         return redirect('login')
 
     user = get_object_or_404(Usuario, pk=user_id)
+    ip = _ip_real_del_visitante(request) or ''
     if request.method == 'POST':
+        if _codigo_mfa_bloqueado(request, ip, user):
+            return render(request, 'accounts/login_otp.html', {'usuario_login': user}, status=429)
         codigo = (request.POST.get('codigo') or '').strip()
         device = _dispositivo_totp(user)
         if device is not None and device.verify_token(codigo):
+            limitador.CODIGO_MFA.limpiar(ip, user.pk)
             request.session.pop('mfa_user_id', None)
             auth_login(request, user)
             return redirect('dashboard')
+        limitador.CODIGO_MFA.fallo(ip, user.pk)
         messages.error(request, 'El código no es válido o ya expiró.')
 
     return render(request, 'accounts/login_otp.html', {'usuario_login': user})
@@ -146,8 +192,15 @@ def login_vincular_mfa(request):
             device.delete()
             device = None
         elif accion == 'verificar':
+            ip = _ip_real_del_visitante(request) or ''
+            if _codigo_mfa_bloqueado(request, ip, user):
+                return redirect('login_vincular_mfa')
             codigo = (request.POST.get('codigo') or '').strip()
-            if device is not None and device.verify_token(codigo):
+            codigo_valido = device is not None and device.verify_token(codigo)
+            if not codigo_valido:
+                limitador.CODIGO_MFA.fallo(ip, user.pk)
+            if codigo_valido:
+                limitador.CODIGO_MFA.limpiar(ip, user.pk)
                 device.confirmed = True
                 device.save(update_fields=['confirmed'])
                 request.session.pop('mfa_user_id', None)
