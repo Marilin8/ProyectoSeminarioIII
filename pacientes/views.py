@@ -4,7 +4,7 @@ import datetime
 import os
 import time
 import zipfile
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
 from django import forms
@@ -1677,6 +1677,19 @@ def marcar_cobrado(request, cita_id):
     if not form.is_valid():
         messages.error(request, 'Revisá los datos de la boleta antes de guardar.')
         return redirect('pagos_pendientes')
+
+    if form.cleaned_data['forma_pago'] == Cobro.FORMA_EFECTIVO:
+        try:
+            monto_recibido = Decimal((request.POST.get('monto_recibido') or '').strip())
+        except InvalidOperation:
+            monto_recibido = None
+        if monto_recibido is None or monto_recibido < cita.precio:
+            messages.error(
+                request,
+                f'En efectivo la cantidad recibida debe cubrir el total del estudio '
+                f'(Q{cita.precio:.2f}): no se puede marcar pagado si falta dinero.',
+            )
+            return redirect('pagos_pendientes')
 
     cobro.forma_pago = form.cleaned_data['forma_pago']
     cobro.numero_boleta = form.cleaned_data['numero_boleta']

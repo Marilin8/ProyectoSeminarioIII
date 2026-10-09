@@ -88,6 +88,11 @@ def login(request):
         if _dispositivo_totp(user):
             request.session['mfa_user_id'] = user.pk
             return redirect('login_otp')
+        if user.mfa_requerido:
+            # El administrador activó el MFA pero todavía no vinculó su app:
+            # no entra hasta hacerlo.
+            request.session['mfa_user_id'] = user.pk
+            return redirect('login_vincular_mfa')
         auth_login(request, user)
         return redirect(request.GET.get('next') or 'dashboard')
 
@@ -118,34 +123,93 @@ def login_otp(request):
     return render(request, 'accounts/login_otp.html', {'usuario_login': user})
 
 
-@login_required
-def configurar_mfa(request):
-    """El usuario activa o desactiva la verificación en dos pasos. Muestra el
-    QR para vincular la app y pide un primer código para confirmar."""
-    device = TOTPDevice.objects.filter(user=request.user).first()
+def login_vincular_mfa(request):
+    """Primer inicio de sesión de un usuario al que el administrador le activó
+    el MFA y que todavía no vinculó su app: muestra el QR y pide un primer
+    código. Solo llega acá quien ya pasó usuario+contraseña en `login`."""
+    if request.user.is_authenticated:
+        return redirect('dashboard')
 
+    user_id = request.session.get('mfa_user_id')
+    user = Usuario.objects.filter(pk=user_id).first() if user_id else None
+    if user is None or not user.mfa_requerido:
+        request.session.pop('mfa_user_id', None)
+        messages.error(request, 'Primero ingresá tu usuario y contraseña.')
+        return redirect('login')
+    if _dispositivo_totp(user):
+        return redirect('login_otp')
+
+    device = TOTPDevice.objects.filter(user=user, confirmed=False).first()
     if request.method == 'POST':
         accion = request.POST.get('accion')
-
-        if accion == 'desactivar' and device is not None:
-            device.delete()
-            messages.success(request, 'Verificación en dos pasos desactivada.')
-            return redirect('configurar_mfa')
-
         if accion == 'regenerar' and device is not None:
             device.delete()
             device = None
-
-        if accion == 'verificar':
+        elif accion == 'verificar':
             codigo = (request.POST.get('codigo') or '').strip()
             if device is not None and device.verify_token(codigo):
-                if not device.confirmed:
-                    device.confirmed = True
-                    device.save(update_fields=['confirmed'])
+                device.confirmed = True
+                device.save(update_fields=['confirmed'])
+                request.session.pop('mfa_user_id', None)
+                auth_login(request, user)
+                Bitacora.registrar(
+                    request=request, usuario=user,
+                    accion=Bitacora.ACCION_EDITAR_USUARIO,
+                    descripcion=f'"{user.username}" vinculó su app de verificación en dos pasos.',
+                )
+                messages.success(
+                    request,
+                    'Verificación en dos pasos vinculada. Desde ahora, cada inicio de '
+                    'sesión va a pedir un código de la app.',
+                )
+                return redirect('dashboard')
+            messages.error(
+                request,
+                'El código no coincide. Revisá la hora de tu teléfono e intentá de nuevo.',
+            )
+            return redirect('login_vincular_mfa')
+
+    if device is None:
+        device = TOTPDevice.objects.create(user=user, confirmed=False)
+
+    return render(request, 'accounts/login_vincular_mfa.html', {
+        'usuario_login': user,
+        'qr_data_uri': _qr_data_uri(device),
+        'clave_manual': _clave_manual(device),
+    })
+
+
+@login_required
+def configurar_mfa(request):
+    """Estado de la verificación en dos pasos del propio usuario. Solo un
+    administrador puede activarla o desactivarla (desde Editar usuario): acá
+    el usuario únicamente ve el estado y, si el administrador se la activó y
+    todavía no vinculó su app, la termina de vincular."""
+    if not request.user.mfa_requerido:
+        messages.info(
+            request,
+            'La verificación en dos pasos solo la puede activar un administrador.',
+        )
+        return redirect('mi_perfil')
+
+    if _dispositivo_totp(request.user):
+        return render(request, 'accounts/configurar_mfa.html', {'confirmado': True})
+
+    device = TOTPDevice.objects.filter(user=request.user, confirmed=False).first()
+    if request.method == 'POST':
+        accion = request.POST.get('accion')
+        if accion == 'regenerar' and device is not None:
+            device.delete()
+            device = None
+        elif accion == 'verificar':
+            codigo = (request.POST.get('codigo') or '').strip()
+            if device is not None and device.verify_token(codigo):
+                device.confirmed = True
+                device.save(update_fields=['confirmed'])
                 Bitacora.registrar(
                     request=request, usuario=request.user,
                     accion=Bitacora.ACCION_EDITAR_USUARIO,
-                    descripcion=f'"{request.user.username}" activó la verificación en dos pasos.',
+                    descripcion=f'"{request.user.username}" vinculó su app de verificación en dos pasos.',
                 )
                 messages.success(
                     request,
@@ -163,9 +227,9 @@ def configurar_mfa(request):
         device = TOTPDevice.objects.create(user=request.user, confirmed=False)
 
     return render(request, 'accounts/configurar_mfa.html', {
-        'confirmado': device.confirmed,
-        'qr_data_uri': None if device.confirmed else _qr_data_uri(device),
-        'clave_manual': None if device.confirmed else _clave_manual(device),
+        'confirmado': False,
+        'qr_data_uri': _qr_data_uri(device),
+        'clave_manual': _clave_manual(device),
     })
 
 
@@ -246,6 +310,7 @@ def mi_perfil(request):
         'perfil_form': perfil_form,
         'password_form': password_form,
         'mfa_activo': _dispositivo_totp(request.user) is not None,
+        'mfa_pendiente': request.user.mfa_requerido and _dispositivo_totp(request.user) is None,
     })
 
 

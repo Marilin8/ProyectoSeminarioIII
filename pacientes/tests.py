@@ -2852,6 +2852,73 @@ class CajaTests(TestCase):
         self.assertIn(cobro_pagado, cobros)
         self.assertNotIn(cobro_pendiente, cobros)
 
+    def _cita_privada_con_precio(self, precio='230.00'):
+        estudio = TipoEstudio.objects.create(nombre='Estudio efectivo exacto')
+        PrecioEstudio.objects.create(
+            tipo_estudio=estudio, convenio=Cita.CONVENIO_PRIVADO, horario_habil=True, precio=Decimal(precio),
+        )
+        PrecioEstudio.objects.create(
+            tipo_estudio=estudio, convenio=Cita.CONVENIO_PRIVADO, horario_habil=False, precio=Decimal(precio),
+        )
+        cita = crear_cita(
+            self.recepcion, tipo_estudio=estudio, convenio=Cita.CONVENIO_PRIVADO,
+            estado=Cita.ESTADO_EN_PROCESO,
+        )
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion, validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO)
+        Cobro.objects.create(cita=cita)
+        self.client.force_login(self.caja)
+        return cita
+
+    def _pagar_efectivo(self, cita, monto):
+        datos = {'forma_pago': Cobro.FORMA_EFECTIVO, 'notas': ''}
+        if monto is not None:
+            datos['monto_recibido'] = monto
+        return self.client.post(reverse('marcar_cobrado', args=[cita.id]), datos)
+
+    def test_efectivo_con_monto_menor_al_total_no_marca_pagado(self):
+        cita = self._cita_privada_con_precio('230.00')
+
+        self._pagar_efectivo(cita, '220')
+
+        self.assertFalse(Cobro.objects.get(cita=cita).pagado)
+
+    def test_efectivo_con_monto_mayor_al_total_marca_pagado_y_se_da_vuelto(self):
+        cita = self._cita_privada_con_precio('230.00')
+
+        self._pagar_efectivo(cita, '250')
+
+        self.assertTrue(Cobro.objects.get(cita=cita).pagado)
+
+    def test_efectivo_sin_monto_recibido_no_marca_pagado(self):
+        cita = self._cita_privada_con_precio('230.00')
+
+        self._pagar_efectivo(cita, None)
+
+        self.assertFalse(Cobro.objects.get(cita=cita).pagado)
+
+    def test_efectivo_con_monto_invalido_no_marca_pagado(self):
+        cita = self._cita_privada_con_precio('230.00')
+
+        self._pagar_efectivo(cita, 'abc')
+
+        self.assertFalse(Cobro.objects.get(cita=cita).pagado)
+
+    def test_efectivo_con_el_monto_exacto_marca_pagado(self):
+        cita = self._cita_privada_con_precio('230.00')
+
+        self._pagar_efectivo(cita, '230.00')
+
+        self.assertTrue(Cobro.objects.get(cita=cita).pagado)
+
+    def test_tarjeta_no_pide_monto_recibido(self):
+        cita = self._cita_privada_con_precio('230.00')
+
+        self.client.post(reverse('marcar_cobrado', args=[cita.id]), {
+            'forma_pago': Cobro.FORMA_TARJETA, 'numero_boleta': 'T-1', 'notas': '',
+        })
+
+        self.assertTrue(Cobro.objects.get(cita=cita).pagado)
+
     def test_marcar_cobrado_registra_forma_de_pago_y_boleta(self):
         cita = crear_cita(self.recepcion, estado=Cita.ESTADO_EN_PROCESO)
         OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion, validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO)
@@ -2860,6 +2927,7 @@ class CajaTests(TestCase):
 
         respuesta = self.client.post(reverse('marcar_cobrado', args=[cita.id]), {
             'forma_pago': Cobro.FORMA_EFECTIVO, 'numero_boleta': 'B-001', 'notas': 'Pagó en caja',
+            'monto_recibido': str(cita.precio),
         })
 
         self.assertRedirects(respuesta, reverse('pagos_pendientes'))
@@ -3218,6 +3286,7 @@ class EnvioAutomaticoEstudioTests(TestCase):
         self.client.force_login(self.caja)
         self.client.post(reverse('marcar_cobrado', args=[cita.id]), {
             'forma_pago': Cobro.FORMA_EFECTIVO, 'numero_boleta': 'B-100', 'notas': '',
+            'monto_recibido': str(cita.precio),
         })
 
         orden.refresh_from_db()
@@ -3709,6 +3778,7 @@ class VerificacionDelTecnicoTests(TestCase):
     def _pagar(self):
         return self.client.post(reverse('marcar_cobrado', args=[self.cita.id]), {
             'forma_pago': Cobro.FORMA_EFECTIVO, 'numero_boleta': 'B-1', 'notas': '',
+            'monto_recibido': str(self.cita.precio),
         })
 
     # ---- técnico -----------------------------------------------------

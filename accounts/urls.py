@@ -7,6 +7,7 @@ from .models import Usuario
 urlpatterns = [
     path('', views.login, name='login'),
     path('login/otp/', views.login_otp, name='login_otp'),
+    path('login/vincular-mfa/', views.login_vincular_mfa, name='login_vincular_mfa'),
     path('logout/', LogoutView.as_view(), name='logout'),
     path('dashboard/', views.dashboard, name='dashboard'),
     path('perfil/', views.mi_perfil, name='mi_perfil'),

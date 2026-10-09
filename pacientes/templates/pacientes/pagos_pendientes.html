@@ -252,7 +252,7 @@
                     {% elif not cobro.listo_para_cobrar %}
                         <span class="text-muted text-sm">Se habilita cuando el técnico confirme el estudio.</span>
                     {% elif cobro.cita.convenio == 'privado' %}
-                        <form method="post" action="{% url 'marcar_cobrado' cita_id=cobro.cita_id %}" class="form-cobrar form-cobrar-efectivo" enctype="multipart/form-data" data-precio="{{ cobro.cita.precio }}">
+                        <form method="post" action="{% url 'marcar_cobrado' cita_id=cobro.cita_id %}" class="form-cobrar form-cobrar-efectivo" enctype="multipart/form-data" data-precio="{{ cobro.cita.precio|stringformat:'.2f' }}">
                             {% csrf_token %}
                             <select name="forma_pago" class="campo-forma-pago" required>
                                 <option value="">Forma de pago</option>
@@ -263,10 +263,10 @@
                             <input type="text" name="numero_boleta" class="campo-no-efectivo" placeholder="Boleta / referencia">
                             <input type="file" name="comprobante_bancario" class="campo-no-efectivo" accept=".pdf,.jpg,.jpeg,.png">
                             <span class="campo-efectivo" style="display:none;">
-                                <input type="number" step="0.01" min="0" class="campo-monto-recibido" placeholder="Cantidad recibida (Q)">
+                                <input type="number" step="0.01" min="0" name="monto_recibido" class="campo-monto-recibido" placeholder="Cantidad recibida (Q)">
                                 <span class="texto-vuelto"></span>
                             </span>
-                            <button type="submit" class="btn btn-primary btn-sm">
+                            <button type="submit" class="btn btn-primary btn-sm btn-marcar-pagado">
                                 <svg width="14" height="14"><use href="#i-check"/></svg>
                                 Marcar pagado
                             </button>
@@ -314,8 +314,10 @@
         // Al marcar un pago en Efectivo no tiene sentido pedir "boleta /
         // referencia" (eso es de tarjeta/transferencia) ni el comprobante
         // bancario: en su lugar se pide cuánto entregó el paciente en
-        // efectivo, y se calcula solo el vuelto contra el precio del
-        // estudio — para que Caja no tenga que sacar la cuenta a mano.
+        // efectivo y se calcula el vuelto contra el total del estudio. Solo
+        // se deja marcar pagado cuando esa cantidad cubre el total: si falta,
+        // el botón queda bloqueado (el servidor lo vuelve a validar, ver
+        // marcar_cobrado). Si sobra, se muestra el vuelto a devolver.
         document.querySelectorAll('.form-cobrar-efectivo').forEach(function (form) {
             var precio = parseFloat(form.dataset.precio) || 0;
             var selectFormaPago = form.querySelector('.campo-forma-pago');
@@ -323,21 +325,31 @@
             var campoEfectivo = form.querySelector('.campo-efectivo');
             var inputMonto = form.querySelector('.campo-monto-recibido');
             var textoVuelto = form.querySelector('.texto-vuelto');
+            var botonPagar = form.querySelector('.btn-marcar-pagado');
+
+            // En centavos enteros para no depender de decimales flotantes.
+            function diferenciaCentavos() {
+                var monto = parseFloat(inputMonto.value);
+                if (isNaN(monto)) { return null; }
+                return Math.round(monto * 100) - Math.round(precio * 100);
+            }
 
             function actualizarVuelto() {
-                var monto = parseFloat(inputMonto.value);
-                if (isNaN(monto)) {
+                var esEfectivo = selectFormaPago.value === 'efectivo';
+                var diferencia = diferenciaCentavos();
+                if (diferencia === null) {
                     textoVuelto.textContent = '';
-                    return;
-                }
-                var diferencia = monto - precio;
-                if (diferencia < 0) {
+                } else if (diferencia < 0) {
                     textoVuelto.style.color = 'var(--danger)';
-                    textoVuelto.textContent = 'Falta Q' + Math.abs(diferencia).toFixed(2);
+                    textoVuelto.textContent = 'Falta Q' + (Math.abs(diferencia) / 100).toFixed(2);
+                } else if (diferencia > 0) {
+                    textoVuelto.style.color = 'var(--success)';
+                    textoVuelto.textContent = 'Vuelto: Q' + (diferencia / 100).toFixed(2);
                 } else {
                     textoVuelto.style.color = 'var(--success)';
-                    textoVuelto.textContent = 'Vuelto: Q' + diferencia.toFixed(2);
+                    textoVuelto.textContent = 'Monto exacto';
                 }
+                botonPagar.disabled = esEfectivo && (diferencia === null || diferencia < 0);
             }
 
             function aplicarFormaPago() {
@@ -348,10 +360,12 @@
                 });
                 campoEfectivo.style.display = esEfectivo ? '' : 'none';
                 inputMonto.disabled = !esEfectivo;
+                inputMonto.required = esEfectivo;
                 if (!esEfectivo) {
                     inputMonto.value = '';
                     textoVuelto.textContent = '';
                 }
+                actualizarVuelto();
             }
 
             selectFormaPago.addEventListener('change', aplicarFormaPago);

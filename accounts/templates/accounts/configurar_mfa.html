@@ -23,14 +23,10 @@
                     <strong>Activada.</strong> Cada vez que inicies sesión se te va a pedir un código
                     de tu app de autenticación.
                 </div>
-                <form method="post" onsubmit="return confirm('¿Desactivar la verificación en dos pasos?');">
-                    {% csrf_token %}
-                    <input type="hidden" name="accion" value="desactivar">
-                    <button type="submit" class="btn btn-danger">
-                        <svg width="14" height="14"><use href="#i-x"/></svg>
-                        Desactivar
-                    </button>
-                </form>
+                <p class="form-help" style="margin:0;">
+                    Por seguridad, solo un administrador puede desactivarla. Si cambiaste de teléfono
+                    o perdiste acceso a la app, pedile que la restablezca.
+                </p>
             {% else %}
                 <ol class="text-sm" style="padding-left:1.2rem;line-height:1.9;margin-bottom:1rem;">
                     <li>Instalá una app de autenticación (Google Authenticator, Microsoft Authenticator, Authy…).</li>

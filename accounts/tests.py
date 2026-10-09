@@ -240,45 +240,185 @@ class HistorialComisionTests(TestCase):
 
 
 class MFATests(TestCase):
+    """La verificación en dos pasos solo la activa/desactiva un administrador
+    (campo Usuario.mfa_requerido, desde Editar usuario): el usuario nunca
+    puede apagarla por su cuenta."""
 
     def setUp(self):
         self.usuario = crear_usuario('user_mfa', rol=Usuario.ROL_RECEPCIONISTA)
+        self.admin = crear_usuario('admin_mfa', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
 
     def _codigo(self, device):
         return f'{totp(device.bin_key, step=device.step, t0=device.t0, digits=device.digits):0{device.digits}d}'
 
-    def test_configurar_mfa_muestra_qr(self):
-        self.client.force_login(self.usuario)
-        respuesta = self.client.get(reverse('configurar_mfa'))
-        self.assertContains(respuesta, 'data:image/png;base64')
-        self.assertTrue(TOTPDevice.objects.filter(user=self.usuario, confirmed=False).exists())
+    def _credenciales(self):
+        return {'username': 'user_mfa', 'password': 'clave-segura-123'}
 
-    def test_activar_mfa_con_codigo_valido(self):
+    def _activar_mfa(self):
+        self.usuario.mfa_requerido = True
+        self.usuario.save(update_fields=['mfa_requerido'])
+
+    def _editar_como_admin(self, mfa):
+        datos = {
+            'first_name': 'Re', 'last_name': 'Cepcion', 'email': 'recep@gmail.com',
+            'rol': Usuario.ROL_RECEPCIONISTA, 'is_active': 'on', 'salario_base': '0',
+            'fecha_ingreso': '2026-01-01',
+            'porcentaje_coex': '0', 'porcentaje_privado': '0', 'porcentaje_emergencia_igss': '0',
+        }
+        if mfa:
+            datos['mfa_requerido'] = 'on'
+        self.client.force_login(self.admin)
+        return self.client.post(reverse('editar_usuario', args=[self.usuario.id]), datos)
+
+    def _assert_no_inicio_sesion(self):
+        destino = f"{reverse('login')}?next={reverse('dashboard')}"
+        self.assertRedirects(self.client.get(reverse('dashboard')), destino)
+
+    # --- el usuario no puede activar ni desactivar ------------------------
+
+    def test_usuario_sin_mfa_no_puede_activarlo_por_su_cuenta(self):
         self.client.force_login(self.usuario)
-        self.client.get(reverse('configurar_mfa'))
-        device = TOTPDevice.objects.get(user=self.usuario)
-        self.client.post(reverse('configurar_mfa'), {'accion': 'verificar', 'codigo': self._codigo(device)})
-        device.refresh_from_db()
-        self.assertTrue(device.confirmed)
+
+        respuesta = self.client.get(reverse('configurar_mfa'))
+
+        self.assertRedirects(respuesta, reverse('mi_perfil'))
+        self.assertFalse(TOTPDevice.objects.filter(user=self.usuario).exists())
+
+    def test_usuario_con_mfa_activo_no_puede_desactivarlo(self):
+        self._activar_mfa()
+        TOTPDevice.objects.create(user=self.usuario, confirmed=True)
+        self.client.force_login(self.usuario)
+
+        self.client.post(reverse('configurar_mfa'), {'accion': 'desactivar'})
+        self.client.post(reverse('configurar_mfa'), {'accion': 'regenerar'})
+
+        self.assertTrue(TOTPDevice.objects.filter(user=self.usuario, confirmed=True).exists())
+        self.usuario.refresh_from_db()
+        self.assertTrue(self.usuario.mfa_requerido)
+
+    def test_el_perfil_no_ofrece_desactivar_el_mfa(self):
+        self._activar_mfa()
+        TOTPDevice.objects.create(user=self.usuario, confirmed=True)
+        self.client.force_login(self.usuario)
+
+        perfil = self.client.get(reverse('mi_perfil'))
+        pagina = self.client.get(reverse('configurar_mfa'))
+
+        self.assertContains(perfil, 'Solo un administrador puede desactivarla')
+        self.assertNotContains(perfil, 'Administrar')
+        self.assertNotContains(pagina, 'value="desactivar"')
+
+    def test_usuario_no_puede_prender_su_propio_mfa_editando_el_perfil(self):
+        self.client.force_login(self.usuario)
+
+        self.client.post(reverse('mi_perfil'), {
+            'guardar_perfil': '1', 'first_name': 'A', 'last_name': 'B',
+            'email': 'x@gmail.com', 'mfa_requerido': 'on',
+        })
+
+        self.usuario.refresh_from_db()
+        self.assertFalse(self.usuario.mfa_requerido)
+
+    # --- el administrador sí --------------------------------------------
+
+    def test_admin_activa_el_mfa_de_un_usuario(self):
+        self._editar_como_admin(mfa=True)
+
+        self.usuario.refresh_from_db()
+        self.assertTrue(self.usuario.mfa_requerido)
+
+    def test_admin_desactiva_el_mfa_y_se_borra_la_app_vinculada(self):
+        self._activar_mfa()
+        TOTPDevice.objects.create(user=self.usuario, confirmed=True)
+
+        self._editar_como_admin(mfa=False)
+
+        self.usuario.refresh_from_db()
+        self.assertFalse(self.usuario.mfa_requerido)
+        self.assertFalse(TOTPDevice.objects.filter(user=self.usuario).exists())
+
+    def test_despues_de_desactivarlo_el_usuario_entra_sin_codigo(self):
+        self._activar_mfa()
+        TOTPDevice.objects.create(user=self.usuario, confirmed=True)
+        self._editar_como_admin(mfa=False)
+        self.client.logout()
+
+        respuesta = self.client.post(reverse('login'), self._credenciales())
+
+        self.assertRedirects(respuesta, reverse('dashboard'))
+
+    # --- inicio de sesión -------------------------------------------------
+
+    def test_login_sin_mfa_entra_directo(self):
+        respuesta = self.client.post(reverse('login'), self._credenciales())
+        self.assertRedirects(respuesta, reverse('dashboard'))
 
     def test_login_pide_segundo_paso_si_hay_mfa(self):
+        self._activar_mfa()
         TOTPDevice.objects.create(user=self.usuario, confirmed=True)
-        respuesta = self.client.post(reverse('login'), {
-            'username': 'user_mfa', 'password': 'clave-segura-123',
-        })
+
+        respuesta = self.client.post(reverse('login'), self._credenciales())
+
         self.assertRedirects(respuesta, reverse('login_otp'))
 
     def test_login_otp_con_codigo_valido_inicia_sesion(self):
+        self._activar_mfa()
         device = TOTPDevice.objects.create(user=self.usuario, confirmed=True)
-        self.client.post(reverse('login'), {'username': 'user_mfa', 'password': 'clave-segura-123'})
+        self.client.post(reverse('login'), self._credenciales())
+
         respuesta = self.client.post(reverse('login_otp'), {'codigo': self._codigo(device)})
+
         self.assertRedirects(respuesta, reverse('dashboard'))
 
-    def test_login_sin_mfa_entra_directo(self):
-        respuesta = self.client.post(reverse('login'), {
-            'username': 'user_mfa', 'password': 'clave-segura-123',
-        })
+    def test_si_el_admin_lo_activo_y_no_hay_app_obliga_a_vincularla_antes_de_entrar(self):
+        self._activar_mfa()
+
+        respuesta = self.client.post(reverse('login'), self._credenciales())
+
+        self.assertRedirects(respuesta, reverse('login_vincular_mfa'))
+        pantalla = self.client.get(reverse('login_vincular_mfa'))
+        self.assertContains(pantalla, 'data:image/png;base64')
+        self._assert_no_inicio_sesion()
+
+    def test_vincular_la_app_con_codigo_valido_confirma_y_entra(self):
+        self._activar_mfa()
+        self.client.post(reverse('login'), self._credenciales())
+        self.client.get(reverse('login_vincular_mfa'))
+        device = TOTPDevice.objects.get(user=self.usuario)
+
+        respuesta = self.client.post(
+            reverse('login_vincular_mfa'), {'accion': 'verificar', 'codigo': self._codigo(device)},
+        )
+
         self.assertRedirects(respuesta, reverse('dashboard'))
+        device.refresh_from_db()
+        self.assertTrue(device.confirmed)
+
+    def test_vincular_con_codigo_incorrecto_no_deja_entrar(self):
+        self._activar_mfa()
+        self.client.post(reverse('login'), self._credenciales())
+        self.client.get(reverse('login_vincular_mfa'))
+
+        self.client.post(reverse('login_vincular_mfa'), {'accion': 'verificar', 'codigo': '000000'})
+
+        self._assert_no_inicio_sesion()
+        self.assertFalse(TOTPDevice.objects.get(user=self.usuario).confirmed)
+
+    def test_vincular_sin_haber_pasado_la_contrasena_redirige_al_login(self):
+        respuesta = self.client.get(reverse('login_vincular_mfa'))
+
+        self.assertRedirects(respuesta, reverse('login'))
+
+    def test_usuario_con_mfa_pendiente_puede_terminar_de_vincular_desde_su_perfil(self):
+        self._activar_mfa()
+        self.client.force_login(self.usuario)
+        self.client.get(reverse('configurar_mfa'))
+        device = TOTPDevice.objects.get(user=self.usuario)
+
+        self.client.post(reverse('configurar_mfa'), {'accion': 'verificar', 'codigo': self._codigo(device)})
+
+        device.refresh_from_db()
+        self.assertTrue(device.confirmed)
 
 
 class UsuarioModelTests(TestCase):
