@@ -66,7 +66,7 @@ desarrollo) y se aplicó lo siguiente:
 | W018 `DEBUG` activo | Ya resuelto en producción | El `.env` real tiene `DEBUG=False`. |
 | W009 `SECRET_KEY` | Ya resuelto en producción | 50 caracteres, definida en el `.env` (fuera de git). |
 | W012 / W016 cookies seguras | Ya resuelto | Activas cuando `DEBUG=False` (`SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`). |
-| W004 HSTS | **Corregido** | `SECURE_HSTS_SECONDS=31536000`. Solo se envía en respuestas HTTPS; el acceso por la LAN con `http://` no se ve afectado. |
+| W004 HSTS | **Corregido** | `SECURE_HSTS_SECONDS=31536000`. Solo se envía en respuestas HTTPS; el acceso por la LAN con `http://` no se ve afectado. Requiere que Waitress confíe en `X-Forwarded-Proto` del túnel (`trusted_proxy='127.0.0.1'` en `run_waitress.py`); sin eso Django nunca se entera de que la conexión es HTTPS. |
 | W008 `SECURE_SSL_REDIRECT` | **Decisión: no activar** | `ALLOWED_HOSTS` incluye equipos que entran por `http://` de la red local; la redirección los dejaría sin acceso. Se puede activar con `SECURE_SSL_REDIRECT=True` en el `.env` cuando todos usen el dominio con HTTPS. |
 | W005 / W021 HSTS subdominios y precarga | **Decisión: no activar** | Comprometen a todo el dominio y son difíciles de revertir. |
 | Sin límite de intentos (fuerza bruta) | **Corregido** | `accounts/limitador.py`: 5 intentos fallidos por (IP + usuario) cada 10 minutos, 30 por IP, y 5 códigos MFA incorrectos. Responde 429 y queda registrado en la bitácora. |
