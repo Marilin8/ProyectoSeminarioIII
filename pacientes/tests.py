@@ -5289,3 +5289,23 @@ class QRResultadosTests(TestCase):
         respuesta = self.client.get(reverse('historial_paciente', args=[self.paciente.id]))
 
         self.assertContains(respuesta, reverse('qr_estudio', args=[self.cita.id]))
+
+
+class CampanaDeNotificacionesUnicaTests(TestCase):
+    """La campana vive en la barra lateral (un solo include en base.html). Si una
+    pantalla la vuelve a incluir en su barra superior, se dibujan dos campanas con
+    los mismos identificadores y la segunda no funciona."""
+
+    def test_solo_base_html_incluye_el_parcial_de_notificaciones(self):
+        from pathlib import Path
+
+        from django.conf import settings
+        raiz = Path(settings.BASE_DIR)
+        usan_el_parcial = []
+        for ruta in raiz.rglob('*.html'):
+            partes = set(ruta.relative_to(raiz).parts)
+            if partes & {'venv', '.venv-ci', 'staticfiles', 'media', 'media_test', 'node_modules'}:
+                continue
+            if 'includes/notificaciones.html' in ruta.read_text(encoding='utf-8', errors='ignore'):
+                usan_el_parcial.append(ruta.relative_to(raiz).as_posix())
+        self.assertEqual(usan_el_parcial, ['templates/base.html'])
