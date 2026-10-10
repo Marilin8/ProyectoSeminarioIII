@@ -136,6 +136,12 @@
                                     <svg width="14" height="14"><use href="#i-image"/></svg>
                                     Ver estudio
                                 </a>
+                                {% if not cita.cobro or cita.cobro.pagado %}
+                                    <a class="btn btn-outline btn-sm" href="{% url 'qr_estudio' cita_id=cita.id %}">
+                                        <svg width="14" height="14"><use href="#i-grid"/></svg>
+                                        Código QR
+                                    </a>
+                                {% endif %}
                                 {% if cita.cobro and cita.cobro.pagado %}
                                     <a class="btn btn-outline btn-sm" href="{% url 'boleta_pago_pdf' cobro_id=cita.cobro.id %}" target="_blank" rel="noopener">
                                         <svg width="14" height="14"><use href="#i-file-text"/></svg>

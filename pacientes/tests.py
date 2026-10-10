@@ -2792,7 +2792,8 @@ class ComboFlujoCompletoTests(TestCase):
 
         self.assertEqual(error, '')
         self.assertEqual(len(mail.outbox), 1)
-        self.assertEqual(len(mail.outbox[0].attachments), 2)
+        pdfs = [a for a in mail.outbox[0].attachments if getattr(a, 'get_content_type', lambda: '')() != 'image/png']
+        self.assertEqual(len(pdfs), 2)
 
 
 class CajaTests(TestCase):
@@ -4621,8 +4622,10 @@ class EnvioMedicoTratanteTests(TestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(mail.outbox[0].to, ['tratante@example.com'])
         self.assertIn('visor/medico', mail.outbox[0].body)
-        # El DPI es la llave: no se manda el PDF suelto en este correo.
-        self.assertEqual(mail.outbox[0].attachments, [])
+        # El DPI es la llave: no se manda el PDF suelto en este correo (solo
+        # va el QR incrustado, que abre el mismo visor y sigue pidiendo el DPI).
+        tipos = [a.get_content_type() for a in mail.outbox[0].attachments]
+        self.assertEqual(tipos, ['image/png'])
 
     @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
     def test_se_envia_al_medico_tratante_ambos_aunque_sea_emergencia_igss(self):
@@ -5187,3 +5190,94 @@ class BuscadoresRadiologoTests(TestCase):
 
         self.assertContains(respuesta, 'data-buscar-vivo')
         self.assertNotContains(respuesta, 'filtros-radiologia')
+
+
+class QRResultadosTests(TestCase):
+    """El QR es un extra del enlace de siempre: va incrustado en el correo de
+    resultados (sin quitar el enlace) y recepción lo puede mostrar/imprimir
+    desde "Estudios realizados". Codifica el MISMO enlace del visor, que
+    sigue pidiendo el DPI."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_qr', rol=Usuario.ROL_RECEPCIONISTA)
+        self.paciente = crear_paciente(dpi='6006006006001', correo='paciente_qr@example.com')
+        self.estudio = TipoEstudio.objects.create(nombre='RX para QR')
+        self.cita = crear_cita(
+            self.recepcion, paciente=self.paciente, tipo_estudio=self.estudio,
+            estado=Cita.ESTADO_PROCESADA,
+        )
+        self.orden = OrdenTrabajo.objects.create(
+            cita=self.cita, motivo='x', creada_por=self.recepcion,
+            validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO,
+        )
+        self.client.force_login(self.recepcion)
+
+    @override_settings(
+        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+        EMAIL_HOST_USER='clinica@example.com', EMAIL_HOST_PASSWORD='x',
+    )
+    def test_el_correo_conserva_el_enlace_y_agrega_el_qr(self):
+        error = enviar_resultados(self.orden)
+
+        self.assertEqual(error, '')
+        correo = mail.outbox[0]
+        self.assertIn('/visor/?', correo.body)  # el enlace de texto sigue
+        html, tipo = correo.alternatives[0]
+        self.assertEqual(tipo, 'text/html')
+        self.assertIn('cid:qr_resultados', html)
+        self.assertIn('/visor/?', html)
+        imagenes = [a for a in correo.attachments if a.get_content_type() == 'image/png']
+        self.assertEqual(len(imagenes), 1)
+        self.assertEqual(imagenes[0]['Content-ID'], '<qr_resultados>')
+        self.assertTrue(imagenes[0].get_payload(decode=True).startswith(b'\x89PNG'))
+
+    @override_settings(
+        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+        EMAIL_HOST_USER='clinica@example.com', EMAIL_HOST_PASSWORD='x',
+    )
+    def test_si_falla_el_qr_el_correo_sale_igual_con_el_enlace(self):
+        with patch('pacientes.correos.qr_png', side_effect=RuntimeError('boom')):
+            error = enviar_resultados(self.orden)
+
+        self.assertEqual(error, '')
+        self.assertIn('/visor/?', mail.outbox[0].body)
+        self.assertEqual(mail.outbox[0].alternatives, [])
+
+    def test_la_pantalla_del_qr_muestra_el_qr_y_el_mismo_enlace_del_correo(self):
+        respuesta = self.client.get(reverse('qr_estudio', args=[self.cita.id]))
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, 'data:image/png;base64')
+        self.assertContains(respuesta, 'DPI completo')
+        from pacientes.correos import link_visor_paciente
+        self.orden.refresh_from_db()
+        self.assertContains(respuesta, link_visor_paciente(self.orden).replace('&', '&amp;'))
+
+    def test_descargar_el_qr_en_png(self):
+        respuesta = self.client.get(reverse('qr_estudio', args=[self.cita.id]), {'formato': 'png'})
+
+        self.assertEqual(respuesta['Content-Type'], 'image/png')
+        self.assertTrue(respuesta.content.startswith(b'\x89PNG'))
+
+    def test_no_se_entrega_el_qr_si_el_cobro_sigue_pendiente(self):
+        Cobro.objects.create(cita=self.cita)
+
+        respuesta = self.client.get(reverse('qr_estudio', args=[self.cita.id]))
+
+        self.assertRedirects(
+            respuesta, reverse('historial_paciente', args=[self.paciente.id]),
+            fetch_redirect_response=False,
+        )
+
+    def test_solo_recepcion_puede_ver_el_qr(self):
+        tecnico = crear_usuario('tec_qr', rol=Usuario.ROL_TECNICO_IMAGENES)
+        self.client.force_login(tecnico)
+
+        respuesta = self.client.get(reverse('qr_estudio', args=[self.cita.id]))
+
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_el_historial_ofrece_el_boton_de_qr_en_estudios_procesados(self):
+        respuesta = self.client.get(reverse('historial_paciente', args=[self.paciente.id]))
+
+        self.assertContains(respuesta, reverse('qr_estudio', args=[self.cita.id]))
