@@ -27,7 +27,13 @@ from accounts.models import MESES_ES, Bitacora, Usuario
 from accounts.views import es_administrador
 from clinica.validators import avisar_si_correo_no_existe
 from django.utils.text import slugify
-from .correos import enviar_estudio_medico_tratante, enviar_resultados
+from .correos import (
+    enviar_estudio_medico_tratante,
+    enviar_resultados,
+    link_visor_paciente,
+    qr_data_uri,
+    qr_png,
+)
 from .dicom_utils import dicom_a_jpg_memoria
 from .forms import (
     AdjuntarImagenesForm,
@@ -820,6 +826,46 @@ def enviar_estudio(request, cita_id):
 
     _enviar_estudio_y_registrar(request, cita, orden)
     return redirect('historial_paciente', paciente_id=cita.paciente_id)
+
+
+@login_required
+@user_passes_test(es_recepcionista)
+def qr_estudio(request, cita_id):
+    """Código QR de los resultados del estudio, para entregarlo en persona
+    (en pantalla o impreso) además del correo. Codifica el MISMO enlace que
+    el correo: abre el visor, que sigue pidiendo el DPI. Misma regla que el
+    envío por correo: no se entrega mientras el cobro siga pendiente.
+    `?formato=png` descarga la imagen."""
+    cita = get_object_or_404(
+        Cita.objects.select_related('paciente', 'tipo_estudio'),
+        id=cita_id, estado=Cita.ESTADO_PROCESADA,
+    )
+    orden = OrdenTrabajo.objects.filter(cita=cita).first()
+    volver = redirect('historial_paciente', paciente_id=cita.paciente_id)
+    if not orden:
+        messages.error(request, 'Este estudio no tiene una orden de trabajo todavía.')
+        return volver
+    if _cobro_bloquea_envio(cita):
+        messages.error(
+            request,
+            'No se puede entregar el QR: el estudio tiene un cobro pendiente. '
+            'Primero registrá el pago en la pantalla de Caja.',
+        )
+        return volver
+
+    enlace = link_visor_paciente(orden)
+    if request.GET.get('formato') == 'png':
+        respuesta = HttpResponse(qr_png(enlace), content_type='image/png')
+        respuesta['Content-Disposition'] = f'attachment; filename="qr_resultados_{orden.id}.png"'
+        return respuesta
+
+    return render(request, 'pacientes/qr_estudio.html', {
+        'cita': cita,
+        'paciente': cita.paciente,
+        'enlace': enlace,
+        'qr_data_uri': qr_data_uri(enlace),
+        'volver_url': reverse('historial_paciente', args=[cita.paciente_id]),
+    })
 
 
 @login_required

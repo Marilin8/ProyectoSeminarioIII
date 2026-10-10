@@ -1,14 +1,87 @@
 import base64
+import io
 import logging
 import smtplib
 import socket
+from email.mime.image import MIMEImage
 from urllib.parse import urlencode
 
+import qrcode
 from django.conf import settings
-from django.core.mail import EmailMessage
+from django.core.mail import EmailMultiAlternatives
 from django.urls import reverse
+from django.utils.html import escape
 
 logger = logging.getLogger(__name__)
+
+CONTENT_ID_QR = 'qr_resultados'
+
+
+def _link_visor(orden, nombre_url):
+    """Enlace al visor web del estudio (el mismo que va en el correo): lleva
+    el token público de la orden y, al abrirlo, el visor pide el DPI."""
+    token = orden.asegurar_token_publico()
+    ac = base64.urlsafe_b64encode(str(token).encode('ascii')).decode('ascii').rstrip('=')
+    return (
+        settings.VISOR_BASE_URL + reverse(nombre_url)
+        + '?' + urlencode({'studyId': orden.id, 'tab': 'images', 'ac': ac})
+    )
+
+
+def link_visor_paciente(orden):
+    return _link_visor(orden, 'visor_estudio')
+
+
+def link_visor_medico_tratante(orden):
+    return _link_visor(orden, 'visor_estudio_medico_tratante')
+
+
+def qr_png(url):
+    """PNG (bytes) con el código QR de `url`. El QR solo codifica el mismo
+    enlace del correo: abre el mismo visor, que sigue pidiendo el DPI."""
+    buffer = io.BytesIO()
+    qrcode.make(url, box_size=8, border=2).save(buffer, format='PNG')
+    return buffer.getvalue()
+
+
+def qr_data_uri(url):
+    return 'data:image/png;base64,' + base64.b64encode(qr_png(url)).decode('ascii')
+
+
+def _armar_correo(asunto, texto, destinatario, link):
+    """Correo de texto con el enlace de siempre, más -- como extra, sin quitar
+    el enlace -- una versión HTML que muestra el código QR de ese mismo
+    enlace. Si por lo que sea no se puede generar el QR, sale solo el texto
+    con el enlace (el envío nunca depende del QR)."""
+    correo = EmailMultiAlternatives(subject=asunto, body=texto, to=[destinatario])
+    try:
+        imagen_qr = qr_png(link)
+    except Exception:
+        logger.exception('No se pudo generar el QR del correo; se envía solo con el enlace')
+        return correo
+
+    link_html = escape(link)
+    cuerpo = escape(texto).replace(
+        link_html,
+        f'<a href="{link_html}">{link_html}</a>'
+        '<br><br><strong>También puede escanear este código QR con la cámara de su celular '
+        '(abre el mismo enlace):</strong><br>'
+        f'<img src="cid:{CONTENT_ID_QR}" alt="Código QR de sus resultados" width="200" height="200" '
+        'style="margin:8px 0;border:1px solid #d1d5db;">',
+    ).replace('\n', '<br>')
+    correo.attach_alternative(
+        '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1f2937;">'
+        f'{cuerpo}</div>',
+        'text/html',
+    )
+    # "related": la imagen se muestra dentro del HTML en vez de verse como
+    # un adjunto suelto (las imágenes incrustadas con data: las bloquea Gmail).
+    correo.mixed_subtype = 'related'
+    imagen = MIMEImage(imagen_qr, _subtype='png')
+    imagen.add_header('Content-ID', f'<{CONTENT_ID_QR}>')
+    imagen.add_header('Content-Disposition', 'inline', filename='qr-resultados.png')
+    correo.attach(imagen)
+    return correo
 
 
 def enviar_resultados(orden):
@@ -31,12 +104,7 @@ def enviar_resultados(orden):
             '(EMAIL_HOST_USER / EMAIL_HOST_PASSWORD en el archivo .env)'
         )
 
-    token = orden.asegurar_token_publico()
-    ac = base64.urlsafe_b64encode(str(token).encode('ascii')).decode('ascii').rstrip('=')
-    link_visor = (
-        settings.VISOR_BASE_URL + reverse('visor_estudio')
-        + '?' + urlencode({'studyId': orden.id, 'tab': 'images', 'ac': ac})
-    )
+    link_visor = link_visor_paciente(orden)
 
     # Un combo (ver Cita.estudios) tiene un informe por cada estudio que lo
     # compone; un estudio normal tiene exactamente uno.
@@ -69,7 +137,7 @@ Atentamente,
 Clínica de Imágenes
 """
 
-    correo = EmailMessage(subject=asunto, body=mensaje, to=[paciente.correo])
+    correo = _armar_correo(asunto, mensaje, paciente.correo, link_visor)
 
     # Solo se adjuntan los informes en PDF. Las imágenes ya no se adjuntan:
     # se ven en el visor web a través del link.
@@ -121,12 +189,7 @@ def enviar_estudio_medico_tratante(orden):
             '(EMAIL_HOST_USER / EMAIL_HOST_PASSWORD en el archivo .env)'
         )
 
-    token = orden.asegurar_token_publico()
-    ac = base64.urlsafe_b64encode(str(token).encode('ascii')).decode('ascii').rstrip('=')
-    link_visor = (
-        settings.VISOR_BASE_URL + reverse('visor_estudio_medico_tratante')
-        + '?' + urlencode({'studyId': orden.id, 'tab': 'images', 'ac': ac})
-    )
+    link_visor = link_visor_medico_tratante(orden)
 
     paciente = orden.cita.paciente
     asunto = 'Estudio listo para revisar - Clínica de Imágenes'
@@ -148,7 +211,7 @@ Atentamente,
 Clínica de Imágenes
 """
 
-    correo = EmailMessage(subject=asunto, body=mensaje, to=[medico.correo])
+    correo = _armar_correo(asunto, mensaje, medico.correo, link_visor)
 
     try:
         correo.send()
