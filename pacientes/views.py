@@ -3,6 +3,7 @@ import binascii
 import datetime
 import functools
 import os
+import secrets
 import time
 import zipfile
 from decimal import Decimal, InvalidOperation
@@ -26,11 +27,14 @@ from django.utils.dateparse import parse_date
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 
+from accounts import limitador
 from accounts.models import MESES_ES, Bitacora, Usuario
 from accounts.views import es_administrador
 from clinica.validators import avisar_si_correo_no_existe
+from django.utils.crypto import constant_time_compare, salted_hmac
 from django.utils.text import slugify
 from .correos import (
+    enviar_codigo_otp_medico,
     enviar_estudio_medico_tratante,
     enviar_resultados,
     link_visor_paciente,
@@ -781,7 +785,7 @@ def _intentar_envio_medico_tratante(request, cita, orden):
     medico = cita.medico_tratante
     if not medico or not medico.recibe_estudios_privados or orden.enviado_medico_tratante_en:
         return False
-    if not (medico.dpi and medico.correo):
+    if not medico.correo or not (medico.dpi or medico.acceso_otp):
         messages.warning(
             request,
             f'El médico tratante {medico.nombre} es {medico.get_tipo_display()} pero le falta '
@@ -2015,6 +2019,7 @@ def crear_medico_tratante(request):
             cd = form.cleaned_data
             medico = MedicoTratante.objects.create(
                 nombre=cd['nombre'], dpi=cd['dpi'] or None, correo=cd['correo'], tipo=cd['tipo'],
+                acceso_otp=cd['acceso_otp'],
             )
             messages.success(request, f'Médico tratante "{medico.nombre}" creado correctamente.')
             return redirect('lista_medicos_tratantes')
@@ -2037,12 +2042,14 @@ def editar_medico_tratante(request, medico_id):
             medico.dpi = cd['dpi'] or None
             medico.correo = cd['correo']
             medico.tipo = cd['tipo']
-            medico.save(update_fields=['nombre', 'dpi', 'correo', 'tipo', 'actualizado_en'])
+            medico.acceso_otp = cd['acceso_otp']
+            medico.save(update_fields=['nombre', 'dpi', 'correo', 'tipo', 'acceso_otp', 'actualizado_en'])
             messages.success(request, f'Médico tratante "{medico.nombre}" actualizado correctamente.')
             return redirect('lista_medicos_tratantes')
     else:
         form = MedicoTratanteForm(initial={
             'nombre': medico.nombre, 'dpi': medico.dpi or '', 'correo': medico.correo, 'tipo': medico.tipo,
+            'acceso_otp': medico.acceso_otp,
         }, medico_actual=medico)
 
     return render(request, 'pacientes/crear_medico_tratante.html', {
@@ -5370,6 +5377,7 @@ def _render_visor_estudio(request, orden):
 
 def visor_estudio(request):
     orden = _visor_orden_desde_request(request)
+    _visor_otp_limpiar_si_vencio(request)
     paciente = orden.cita.paciente
     clave_ok = f'visor_ok_{orden.id}'
     clave_intentos = f'visor_intentos_{orden.id}'
@@ -5403,20 +5411,134 @@ def visor_estudio(request):
     return _render_visor_estudio(request, orden)
 
 
+VISOR_OTP_VALIDEZ_MINUTOS = 10
+VISOR_OTP_ESPERA_REENVIO_SEGUNDOS = 60
+VISOR_OTP_SESION_MINUTOS = 60
+
+
+def _otp_hash(orden_id, codigo):
+    return salted_hmac('visor_otp_medico', f'{orden_id}:{codigo}').hexdigest()
+
+
+def _otp_enmascarar_correo(correo):
+    usuario, _, dominio = correo.partition('@')
+    return f'{usuario[:2]}{"*" * max(len(usuario) - 2, 1)}@{dominio}'
+
+
+def _visor_otp_limpiar_si_vencio(request):
+    """El acceso que se ganó con un código OTP dura VISOR_OTP_SESION_MINUTOS: pasado ese
+    tiempo se vuelve a pedir un código nuevo (el DPI, en cambio, no vence en la sesión).
+    Al vencer se borran las banderas de acceso de esta sesión."""
+    hasta = request.session.get('visor_otp_hasta')
+    if hasta is None or time.time() <= hasta:
+        return
+    for clave in list(request.session.keys()):
+        if clave.startswith(('visor_ok_', 'visor_paciente_ok_', 'visor_otp_')):
+            del request.session[clave]
+
+
+def _visor_otp_enviar(request, orden, medico):
+    """Genera un código de 6 dígitos, lo manda al correo del médico y lo deja
+    pendiente en la sesión (solo su hash). Devuelve (enviado, mensaje_de_error)."""
+    ahora = time.time()
+    espera = limitador.OTP_ENVIOS_MEDICO.espera(orden.id)
+    if espera:
+        return False, (
+            'Ya se enviaron demasiados códigos para este estudio. Intente de nuevo en '
+            f'{limitador.minutos_de_espera(espera)} minuto(s).'
+        )
+    pendiente = request.session.get(f'visor_otp_pendiente_{orden.id}')
+    if pendiente and ahora < pendiente['envio'] + VISOR_OTP_ESPERA_REENVIO_SEGUNDOS:
+        faltan = int(pendiente['envio'] + VISOR_OTP_ESPERA_REENVIO_SEGUNDOS - ahora) + 1
+        return False, f'Espere {faltan} segundo(s) antes de pedir otro código.'
+
+    codigo = f'{secrets.randbelow(10 ** 6):06d}'
+    limitador.OTP_ENVIOS_MEDICO.fallo(orden.id)
+    error = enviar_codigo_otp_medico(medico, orden, codigo, VISOR_OTP_VALIDEZ_MINUTOS)
+    if error:
+        return False, f'No se pudo enviar el código: {error}.'
+    request.session[f'visor_otp_pendiente_{orden.id}'] = {
+        'h': _otp_hash(orden.id, codigo),
+        'exp': ahora + VISOR_OTP_VALIDEZ_MINUTOS * 60,
+        'n': 0,
+        'envio': ahora,
+    }
+    return True, ''
+
+
+def _visor_medico_con_otp(request, orden, medico, qs):
+    clave_pendiente = f'visor_otp_pendiente_{orden.id}'
+    correo = _otp_enmascarar_correo(medico.correo)
+    contexto = {'medico': medico, 'query_string': qs, 'modo_otp': True, 'correo_enmascarado': correo}
+
+    if request.method == 'POST':
+        if request.POST.get('accion') == 'reenviar':
+            enviado, error = _visor_otp_enviar(request, orden, medico)
+            if enviado:
+                contexto['aviso'] = f'Le enviamos un código nuevo a {correo}.'
+            else:
+                contexto['error'] = error
+            return render(request, 'pacientes/visor_gate.html', contexto)
+
+        codigo = (request.POST.get('codigo') or '').strip()
+        pendiente = request.session.get(clave_pendiente)
+        if not pendiente or time.time() > pendiente['exp']:
+            request.session.pop(clave_pendiente, None)
+            contexto['error'] = 'El código venció o todavía no se envió. Pida uno nuevo.'
+        elif constant_time_compare(pendiente['h'], _otp_hash(orden.id, codigo)):
+            request.session.pop(clave_pendiente, None)
+            request.session[f'visor_ok_{orden.id}'] = True
+            request.session[f'visor_paciente_ok_{orden.cita.paciente_id}'] = True
+            request.session['visor_otp_hasta'] = time.time() + VISOR_OTP_SESION_MINUTOS * 60
+            return redirect(f'{reverse("visor_estudio")}?{qs}')
+        else:
+            pendiente['n'] += 1
+            if pendiente['n'] >= VISOR_MAX_INTENTOS:
+                request.session.pop(clave_pendiente, None)
+                contexto['error'] = 'Demasiados intentos con este código. Pida uno nuevo.'
+            else:
+                request.session[clave_pendiente] = pendiente
+                contexto['error'] = 'El código no es correcto.'
+                contexto['intentos_restantes'] = VISOR_MAX_INTENTOS - pendiente['n']
+        return render(request, 'pacientes/visor_gate.html', contexto)
+
+    # Al abrir el enlace se manda el código solo, salvo que ya haya uno vigente.
+    pendiente = request.session.get(clave_pendiente)
+    if pendiente and time.time() <= pendiente['exp']:
+        contexto['aviso'] = f'Ya le enviamos un código a {correo}. Revise su correo.'
+    else:
+        enviado, error = _visor_otp_enviar(request, orden, medico)
+        if enviado:
+            contexto['aviso'] = f'Le enviamos un código de 6 dígitos a {correo}.'
+        else:
+            contexto['error'] = error
+    return render(request, 'pacientes/visor_gate.html', contexto)
+
+
 def visor_estudio_medico_tratante(request):
     """Igual que visor_estudio pero para el médico tratante (correo
-    enviado por enviar_estudio_medico_tratante): el DPI que lo desbloquea
-    es el del médico, no el del paciente. Una vez que entra, usa el mismo
-    visor_estudio.html y las mismas descargas (visor_imagen/visor_jpg/
+    enviado por enviar_estudio_medico_tratante). Se desbloquea con su DPI o, si
+    el administrador le marcó "acceso con código OTP", con un código de 6 dígitos
+    que se le manda a su correo cada vez que abre el enlace. Una vez que entra, usa
+    el mismo visor_estudio.html y las mismas descargas (visor_imagen/visor_jpg/
     visor_informe_pdf/visor_dicom): todas miran la misma bandera de sesión
     visor_ok_<orden>, sin importar quién la puso ahí."""
     orden = _visor_orden_desde_request(request)
     medico = orden.cita.medico_tratante
-    if not medico or not medico.recibe_estudios_privados or not medico.dpi:
+    if not medico or not medico.recibe_estudios_privados:
         raise Http404
+    if medico.acceso_otp:
+        if not medico.correo:
+            raise Http404
+    elif not medico.dpi:
+        raise Http404
+    _visor_otp_limpiar_si_vencio(request)
     clave_ok = f'visor_ok_{orden.id}'
     clave_intentos = f'visor_intentos_medico_{orden.id}'
     qs = request.META.get('QUERY_STRING', '')
+
+    if medico.acceso_otp and request.session.get(clave_ok) is not True:
+        return _visor_medico_con_otp(request, orden, medico, qs)
 
     if request.session.get(clave_ok) is not True:
         intentos = request.session.get(clave_intentos, 0)
@@ -5458,6 +5580,7 @@ def visor_estudio_historial(request, orden_id):
         OrdenTrabajo.objects.select_related('cita__paciente', 'cita__tipo_estudio'),
         id=orden_id, cita__estado=Cita.ESTADO_PROCESADA,
     )
+    _visor_otp_limpiar_si_vencio(request)
     if request.session.get(f'visor_paciente_ok_{orden.cita.paciente_id}') is not True:
         raise Http404
     # Reusa las mismas descargas de imágenes/informe que el estudio de
@@ -5468,6 +5591,7 @@ def visor_estudio_historial(request, orden_id):
 
 def _visor_orden_autorizada(request, orden_id):
     orden = get_object_or_404(OrdenTrabajo.objects.select_related('cita'), id=orden_id)
+    _visor_otp_limpiar_si_vencio(request)
     if request.session.get(f'visor_paciente_ok_{orden.cita.paciente_id}') is True:
         return orden
     if request.session.get(f'visor_ok_{orden_id}') is True and (

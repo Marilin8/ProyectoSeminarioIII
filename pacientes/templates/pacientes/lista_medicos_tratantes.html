@@ -55,6 +55,9 @@
                         {% else %}
                             <span style="color:#94a3b8;">Sin clasificar</span>
                         {% endif %}
+                        {% if medico.acceso_otp %}
+                            <br><span style="display:inline-block;margin-top:4px;padding:1px 8px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:0.72rem;font-weight:600;">Acceso por código OTP</span>
+                        {% endif %}
                     </td>
 
                     <td style="padding:14px; color:#64748b; font-size:0.85rem;">

@@ -15,6 +15,10 @@
         .visor-wrap input[type="text"] {
             text-align: center; letter-spacing: 0.12em; font-size: 1.3rem; font-weight: 600;
         }
+        .visor-wrap .enlace-reenviar {
+            background: none; border: none; padding: 0; color: var(--primary); cursor: pointer;
+            font: inherit; text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -31,6 +35,39 @@
                         Demasiados intentos fallidos. Cerrá esta página y volvé a abrir el enlace
                         del correo más tarde, o comunicate con la clínica.
                     </div>
+                {% elif modo_otp %}
+                    <p class="text-sm text-muted" style="margin-bottom: 1rem;">
+                        Para proteger la información del paciente, ingrese el
+                        <strong>código de 6 dígitos</strong> que enviamos a
+                        <strong>{{ correo_enmascarado }}</strong>.
+                    </p>
+                    {% if aviso %}
+                        <div class="alert alert-success">{{ aviso }}</div>
+                    {% endif %}
+                    {% if error %}
+                        <div class="alert alert-danger">
+                            {{ error }}
+                            {% if intentos_restantes > 0 %}
+                                Le quedan {{ intentos_restantes }} intento{{ intentos_restantes|pluralize }}.
+                            {% endif %}
+                        </div>
+                    {% endif %}
+                    <form method="post" action="?{{ query_string }}">
+                        {% csrf_token %}
+                        <label for="codigo">Código de acceso</label>
+                        <input type="text" name="codigo" id="codigo"
+                               inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+                               autocomplete="one-time-code" required autofocus>
+                        <button type="submit" class="btn btn-primary btn-block mt-2">
+                            Ver el estudio
+                        </button>
+                    </form>
+                    <form method="post" action="?{{ query_string }}" class="text-sm text-muted"
+                          style="margin-top: 1rem; text-align: center;">
+                        {% csrf_token %}
+                        <input type="hidden" name="accion" value="reenviar">
+                        ¿No le llegó? <button type="submit" class="enlace-reenviar">Reenviar código</button>
+                    </form>
                 {% else %}
                     <p class="text-sm text-muted" style="margin-bottom: 1rem;">
                         Para proteger su información, ingrese su <strong>DPI completo</strong>

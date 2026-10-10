@@ -217,6 +217,11 @@ class MedicoTratante(models.Model):
         max_length=10, choices=TIPO_CHOICES, blank=True, default='', verbose_name='tipo',
         help_text='De qué lado refiere pacientes: IGSS, privado o ambos.',
     )
+    acceso_otp = models.BooleanField(
+        default=False, verbose_name='acceso con código OTP por correo',
+        help_text='Si está activo, al abrir el enlace de un paciente se le envía un código de 6 dígitos '
+                  'a su correo en vez de pedirle el DPI. Si no, se le pide el DPI.',
+    )
     activo = models.BooleanField(default=True, verbose_name='activo')
     creado_en = models.DateTimeField(auto_now_add=True)
     actualizado_en = models.DateTimeField(auto_now=True)

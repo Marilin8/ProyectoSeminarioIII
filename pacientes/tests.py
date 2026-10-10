@@ -13,7 +13,7 @@ from django.utils import timezone
 from accounts.models import Bitacora, RolAdicional
 from pacientes import horarios
 from pacientes.correos import enviar_resultados
-from pacientes.forms import AgendarCitaForm, RegistrarTicketForm, validar_telefono_pais
+from pacientes.forms import AgendarCitaForm, MedicoTratanteForm, RegistrarTicketForm, validar_telefono_pais
 from pacientes.models import (
     CambioEstudioProgramado,
     Cita,
@@ -5432,3 +5432,397 @@ class CampanaDeNotificacionesUnicaTests(TestCase):
             if 'includes/notificaciones.html' in ruta.read_text(encoding='utf-8', errors='ignore'):
                 usan_el_parcial.append(ruta.relative_to(raiz).as_posix())
         self.assertEqual(usan_el_parcial, ['templates/base.html'])
+
+
+CONFIG_CORREO_PRUEBA = dict(
+    EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+    EMAIL_HOST_USER='clinica@example.com', EMAIL_HOST_PASSWORD='clave',
+)
+
+
+@override_settings(**CONFIG_CORREO_PRUEBA)
+class AccesoOtpMedicoTratanteTests(TestCase):
+    """Médico tratante con "acceso con código OTP": al abrir el enlace de un paciente se
+    le manda un código de 6 dígitos a su correo, en vez de pedirle el DPI."""
+
+    def setUp(self):
+        import re
+        self._re_codigo = re.compile(r'^\s+(\d{6})\s*$', re.M)
+        self.recepcion = crear_usuario('recep_otp_med', rol=Usuario.ROL_RECEPCIONISTA)
+        self.medico = MedicoTratante.objects.create(
+            nombre='Dr. Código', dpi='7227227227001', correo='otp@example.com',
+            tipo=MedicoTratante.TIPO_PRIVADO, acceso_otp=True,
+        )
+        self.paciente = crear_paciente(dpi='6226226226001', correo='')
+        self.estudio = TipoEstudio.objects.create(nombre='Radiografía acceso OTP')
+        self.cita = crear_cita(
+            self.recepcion, paciente=self.paciente, tipo_estudio=self.estudio,
+            convenio=Cita.CONVENIO_PRIVADO, estado=Cita.ESTADO_PROCESADA, medico_tratante=self.medico,
+        )
+        self.orden = OrdenTrabajo.objects.create(
+            cita=self.cita, motivo='x', creada_por=self.recepcion,
+            enviado_medico_tratante_en=timezone.now(),
+        )
+        InformeEstudio.objects.create(orden=self.orden, tipo_estudio=self.estudio, texto='Sin hallazgos.')
+        token = self.orden.asegurar_token_publico()
+        self.ac = base64.urlsafe_b64encode(str(token).encode()).decode().rstrip('=')
+        self.qs = f'studyId={self.orden.id}&ac={self.ac}'
+        self.url = f"{reverse('visor_estudio_medico_tratante')}?{self.qs}"
+        self.url_visor = f"{reverse('visor_estudio')}?{self.qs}"
+
+    def _ultimo_codigo(self):
+        return self._re_codigo.search(mail.outbox[-1].body).group(1)
+
+    def _enviar_codigo(self, **extra):
+        return self.client.post(self.url, {'accion': 'reenviar', **extra})
+
+    # --- envío del código ---
+    def test_al_abrir_el_enlace_se_manda_un_codigo_al_correo_del_medico(self):
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['otp@example.com'])
+        self.assertRegex(self._ultimo_codigo(), r'^\d{6}$')
+        self.assertContains(respuesta, 'ot*@example.com')
+        self.assertNotContains(respuesta, 'DPI completo')
+        self.assertContains(respuesta, 'name="codigo"')
+
+    def test_el_correo_no_incluye_el_enlace_ni_el_dpi(self):
+        self.client.get(self.url)
+
+        cuerpo = mail.outbox[0].body
+        self.assertNotIn('/visor/', cuerpo)
+        self.assertNotIn(self.medico.dpi, cuerpo)
+        self.assertIn('10 minutos', cuerpo)
+
+    def test_recargar_la_pagina_no_manda_otro_correo_mientras_el_codigo_sigue_vigente(self):
+        self.client.get(self.url)
+        self.client.get(self.url)
+        self.client.get(self.url)
+
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_en_la_sesion_solo_se_guarda_el_hash_del_codigo(self):
+        self.client.get(self.url)
+        codigo = self._ultimo_codigo()
+
+        pendiente = self.client.session[f'visor_otp_pendiente_{self.orden.id}']
+
+        self.assertNotIn(codigo, str(dict(self.client.session)))
+        self.assertEqual(len(pendiente['h']), 40)
+
+    def test_si_falla_el_envio_del_correo_se_avisa(self):
+        from unittest import mock
+        with mock.patch('pacientes.views.enviar_codigo_otp_medico', return_value='no hay red'):
+            respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, 'No se pudo enviar el código: no hay red.')
+        self.assertNotIn(f'visor_otp_pendiente_{self.orden.id}', self.client.session)
+
+    # --- verificación ---
+    def test_el_codigo_correcto_abre_el_visor(self):
+        self.client.get(self.url)
+
+        respuesta = self.client.post(self.url, {'codigo': self._ultimo_codigo()}, follow=True)
+
+        self.assertRedirects(respuesta, self.url_visor)
+        self.assertContains(respuesta, self.estudio.nombre)
+
+    def test_el_codigo_sirve_una_sola_vez(self):
+        self.client.get(self.url)
+        codigo = self._ultimo_codigo()
+        self.client.post(self.url, {'codigo': codigo})
+        otro_navegador = self.client_class()
+
+        respuesta = otro_navegador.post(self.url, {'codigo': codigo})
+
+        self.assertContains(respuesta, 'venció o todavía no se envió')
+
+    def test_un_codigo_incorrecto_no_abre_y_cuenta_intentos(self):
+        self.client.get(self.url)
+
+        respuesta = self.client.post(self.url, {'codigo': '000000'})
+
+        self.assertContains(respuesta, 'El código no es correcto')
+        self.assertContains(respuesta, 'Le quedan 4 intentos')
+        self.assertContains(self.client.get(self.url_visor), 'DPI completo')  # sigue bloqueado
+
+    def test_tras_cinco_intentos_el_codigo_se_invalida_aunque_despues_se_acierte(self):
+        self.client.get(self.url)
+        codigo = self._ultimo_codigo()
+        malo = '000000' if codigo != '000000' else '111111'
+        for _ in range(5):
+            respuesta = self.client.post(self.url, {'codigo': malo})
+
+        self.assertContains(respuesta, 'Demasiados intentos con este código')
+        respuesta = self.client.post(self.url, {'codigo': codigo})
+        self.assertContains(respuesta, 'venció o todavía no se envió')
+
+    def test_el_codigo_vence_a_los_diez_minutos(self):
+        from unittest import mock
+        self.client.get(self.url)
+        codigo = self._ultimo_codigo()
+
+        with mock.patch('pacientes.views.time.time', return_value=__import__('time').time() + 11 * 60):
+            respuesta = self.client.post(self.url, {'codigo': codigo})
+
+        self.assertContains(respuesta, 'venció o todavía no se envió')
+
+    def test_en_modo_otp_el_dpi_no_abre_el_visor(self):
+        respuesta = self.client.post(self.url, {'dpi_ultimos': self.medico.dpi})
+
+        self.assertNotContains(respuesta, self.estudio.nombre)
+        self.assertContains(respuesta, 'venció o todavía no se envió')
+
+    def test_el_codigo_de_una_orden_no_abre_otra(self):
+        otra_cita = crear_cita(
+            self.recepcion, paciente=crear_paciente(dpi='6226226226002', correo=''),
+            tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO, estado=Cita.ESTADO_PROCESADA,
+            medico_tratante=self.medico,
+        )
+        otra_orden = OrdenTrabajo.objects.create(
+            cita=otra_cita, motivo='x', creada_por=self.recepcion, enviado_medico_tratante_en=timezone.now(),
+        )
+        token = otra_orden.asegurar_token_publico()
+        ac = base64.urlsafe_b64encode(str(token).encode()).decode().rstrip('=')
+        url_otra = f"{reverse('visor_estudio_medico_tratante')}?studyId={otra_orden.id}&ac={ac}"
+        self.client.get(self.url)
+        codigo = self._ultimo_codigo()
+
+        respuesta = self.client.post(url_otra, {'codigo': codigo})
+
+        self.assertContains(respuesta, 'venció o todavía no se envió')
+
+    # --- reenvío y límites ---
+    def test_reenviar_enseguida_hace_esperar(self):
+        self.client.get(self.url)
+
+        respuesta = self._enviar_codigo()
+
+        self.assertContains(respuesta, 'Espere')
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_reenviar_despues_de_un_minuto_manda_un_codigo_nuevo_y_el_viejo_deja_de_servir(self):
+        from unittest import mock
+        self.client.get(self.url)
+        viejo = self._ultimo_codigo()
+
+        with mock.patch('pacientes.views.time.time', return_value=__import__('time').time() + 61):
+            respuesta = self._enviar_codigo()
+
+        self.assertContains(respuesta, 'Le enviamos un código nuevo')
+        self.assertEqual(len(mail.outbox), 2)
+        nuevo = self._ultimo_codigo()
+        if nuevo != viejo:
+            self.assertContains(self.client.post(self.url, {'codigo': viejo}), 'El código no es correcto')
+        self.assertRedirects(
+            self.client.post(self.url, {'codigo': nuevo}), self.url_visor, fetch_redirect_response=False,
+        )
+
+    def test_hay_un_tope_de_codigos_por_hora_para_no_llenarle_el_correo(self):
+        from unittest import mock
+
+        from django.core.cache import cache
+        with override_settings(CACHES={'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache', 'LOCATION': 'otp-medico-prueba',
+        }}):
+            cache.clear()
+            ahora = __import__('time').time()
+            for numero in range(5):
+                with mock.patch('pacientes.views.time.time', return_value=ahora + 61 * numero):
+                    self._enviar_codigo()
+            with mock.patch('pacientes.views.time.time', return_value=ahora + 61 * 6):
+                respuesta = self._enviar_codigo()
+            cache.clear()
+
+        self.assertEqual(len(mail.outbox), 5)
+        self.assertContains(respuesta, 'demasiados códigos')
+
+    # --- vencimiento del acceso ---
+    def test_el_acceso_por_otp_vence_a_la_hora_y_pide_otro_codigo(self):
+        from unittest import mock
+        self.client.get(self.url)
+        self.client.post(self.url, {'codigo': self._ultimo_codigo()})
+        self.assertContains(self.client.get(self.url_visor), self.estudio.nombre)
+
+        with mock.patch('pacientes.views.time.time', return_value=__import__('time').time() + 61 * 60):
+            respuesta = self.client.get(self.url_visor)
+            volver = self.client.get(self.url)
+
+        self.assertNotContains(respuesta, self.estudio.nombre)
+        self.assertContains(volver, 'name="codigo"')
+
+    def test_el_acceso_por_otp_sigue_dentro_de_la_hora(self):
+        from unittest import mock
+        self.client.get(self.url)
+        self.client.post(self.url, {'codigo': self._ultimo_codigo()})
+
+        with mock.patch('pacientes.views.time.time', return_value=__import__('time').time() + 30 * 60):
+            respuesta = self.client.get(self.url_visor)
+
+        self.assertContains(respuesta, self.estudio.nombre)
+
+    # --- casos de borde ---
+    def test_sin_correo_registrado_da_404(self):
+        self.medico.correo = ''
+        self.medico.save(update_fields=['correo'])
+
+        self.assertEqual(self.client.get(self.url).status_code, 404)
+
+    def test_con_otp_no_hace_falta_dpi(self):
+        self.medico.dpi = None
+        self.medico.save(update_fields=['dpi'])
+
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, 'name="codigo"')
+
+    def test_sin_otp_se_sigue_pidiendo_el_dpi(self):
+        self.medico.acceso_otp = False
+        self.medico.save(update_fields=['acceso_otp'])
+
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, 'DPI completo')
+        self.assertNotContains(respuesta, 'name="codigo"')
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_sin_otp_y_sin_dpi_da_404(self):
+        self.medico.acceso_otp = False
+        self.medico.dpi = None
+        self.medico.save(update_fields=['acceso_otp', 'dpi'])
+
+        self.assertEqual(self.client.get(self.url).status_code, 404)
+
+    def test_el_correo_del_estudio_avisa_que_se_le_mandara_un_codigo(self):
+        from pacientes.correos import enviar_estudio_medico_tratante
+        self.assertEqual(enviar_estudio_medico_tratante(self.orden), '')
+        self.assertIn('código de 6 dígitos', mail.outbox[-1].body)
+        self.assertNotIn('DPI completo', mail.outbox[-1].body)
+
+        self.medico.acceso_otp = False
+        self.medico.save(update_fields=['acceso_otp'])
+        self.orden.refresh_from_db()
+        self.assertEqual(enviar_estudio_medico_tratante(self.orden), '')
+        self.assertIn('DPI completo', mail.outbox[-1].body)
+
+    def test_el_paciente_sigue_entrando_con_su_dpi(self):
+        respuesta = self.client.post(
+            f"{reverse('visor_estudio')}?{self.qs}", {'dpi_ultimos': self.paciente.dpi}, follow=True,
+        )
+        self.assertContains(respuesta, self.estudio.nombre)
+
+
+class MedicoTratanteAccesoOtpFormTests(TestCase):
+    """Casilla "código OTP" al crear o editar un médico tratante."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_otp_form', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.client.force_login(self.admin)
+
+    def _datos(self, **cambios):
+        datos = {'nombre': 'Dr. Casilla OTP', 'tipo': MedicoTratante.TIPO_PRIVADO, 'correo': 'casilla@gmail.com'}
+        datos.update(cambios)
+        return datos
+
+    def test_con_otp_marcado_no_se_pide_el_dpi(self):
+        form = MedicoTratanteForm(self._datos(acceso_otp='on', dpi=''))
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_sin_otp_el_dpi_sigue_siendo_obligatorio_para_privado(self):
+        form = MedicoTratanteForm(self._datos(dpi=''))
+        self.assertFalse(form.is_valid())
+        self.assertIn('dpi', form.errors)
+
+    def test_con_otp_el_correo_es_obligatorio(self):
+        form = MedicoTratanteForm(self._datos(acceso_otp='on', correo=''))
+        self.assertFalse(form.is_valid())
+        self.assertIn('correo', form.errors)
+
+    def test_otp_en_un_medico_sin_clasificar_tambien_exige_correo(self):
+        form = MedicoTratanteForm({'nombre': 'Dr. Sin Tipo', 'acceso_otp': 'on'})
+        self.assertFalse(form.is_valid())
+        self.assertIn('correo', form.errors)
+
+    def test_crear_guarda_la_casilla(self):
+        self.client.post(reverse('crear_medico_tratante'), self._datos(acceso_otp='on'))
+
+        medico = MedicoTratante.objects.get(nombre='Dr. Casilla OTP')
+        self.assertTrue(medico.acceso_otp)
+        self.assertIsNone(medico.dpi)
+
+    def test_crear_sin_marcar_deja_el_acceso_por_dpi(self):
+        self.client.post(reverse('crear_medico_tratante'), self._datos(dpi='9229229229001'))
+
+        self.assertFalse(MedicoTratante.objects.get(nombre='Dr. Casilla OTP').acceso_otp)
+
+    def test_editar_puede_activar_y_desactivar_la_casilla(self):
+        medico = MedicoTratante.objects.create(
+            nombre='Dr. Editable OTP', dpi='9229229229002', correo='editable@gmail.com',
+            tipo=MedicoTratante.TIPO_PRIVADO,
+        )
+        url = reverse('editar_medico_tratante', args=[medico.id])
+        datos = self._datos(nombre='Dr. Editable OTP', dpi='9229229229002', correo='editable@gmail.com')
+
+        self.client.post(url, {**datos, 'acceso_otp': 'on'})
+        medico.refresh_from_db()
+        self.assertTrue(medico.acceso_otp)
+
+        self.client.post(url, datos)
+        medico.refresh_from_db()
+        self.assertFalse(medico.acceso_otp)
+
+    def test_al_editar_la_casilla_aparece_marcada_si_ya_usa_otp(self):
+        medico = MedicoTratante.objects.create(
+            nombre='Dr. Ya OTP', correo='yaotp@gmail.com', tipo=MedicoTratante.TIPO_PRIVADO, acceso_otp=True,
+        )
+
+        respuesta = self.client.get(reverse('editar_medico_tratante', args=[medico.id]))
+
+        self.assertTrue(respuesta.context['form'].initial['acceso_otp'])
+        self.assertContains(respuesta, 'Pedir un código OTP por correo en vez del DPI')
+
+    def test_la_lista_marca_a_los_medicos_con_acceso_por_otp(self):
+        MedicoTratante.objects.create(
+            nombre='Dr. Con Código', correo='concodigo@gmail.com', tipo=MedicoTratante.TIPO_PRIVADO, acceso_otp=True,
+        )
+        MedicoTratante.objects.create(
+            nombre='Dr. Con Dpi', dpi='9229229229003', correo='condpi@gmail.com', tipo=MedicoTratante.TIPO_PRIVADO,
+        )
+
+        respuesta = self.client.get(reverse('lista_medicos_tratantes'))
+
+        self.assertContains(respuesta, 'Acceso por código OTP', count=1)
+
+
+@override_settings(**CONFIG_CORREO_PRUEBA)
+class EnvioEstudioMedicoConOtpTests(TestCase):
+    """El correo del estudio sale para un médico con OTP aunque no tenga DPI."""
+
+    def test_medico_con_otp_sin_dpi_recibe_el_aviso_del_estudio(self):
+        recepcion = crear_usuario('recep_envio_otp', rol=Usuario.ROL_RECEPCIONISTA)
+        radiologo = crear_usuario('rad_envio_otp', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        medico = MedicoTratante.objects.create(
+            nombre='Dr. Solo Código', correo='solocodigo@example.com',
+            tipo=MedicoTratante.TIPO_PRIVADO, acceso_otp=True,
+        )
+        paciente = crear_paciente(dpi='8228228228001', correo='')
+        tipo_estudio = TipoEstudio.objects.create(nombre='RX envío OTP')
+        cita = crear_cita(
+            recepcion, paciente=paciente, tipo_estudio=tipo_estudio, convenio=Cita.CONVENIO_COEX,
+            estado=Cita.ESTADO_EN_PROCESO, medico_tratante=medico,
+        )
+        orden = OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=recepcion)
+        ImagenEstudio.objects.create(
+            orden=orden, tipo_estudio=tipo_estudio,
+            archivo=SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+            subida_por=recepcion,
+        )
+        self.client.force_login(radiologo)
+
+        self.client.post(reverse('adjuntar_informe', args=[cita.id]), {f'texto_{tipo_estudio.id}': 'Sin hallazgos.'})
+
+        orden.refresh_from_db()
+        self.assertIsNotNone(orden.enviado_medico_tratante_en)
+        self.assertEqual(mail.outbox[0].to, ['solocodigo@example.com'])

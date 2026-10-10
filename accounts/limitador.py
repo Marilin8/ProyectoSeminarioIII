@@ -58,6 +58,9 @@ MINUTOS = 10
 LOGIN_USUARIO = LimiteIntentos('login_usuario', 5, MINUTOS * 60)
 LOGIN_IP = LimiteIntentos('login_ip', 30, MINUTOS * 60)
 CODIGO_MFA = LimiteIntentos('codigo_mfa', 5, MINUTOS * 60)
+# Códigos OTP enviados por correo a un médico tratante para abrir el visor de un estudio
+# (se cuenta con .fallo() cada envío): evita llenarle el correo a quien tenga el enlace.
+OTP_ENVIOS_MEDICO = LimiteIntentos('otp_envios_medico', 5, 60 * 60)
 
 
 def espera_login(ip, usuario):

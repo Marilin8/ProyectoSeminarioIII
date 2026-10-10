@@ -627,6 +627,13 @@ class MedicoTratanteForm(forms.Form):
     tipo = forms.ChoiceField(
         label='Tipo', choices=MedicoTratante.TIPO_CHOICES, required=False,
     )
+    acceso_otp = forms.BooleanField(
+        label='Pedir un código OTP por correo en vez del DPI', required=False,
+        help_text=(
+            'Cada vez que abra el enlace de un paciente se le envía un código de 6 dígitos a su correo. '
+            'Si no se marca, se le pide su DPI.'
+        ),
+    )
 
     def __init__(self, *args, medico_actual=None, **kwargs):
         self.medico_actual = medico_actual
@@ -665,12 +672,14 @@ class MedicoTratanteForm(forms.Form):
 
     def clean(self):
         cleaned = super().clean()
+        usa_otp = cleaned.get('acceso_otp')
         if cleaned.get('tipo') in MedicoTratante.TIPOS_QUE_RECIBEN_ESTUDIO:
-            if not cleaned.get('dpi'):
+            # Con OTP la llave es el código que llega al correo; sin OTP, el DPI.
+            if not cleaned.get('dpi') and not usa_otp:
                 self.add_error(
                     'dpi',
                     'El DPI es obligatorio para un médico privado o ambos: es la llave '
-                    'con la que va a entrar a revisar el estudio.',
+                    'con la que va a entrar a revisar el estudio (o marque el acceso por código OTP).',
                 )
             if not cleaned.get('correo'):
                 self.add_error(
@@ -678,6 +687,8 @@ class MedicoTratanteForm(forms.Form):
                     'El correo es obligatorio para un médico privado o ambos: ahí se le '
                     'avisa cuando el estudio del paciente está listo.',
                 )
+        elif usa_otp and not cleaned.get('correo'):
+            self.add_error('correo', 'El correo es obligatorio para enviarle el código OTP.')
         return cleaned
 
 

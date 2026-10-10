@@ -191,6 +191,17 @@ def enviar_estudio_medico_tratante(orden):
 
     link_visor = link_visor_medico_tratante(orden)
 
+    if medico.acceso_otp:
+        aviso_acceso = (
+            'Al abrir el enlace le enviaremos un código de 6 dígitos a este mismo correo\n'
+            'para que pueda entrar. No comparta el código ni el enlace.'
+        )
+    else:
+        aviso_acceso = (
+            'Se le pedirá su DPI completo para acceder: es la llave que protege el\n'
+            'estudio del paciente, así que no la comparta.'
+        )
+
     paciente = orden.cita.paciente
     asunto = 'Estudio listo para revisar - Clínica de Imágenes'
     mensaje = f"""Estimado(a) {medico.nombre}:
@@ -204,8 +215,7 @@ Fecha: {orden.cita.fecha:%d/%m/%Y}
 Para revisarlo, ingrese a este enlace:
 {link_visor}
 
-Se le pedirá su DPI completo para acceder: es la llave que protege el
-estudio del paciente, así que no la comparta.
+{aviso_acceso}
 
 Atentamente,
 Clínica de Imágenes
@@ -239,4 +249,51 @@ Clínica de Imágenes
         )
         return 'ocurrió un error inesperado al enviar el correo (ver el registro del sistema)'
 
+    return ''
+
+
+def enviar_codigo_otp_medico(medico, orden, codigo, minutos_validez):
+    """Manda al correo del médico tratante el código de 6 dígitos con el que abre
+    el visor del estudio (ver visor_estudio_medico_tratante, cuando tiene
+    acceso_otp). Devuelve '' si salió, o un texto corto con el motivo del fallo
+    (mismo contrato que enviar_resultados: nunca tumba la pantalla)."""
+    if not medico.correo:
+        return 'el médico tratante no tiene un correo registrado'
+    if not (settings.EMAIL_HOST_USER and settings.EMAIL_HOST_PASSWORD):
+        return (
+            'el sistema todavía no tiene configurado el correo emisor '
+            '(EMAIL_HOST_USER / EMAIL_HOST_PASSWORD en el archivo .env)'
+        )
+
+    paciente = orden.cita.paciente
+    mensaje = f"""Estimado(a) {medico.nombre}:
+
+Su código para ver el estudio de {paciente.nombre} {paciente.apellido} en
+Clínica de Imágenes es:
+
+    {codigo}
+
+Es válido por {minutos_validez} minutos y solo sirve una vez. Si usted no abrió el
+enlace, ignore este mensaje y no comparta el código con nadie.
+
+Atentamente,
+Clínica de Imágenes
+"""
+    correo = EmailMultiAlternatives(
+        subject='Su código de acceso - Clínica de Imágenes', body=mensaje, to=[medico.correo],
+    )
+    try:
+        correo.send()
+    except smtplib.SMTPAuthenticationError:
+        logger.exception('SMTP rechazó las credenciales (código OTP, orden #%s)', orden.id)
+        return (
+            'el servidor de correo rechazó el usuario o la contraseña '
+            '(revisá EMAIL_HOST_USER / EMAIL_HOST_PASSWORD)'
+        )
+    except (socket.timeout, TimeoutError, ConnectionError, OSError, smtplib.SMTPException):
+        logger.exception('No se pudo conectar con el servidor de correo (código OTP, orden #%s)', orden.id)
+        return 'no se pudo conectar con el servidor de correo; intente de nuevo en unos minutos'
+    except Exception:
+        logger.exception('Error inesperado enviando el código OTP (orden #%s)', orden.id)
+        return 'ocurrió un error inesperado al enviar el correo (ver el registro del sistema)'
     return ''
