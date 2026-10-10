@@ -1,4 +1,5 @@
 import datetime
+import re
 import uuid
 from io import BytesIO
 
@@ -7,7 +8,7 @@ from PIL import Image
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from django_otp.oath import totp
@@ -17,6 +18,22 @@ from accounts.models import Bitacora, HistorialComision, RolAdicional, Usuario
 from clinica.validators import validar_dominio_correo
 
 UsuarioModel = get_user_model()
+
+
+CORREO_PRUEBA = dict(
+    EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+    EMAIL_HOST_USER='clinica@example.com', EMAIL_HOST_PASSWORD='clave',
+)
+
+
+def eliminar_con_codigo(caso, nombre, follow=False):
+    """Hace los dos pasos de eliminar una copia: pide el código por correo y lo escribe."""
+    caso.admin.email = 'administrador@gmail.com'
+    caso.admin.save(update_fields=['email'])
+    with override_settings(**CORREO_PRUEBA):
+        caso.client.post(reverse('solicitar_codigo_eliminar_respaldo', args=[nombre]))
+    codigo = re.search(r'^\s+(\d{6})\s*$', mail.outbox[-1].body, re.M).group(1)
+    return caso.client.post(reverse('eliminar_respaldo', args=[nombre]), {'codigo': codigo}, follow=follow)
 
 
 def crear_usuario(username='usuario', rol=Usuario.ROL_RECEPCIONISTA, **kwargs):
@@ -1317,7 +1334,7 @@ class RespaldosTests(TestCase):
     def test_eliminar_borra_el_archivo(self):
         self._crear()
         nombre = next(self.carpeta.glob('respaldo_*.zip')).name
-        self.client.post(reverse('eliminar_respaldo', args=[nombre]))
+        eliminar_con_codigo(self, nombre)
         self.assertEqual(list(self.carpeta.glob('respaldo_*.zip')), [])
         self.assertTrue(Bitacora.objects.filter(accion=Bitacora.ACCION_ELIMINAR_RESPALDO).exists())
 
@@ -1728,7 +1745,7 @@ class TrabajosYProgresoTests(TestCase):
         self.client.post(reverse('crear_respaldo'))
         nombre = next(self.carpeta.glob('respaldo_*.zip')).name
         with mock.patch('pathlib.Path.unlink', side_effect=PermissionError):
-            respuesta = self.client.post(reverse('eliminar_respaldo', args=[nombre]), follow=True)
+            respuesta = eliminar_con_codigo(self, nombre, follow=True)
         self.assertEqual(respuesta.status_code, 200)
         self.assertContains(respuesta, 'todavía lo está usando')
         self.assertTrue((self.carpeta / nombre).exists())
@@ -1738,7 +1755,10 @@ class TrabajosYProgresoTests(TestCase):
         self.client.post(reverse('crear_respaldo'))
         nombre = next(self.carpeta.glob('respaldo_*.zip')).name
         RespaldoEnNube.objects.create(nombre=nombre, drive_file_id='f')
-        self.client.post(reverse('eliminar_respaldo', args=[nombre]))
+        from unittest import mock
+        with mock.patch('accounts.respaldo_automatico.token_drive', return_value='acceso'), \
+                mock.patch('accounts.nube.borrar_archivo'):
+            eliminar_con_codigo(self, nombre)
         self.assertFalse(RespaldoEnNube.objects.filter(nombre=nombre).exists())
 
 
@@ -2850,7 +2870,7 @@ class PantallaCopiasAutomaticasTests(RespaldoAutomaticoBase):
     def test_un_administrador_puede_eliminar_a_mano_una_automatica(self):
         self._crear_archivo(self._nombre_auto(3))
 
-        self.client.post(reverse('eliminar_respaldo', args=[self._nombre_auto(3)]))
+        eliminar_con_codigo(self, self._nombre_auto(3))
 
         self.assertEqual(self._auto_en_disco(), [])
 
@@ -2889,3 +2909,343 @@ class BorrarArchivoDeDriveTests(TestCase):
         with mock.patch('accounts.nube.urllib.request.urlopen', side_effect=error):
             with self.assertRaisesMessage(nube.ErrorNube, 'sin permiso'):
                 nube.borrar_archivo('t', 'x')
+
+
+class EliminarConCodigoTests(RespaldoAutomaticoBase):
+    """Eliminar una copia pide un código de seguridad enviado al correo del administrador, y
+    si la copia estaba en Google Drive, también se borra de allá."""
+
+    def setUp(self):
+        super().setUp()
+        self.admin.email = 'administrador@gmail.com'
+        self.admin.save(update_fields=['email'])
+        self.nombre = 'respaldo_20260801_000000.zip'
+        self._crear_archivo(self.nombre)
+
+    def _pedir_codigo(self, nombre=None, **extra):
+        with override_settings(**CORREO_PRUEBA):
+            return self.client.post(
+                reverse('solicitar_codigo_eliminar_respaldo', args=[nombre or self.nombre]), **extra,
+            )
+
+    def _codigo_del_correo(self):
+        return re.search(r'^\s+(\d{6})\s*$', mail.outbox[-1].body, re.M).group(1)
+
+    def _eliminar(self, codigo, nombre=None, follow=False):
+        return self.client.post(
+            reverse('eliminar_respaldo', args=[nombre or self.nombre]), {'codigo': codigo}, follow=follow,
+        )
+
+    def _existe(self, nombre=None):
+        return (self.carpeta / (nombre or self.nombre)).exists()
+
+    # --- pedir el código ---
+    def test_pedir_el_codigo_manda_un_correo_al_administrador_y_vuelve_a_la_ventana(self):
+        respuesta = self._pedir_codigo()
+
+        self.assertRedirects(
+            respuesta, f"{reverse('respaldos')}?eliminar={self.nombre}", fetch_redirect_response=False,
+        )
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['administrador@gmail.com'])
+        self.assertRegex(self._codigo_del_correo(), r'^\d{6}$')
+        self.assertIn(self.nombre, mail.outbox[0].body)
+        self.assertIn('10 minutos', mail.outbox[0].body)
+
+    def test_la_pantalla_abre_la_ventana_en_el_paso_del_codigo(self):
+        self._pedir_codigo()
+
+        pagina = self.client.get(f"{reverse('respaldos')}?eliminar={self.nombre}")
+
+        self.assertEqual(pagina.context['eliminar_pendiente'], self.nombre)
+        self.assertContains(pagina, 'id="dialogo-eliminar"')
+        self.assertContains(pagina, f'data-eliminar="{self.nombre}"')
+        self.assertContains(pagina, 'ad***********@gmail.com')
+        self.assertContains(pagina, 'Reenviar código')
+
+    def test_sin_haber_pedido_codigo_la_ventana_no_se_abre_sola(self):
+        pagina = self.client.get(f"{reverse('respaldos')}?eliminar={self.nombre}")
+
+        self.assertEqual(pagina.context['eliminar_pendiente'], '')
+        self.assertContains(pagina, 'Enviarme el código')
+
+    def test_en_la_sesion_solo_se_guarda_el_hash_del_codigo(self):
+        self._pedir_codigo()
+        codigo = self._codigo_del_correo()
+
+        self.assertNotIn(codigo, str(dict(self.client.session)))
+
+    # --- eliminar ---
+    def test_sin_codigo_no_elimina(self):
+        respuesta = self._eliminar('123456', follow=True)
+
+        self.assertContains(respuesta, 'Primero pida un código')
+        self.assertTrue(self._existe())
+
+    def test_con_el_codigo_correcto_elimina_y_registra(self):
+        self._pedir_codigo()
+
+        respuesta = self._eliminar(self._codigo_del_correo(), follow=True)
+
+        self.assertContains(respuesta, f'Respaldo {self.nombre} eliminado')
+        self.assertFalse(self._existe())
+        self.assertTrue(Bitacora.objects.filter(
+            accion=Bitacora.ACCION_ELIMINAR_RESPALDO, descripcion__contains=self.nombre,
+        ).exists())
+
+    def test_un_codigo_incorrecto_no_elimina_y_cuenta_intentos(self):
+        self._pedir_codigo()
+        codigo = self._codigo_del_correo()
+        malo = '000000' if codigo != '000000' else '111111'
+
+        respuesta = self._eliminar(malo, follow=True)
+
+        self.assertContains(respuesta, 'El código no es correcto')
+        self.assertContains(respuesta, 'Le quedan 4 intento(s)')
+        self.assertTrue(self._existe())
+
+    def test_tras_cinco_intentos_el_codigo_se_invalida(self):
+        self._pedir_codigo()
+        codigo = self._codigo_del_correo()
+        malo = '000000' if codigo != '000000' else '111111'
+        for _ in range(5):
+            respuesta = self._eliminar(malo, follow=True)
+
+        self.assertContains(respuesta, 'Demasiados intentos con ese código')
+        self.assertContains(self._eliminar(codigo, follow=True), 'Primero pida un código')
+        self.assertTrue(self._existe())
+
+    def test_el_codigo_sirve_una_sola_vez(self):
+        self._pedir_codigo()
+        codigo = self._codigo_del_correo()
+        self._eliminar(codigo)
+        self._crear_archivo(self.nombre)  # vuelve a existir un archivo con ese nombre
+
+        respuesta = self._eliminar(codigo, follow=True)
+
+        self.assertContains(respuesta, 'Primero pida un código')
+        self.assertTrue(self._existe())
+
+    def test_el_codigo_esta_atado_a_una_sola_copia(self):
+        otra = 'respaldo_20260802_000000.zip'
+        self._crear_archivo(otra)
+        self._pedir_codigo()
+        codigo = self._codigo_del_correo()
+
+        respuesta = self._eliminar(codigo, nombre=otra, follow=True)
+
+        self.assertContains(respuesta, 'Primero pida un código')
+        self.assertTrue(self._existe(otra))
+        self.assertTrue(self._existe())
+
+    def test_el_codigo_vence_a_los_diez_minutos(self):
+        from unittest import mock
+        self._pedir_codigo()
+        codigo = self._codigo_del_correo()
+
+        with mock.patch('accounts.views.time.time', return_value=__import__('time').time() + 11 * 60):
+            respuesta = self._eliminar(codigo, follow=True)
+
+        self.assertContains(respuesta, 'Primero pida un código')
+        self.assertTrue(self._existe())
+
+    def test_el_codigo_de_otro_administrador_no_sirve(self):
+        self._pedir_codigo()
+        codigo = self._codigo_del_correo()
+        otro = crear_usuario('admin_otro_eliminar', rol=Usuario.ROL_ADMINISTRADOR)
+        otro_cliente = self.client_class()
+        otro_cliente.force_login(otro)
+
+        respuesta = otro_cliente.post(reverse('eliminar_respaldo', args=[self.nombre]), {'codigo': codigo})
+
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertTrue(self._existe())
+
+    def test_eliminar_no_acepta_get(self):
+        self.assertEqual(self.client.get(reverse('eliminar_respaldo', args=[self.nombre])).status_code, 405)
+        self.assertEqual(
+            self.client.get(reverse('solicitar_codigo_eliminar_respaldo', args=[self.nombre])).status_code, 405,
+        )
+
+    def test_nombres_invalidos_dan_404(self):
+        for nombre in ('secreto.txt', 'respaldo_x.zip', '..%2Fmanage.py'):
+            self.assertEqual(self.client.post(f'/respaldos/{nombre}/eliminar/', {'codigo': '1'}).status_code, 404)
+            self.assertEqual(self.client.post(f'/respaldos/{nombre}/codigo-eliminar/').status_code, 404)
+
+    def test_solo_el_administrador_puede_pedir_el_codigo_o_eliminar(self):
+        self.client.force_login(crear_usuario('recep_eliminar', rol=Usuario.ROL_RECEPCIONISTA))
+
+        self.assertEqual(self._pedir_codigo().status_code, 302)
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(self._eliminar('123456').status_code, 302)
+        self.assertTrue(self._existe())
+
+    # --- límites del envío ---
+    def test_pedir_otro_codigo_enseguida_hace_esperar(self):
+        self._pedir_codigo()
+
+        respuesta = self._pedir_codigo(follow=True)
+
+        self.assertContains(respuesta, 'Espere')
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_hay_un_tope_de_codigos_por_hora(self):
+        from unittest import mock
+
+        from django.core.cache import cache
+        with override_settings(CACHES={'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache', 'LOCATION': 'eliminar-prueba',
+        }}):
+            cache.clear()
+            ahora = __import__('time').time()
+            for numero in range(5):
+                with mock.patch('accounts.views.time.time', return_value=ahora + 61 * numero):
+                    self._pedir_codigo()
+            with mock.patch('accounts.views.time.time', return_value=ahora + 61 * 6):
+                respuesta = self._pedir_codigo(follow=True)
+            cache.clear()
+
+        self.assertEqual(len(mail.outbox), 5)
+        self.assertContains(respuesta, 'demasiados códigos')
+
+    # --- correos que no pueden recibir el código ---
+    def test_un_correo_inventado_no_permite_pedir_el_codigo(self):
+        for correo in ('', 'admin@clinica.local', 'admin@example.com', 'sin-arroba'):
+            self.admin.email = correo
+            self.admin.save(update_fields=['email'])
+
+            respuesta = self._pedir_codigo(follow=True)
+
+            self.assertContains(respuesta, 'Mi perfil', msg_prefix=correo)
+            self.assertEqual(len(mail.outbox), 0, correo)
+
+    def test_la_ventana_avisa_si_el_correo_no_sirve(self):
+        self.admin.email = 'admin@clinica.local'
+        self.admin.save(update_fields=['email'])
+
+        pagina = self.client.get(reverse('respaldos'))
+
+        self.assertFalse(pagina.context['correo_codigo_ok'])
+        self.assertContains(pagina, 'no tiene un correo que pueda recibir el código')
+
+    def test_si_falla_el_envio_se_avisa_y_no_queda_codigo_pendiente(self):
+        from unittest import mock
+        with mock.patch('accounts.views.enviar_codigo_seguridad', return_value='no hay red'):
+            respuesta = self._pedir_codigo(follow=True)
+
+        self.assertContains(respuesta, 'No se pudo enviar el código: no hay red.')
+        self.assertNotIn('codigo_eliminar_respaldo', self.client.session)
+
+    def test_sin_correo_emisor_configurado_se_avisa(self):
+        with override_settings(EMAIL_HOST_USER='', EMAIL_HOST_PASSWORD=''):
+            respuesta = self.client.post(
+                reverse('solicitar_codigo_eliminar_respaldo', args=[self.nombre]), follow=True,
+            )
+
+        self.assertContains(respuesta, 'correo emisor')
+
+    # --- Google Drive ---
+    def test_si_la_copia_estaba_en_drive_tambien_se_borra_de_alla(self):
+        from accounts.models import RespaldoEnNube
+        self._conectar_drive()
+        _subir, borrar = self._drive_simulado()
+        RespaldoEnNube.objects.create(nombre=self.nombre, drive_file_id='id-en-drive')
+        self._pedir_codigo()
+
+        respuesta = self._eliminar(self._codigo_del_correo(), follow=True)
+
+        borrar.assert_called_once_with('acceso', 'id-en-drive')
+        self.assertFalse(self._existe())
+        self.assertFalse(RespaldoEnNube.objects.filter(nombre=self.nombre).exists())
+        self.assertContains(respuesta, 'de este equipo y de Google Drive')
+        self.assertTrue(Bitacora.objects.filter(
+            accion=Bitacora.ACCION_ELIMINAR_RESPALDO, descripcion__contains='también de Google Drive',
+        ).exists())
+
+    def test_una_copia_que_no_estaba_en_drive_no_llama_a_drive(self):
+        self._conectar_drive()
+        _subir, borrar = self._drive_simulado()
+        self._pedir_codigo()
+
+        self._eliminar(self._codigo_del_correo())
+
+        borrar.assert_not_called()
+        self.assertFalse(self._existe())
+
+    def test_si_drive_falla_no_se_borra_nada_y_se_puede_reintentar(self):
+        from accounts.models import RespaldoEnNube
+        from accounts.nube import ErrorNube
+        self._conectar_drive()
+        _subir, borrar = self._drive_simulado()
+        RespaldoEnNube.objects.create(nombre=self.nombre, drive_file_id='id-en-drive')
+        borrar.side_effect = ErrorNube('sin red')
+        self._pedir_codigo()
+        codigo = self._codigo_del_correo()
+
+        respuesta = self._eliminar(codigo, follow=True)
+
+        self.assertContains(respuesta, 'No se pudo eliminar la copia de Google Drive')
+        self.assertContains(respuesta, 'No se borró nada')
+        self.assertTrue(self._existe())
+        self.assertTrue(RespaldoEnNube.objects.filter(nombre=self.nombre).exists())
+
+        borrar.side_effect = None
+        self._eliminar(codigo)  # el mismo código sigue vigente
+        self.assertFalse(self._existe())
+        self.assertFalse(RespaldoEnNube.objects.filter(nombre=self.nombre).exists())
+
+    def test_con_drive_desconectado_y_una_marca_pendiente_no_borra_nada(self):
+        from accounts.models import RespaldoEnNube
+        RespaldoEnNube.objects.create(nombre=self.nombre, drive_file_id='id-en-drive')
+        self._pedir_codigo()
+
+        respuesta = self._eliminar(self._codigo_del_correo(), follow=True)
+
+        self.assertContains(respuesta, 'Google Drive no está conectado')
+        self.assertTrue(self._existe())
+
+    def test_si_el_archivo_local_esta_en_uso_avisa_que_drive_si_se_borro(self):
+        from unittest import mock
+
+        from accounts.models import RespaldoEnNube
+        self._conectar_drive()
+        _subir, borrar = self._drive_simulado()
+        RespaldoEnNube.objects.create(nombre=self.nombre, drive_file_id='id-en-drive')
+        self._pedir_codigo()
+        codigo = self._codigo_del_correo()
+
+        with mock.patch('pathlib.Path.unlink', side_effect=PermissionError):
+            respuesta = self._eliminar(codigo, follow=True)
+
+        self.assertContains(respuesta, 'todavía lo está usando')
+        self.assertContains(respuesta, 'La copia de Google Drive sí se eliminó')
+        self.assertTrue(self._existe())
+        self.assertFalse(RespaldoEnNube.objects.filter(nombre=self.nombre).exists())
+
+        self._eliminar(codigo)  # reintento: ya solo falta lo local
+        self.assertFalse(self._existe())
+        self.assertEqual(borrar.call_count, 1)
+
+    def test_la_ventana_avisa_cuando_la_copia_esta_en_drive(self):
+        from accounts.models import RespaldoEnNube
+        RespaldoEnNube.objects.create(nombre=self.nombre, drive_file_id='x')
+
+        pagina = self.client.get(reverse('respaldos'))
+
+        self.assertContains(pagina, 'data-en-nube="1"')
+        self.assertContains(pagina, 'y también de Google Drive')
+
+
+class AyudasDeCorreoTests(TestCase):
+    def test_correo_no_recibe(self):
+        from accounts.correos import correo_no_recibe
+        for correo in ('', None, 'sin-arroba', 'a@clinica.local', 'a@x.test', 'a@example.com', 'a@host.invalid'):
+            self.assertTrue(correo_no_recibe(correo), correo)
+        for correo in ('a@gmail.com', 'b@miumg.edu.gt', 'c@clinica.com.gt'):
+            self.assertFalse(correo_no_recibe(correo), correo)
+
+    def test_enmascarar_correo(self):
+        from accounts.correos import enmascarar_correo
+        self.assertEqual(enmascarar_correo('administrador@gmail.com'), 'ad***********@gmail.com')
+        self.assertEqual(enmascarar_correo('ab@gmail.com'), 'ab*@gmail.com')
+        self.assertEqual(enmascarar_correo(''), '')

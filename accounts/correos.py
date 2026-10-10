@@ -70,3 +70,62 @@ Clínica de Imágenes
         return 'ocurrió un error inesperado al enviar el correo (ver el registro del sistema)'
 
     return ''
+
+
+DOMINIOS_QUE_NO_RECIBEN = ('example.com', 'example.org', 'example.net')
+SUFIJOS_QUE_NO_RECIBEN = ('.local', '.localhost', '.invalid', '.test', '.example')
+
+
+def correo_no_recibe(correo):
+    """True si el correo está vacío o es de un dominio inventado (ej. admin@clinica.local),
+    donde un código de seguridad nunca llegaría."""
+    correo = (correo or '').strip().lower()
+    if '@' not in correo:
+        return True
+    dominio = correo.rsplit('@', 1)[1]
+    return dominio in DOMINIOS_QUE_NO_RECIBEN or dominio.endswith(SUFIJOS_QUE_NO_RECIBEN)
+
+
+def enmascarar_correo(correo):
+    usuario, _, dominio = (correo or '').partition('@')
+    if not dominio:
+        return ''
+    return f'{usuario[:2]}{"*" * max(len(usuario) - 2, 1)}@{dominio}'
+
+
+def enviar_codigo_seguridad(usuario, codigo, motivo, minutos_validez):
+    """Manda al correo del usuario un código de 6 dígitos para confirmar una acción delicada
+    (`motivo` completa la frase "su código para ..."). Devuelve '' si salió, o un texto corto
+    con el motivo del fallo, sin lanzar excepciones (mismo contrato que enviar_confirmacion_cuenta)."""
+    if not (settings.EMAIL_HOST_USER and settings.EMAIL_HOST_PASSWORD):
+        return (
+            'el sistema todavía no tiene configurado el correo emisor '
+            '(EMAIL_HOST_USER / EMAIL_HOST_PASSWORD en el archivo .env)'
+        )
+    mensaje = f"""Hola {usuario.first_name or usuario.username}:
+
+Su código de seguridad para {motivo} es:
+
+    {codigo}
+
+Es válido por {minutos_validez} minutos y solo sirve una vez. Si usted no lo pidió,
+ignore este mensaje y cambie su contraseña.
+
+Atentamente,
+Clínica de Imágenes
+"""
+    correo = EmailMessage(
+        subject='Su código de seguridad - Clínica de Imágenes', body=mensaje, to=[usuario.email],
+    )
+    try:
+        correo.send()
+    except smtplib.SMTPAuthenticationError:
+        logger.exception('SMTP rechazó las credenciales (código de seguridad)')
+        return 'el servidor de correo rechazó el usuario o la contraseña (EMAIL_HOST_USER / EMAIL_HOST_PASSWORD)'
+    except (socket.timeout, TimeoutError, ConnectionError, OSError, smtplib.SMTPException):
+        logger.exception('No se pudo conectar con el servidor de correo (código de seguridad)')
+        return 'no se pudo conectar con el servidor de correo; intente de nuevo en unos minutos'
+    except Exception:
+        logger.exception('Error inesperado enviando el código de seguridad')
+        return 'ocurrió un error inesperado al enviar el correo (ver el registro del sistema)'
+    return ''

@@ -61,6 +61,8 @@ CODIGO_MFA = LimiteIntentos('codigo_mfa', 5, MINUTOS * 60)
 # Códigos OTP enviados por correo a un médico tratante para abrir el visor de un estudio
 # (se cuenta con .fallo() cada envío): evita llenarle el correo a quien tenga el enlace.
 OTP_ENVIOS_MEDICO = LimiteIntentos('otp_envios_medico', 5, 60 * 60)
+# Códigos de seguridad enviados por correo a un administrador para eliminar una copia de respaldo.
+CODIGO_ELIMINAR_RESPALDO = LimiteIntentos('codigo_eliminar_respaldo', 5, 60 * 60)
 # Intentos fallidos de DPI / número de colegiado en el visor del médico tratante, contados por
 # estudio sin importar el navegador: el número de colegiado es corto y público, así que un
 # límite por sesión se saltaría borrando las cookies.

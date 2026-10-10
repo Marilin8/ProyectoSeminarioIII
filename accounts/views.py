@@ -1,7 +1,9 @@
 import base64
 import datetime
 import io
+import secrets
 import shutil
+import time
 import tempfile
 from pathlib import Path
 from decimal import Decimal
@@ -18,6 +20,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from django.utils.crypto import constant_time_compare, salted_hmac
 from django.utils.http import urlencode
 from django.views.decorators.http import require_POST
 from django_otp.plugins.otp_totp.models import TOTPDevice
@@ -26,7 +29,12 @@ import qrcode
 
 from clinica.validators import avisar_si_correo_no_existe
 
-from .correos import enviar_confirmacion_cuenta
+from .correos import (
+    correo_no_recibe,
+    enmascarar_correo,
+    enviar_codigo_seguridad,
+    enviar_confirmacion_cuenta,
+)
 from .forms import (
     CambiarContrasenaForm,
     CrearUsuarioForm,
@@ -1029,6 +1037,19 @@ def bitacora(request):
     })
 
 
+def _eliminar_pendiente(request):
+    """Nombre de la copia cuya ventana de eliminar debe abrirse sola en el paso del código
+    (porque ya se pidió el código y sigue vigente), o ''."""
+    nombre = request.GET.get('eliminar', '')
+    pendiente = request.session.get(CLAVE_CODIGO_ELIMINAR)
+    if (
+        pendiente and pendiente['nombre'] == nombre and time.time() <= pendiente['exp']
+        and servicio_respaldos.ruta_respaldo(nombre) is not None
+    ):
+        return nombre
+    return ''
+
+
 @login_required
 @user_passes_test(es_administrador)
 def respaldos(request):
@@ -1041,6 +1062,9 @@ def respaldos(request):
         'uri_redireccion': servicio_nube.uri_de_redireccion(),
         'trabajo': trabajos.estado(),
         'auto': respaldo_automatico.estado_para_pantalla(),
+        'eliminar_pendiente': _eliminar_pendiente(request),
+        'correo_codigo': enmascarar_correo(request.user.email),
+        'correo_codigo_ok': not correo_no_recibe(request.user.email),
     })
 
 
@@ -1244,13 +1268,119 @@ def descargar_respaldo(request, nombre):
     return FileResponse(open(ruta, 'rb'), as_attachment=True, filename=nombre)
 
 
+CODIGO_ELIMINAR_VALIDEZ_MINUTOS = 10
+CODIGO_ELIMINAR_ESPERA_SEGUNDOS = 60
+CODIGO_ELIMINAR_MAX_INTENTOS = 5
+CLAVE_CODIGO_ELIMINAR = 'codigo_eliminar_respaldo'
+
+
+def _hash_codigo_eliminar(usuario, nombre, codigo):
+    return salted_hmac('codigo_eliminar_respaldo', f'{usuario.pk}:{nombre}:{codigo}').hexdigest()
+
+
+def _redirigir_a_eliminar(nombre):
+    """Vuelve a Respaldos con la ventana de eliminar abierta en el paso del código."""
+    return redirect(f"{reverse('respaldos')}?{urlencode({'eliminar': nombre})}")
+
+
+@login_required
+@user_passes_test(es_administrador)
+@require_POST
+def solicitar_codigo_eliminar_respaldo(request, nombre):
+    """Paso 1 de eliminar una copia: manda al correo del administrador un código de
+    seguridad de 6 dígitos (válido 10 minutos y atado a ESA copia)."""
+    if servicio_respaldos.ruta_respaldo(nombre) is None:
+        raise Http404('Respaldo no encontrado.')
+    usuario = request.user
+    if correo_no_recibe(usuario.email):
+        messages.error(
+            request,
+            'Su usuario no tiene un correo que pueda recibir el código '
+            f'({usuario.email or "sin correo"}). Cámbielo en «Mi perfil» y vuelva a intentarlo.',
+        )
+        return redirect('respaldos')
+    espera = limitador.CODIGO_ELIMINAR_RESPALDO.espera(usuario.pk)
+    if espera:
+        messages.error(
+            request,
+            f'Ya se enviaron demasiados códigos. Intente de nuevo en {limitador.minutos_de_espera(espera)} minuto(s).',
+        )
+        return redirect('respaldos')
+    ahora = time.time()
+    pendiente = request.session.get(CLAVE_CODIGO_ELIMINAR)
+    if pendiente and pendiente['nombre'] == nombre and ahora < pendiente['envio'] + CODIGO_ELIMINAR_ESPERA_SEGUNDOS:
+        faltan = int(pendiente['envio'] + CODIGO_ELIMINAR_ESPERA_SEGUNDOS - ahora) + 1
+        messages.warning(request, f'Espere {faltan} segundo(s) antes de pedir otro código.')
+        return _redirigir_a_eliminar(nombre)
+
+    codigo = f'{secrets.randbelow(10 ** 6):06d}'
+    limitador.CODIGO_ELIMINAR_RESPALDO.fallo(usuario.pk)
+    error = enviar_codigo_seguridad(
+        usuario, codigo, f'eliminar la copia de seguridad {nombre}', CODIGO_ELIMINAR_VALIDEZ_MINUTOS,
+    )
+    if error:
+        messages.error(request, f'No se pudo enviar el código: {error}.')
+        return redirect('respaldos')
+    request.session[CLAVE_CODIGO_ELIMINAR] = {
+        'nombre': nombre,
+        'h': _hash_codigo_eliminar(usuario, nombre, codigo),
+        'exp': ahora + CODIGO_ELIMINAR_VALIDEZ_MINUTOS * 60,
+        'n': 0,
+        'envio': ahora,
+    }
+    messages.success(request, f'Le enviamos un código de seguridad a {enmascarar_correo(usuario.email)}.')
+    return _redirigir_a_eliminar(nombre)
+
+
+def _validar_codigo_eliminar(request, nombre):
+    """'' si el código escrito es el vigente para esta copia; si no, el motivo."""
+    pendiente = request.session.get(CLAVE_CODIGO_ELIMINAR)
+    if not pendiente or pendiente['nombre'] != nombre or time.time() > pendiente['exp']:
+        request.session.pop(CLAVE_CODIGO_ELIMINAR, None)
+        return 'Primero pida un código de seguridad: el anterior venció o no corresponde a esta copia.'
+    codigo = (request.POST.get('codigo') or '').strip()
+    if constant_time_compare(pendiente['h'], _hash_codigo_eliminar(request.user, nombre, codigo)):
+        return ''
+    pendiente['n'] += 1
+    if pendiente['n'] >= CODIGO_ELIMINAR_MAX_INTENTOS:
+        request.session.pop(CLAVE_CODIGO_ELIMINAR, None)
+        return 'Demasiados intentos con ese código. Pida uno nuevo.'
+    request.session[CLAVE_CODIGO_ELIMINAR] = pendiente
+    return f'El código no es correcto. Le quedan {CODIGO_ELIMINAR_MAX_INTENTOS - pendiente["n"]} intento(s).'
+
+
 @login_required
 @user_passes_test(es_administrador)
 @require_POST
 def eliminar_respaldo(request, nombre):
+    """Paso 2: con el código de seguridad correcto, borra la copia del servidor y, si estaba
+    subida a Google Drive, también de Drive (si Drive falla no se borra nada, para que no
+    queden copias huérfanas allá)."""
     ruta = servicio_respaldos.ruta_respaldo(nombre)
     if ruta is None:
         raise Http404('Respaldo no encontrado.')
+    motivo = _validar_codigo_eliminar(request, nombre)
+    if motivo:
+        messages.error(request, motivo)
+        return _redirigir_a_eliminar(nombre)
+
+    fila = RespaldoEnNube.objects.filter(nombre=nombre).first()
+    borrada_de_drive = False
+    if fila is not None:
+        try:
+            token = respaldo_automatico.token_drive()
+            if token is None:
+                raise servicio_nube.ErrorNube('Google Drive no está conectado')
+            servicio_nube.borrar_archivo(token, fila.drive_file_id)
+        except servicio_nube.ErrorNube as error:
+            messages.error(
+                request,
+                f'No se pudo eliminar la copia de Google Drive ({error}). No se borró nada: inténtelo de nuevo.',
+            )
+            return _redirigir_a_eliminar(nombre)
+        fila.delete()
+        borrada_de_drive = True
+
     try:
         ruta.unlink()
     except PermissionError:
@@ -1258,16 +1388,22 @@ def eliminar_respaldo(request, nombre):
         # Google Drive que sigue en curso.
         messages.error(
             request,
-            f'No se puede eliminar {nombre} porque el sistema todavía lo está usando '
-            '(por ejemplo, subiéndolo a Google Drive). Espere a que termine e inténtelo de nuevo.',
+            f'No se puede eliminar {nombre} de este equipo porque el sistema todavía lo está usando '
+            '(por ejemplo, subiéndolo a Google Drive). Espere a que termine e inténtelo de nuevo.'
+            + (' La copia de Google Drive sí se eliminó.' if borrada_de_drive else ''),
         )
-        return redirect('respaldos')
+        return _redirigir_a_eliminar(nombre)
+
+    request.session.pop(CLAVE_CODIGO_ELIMINAR, None)
     RespaldoEnNube.objects.filter(nombre=nombre).delete()
     Bitacora.registrar(
         request=request,
         usuario=request.user,
         accion=Bitacora.ACCION_ELIMINAR_RESPALDO,
-        descripcion=f'Eliminó el respaldo {nombre}.',
+        descripcion=f'Eliminó el respaldo {nombre}' + (' (también de Google Drive).' if borrada_de_drive else '.'),
     )
-    messages.success(request, f'Respaldo {nombre} eliminado.')
+    messages.success(
+        request,
+        f'Respaldo {nombre} eliminado' + (' de este equipo y de Google Drive.' if borrada_de_drive else '.'),
+    )
     return redirect('respaldos')

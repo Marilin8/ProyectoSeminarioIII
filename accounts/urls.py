@@ -57,6 +57,10 @@ urlpatterns = [
     path('respaldos/<str:nombre>/descargar/', views.descargar_respaldo, name='descargar_respaldo'),
     path('respaldos/<str:nombre>/cargar/', views.cargar_respaldo, name='cargar_respaldo'),
     path('respaldos/<str:nombre>/subir/', views.subir_respaldo_a_drive, name='subir_respaldo_a_drive'),
+    path(
+        'respaldos/<str:nombre>/codigo-eliminar/', views.solicitar_codigo_eliminar_respaldo,
+        name='solicitar_codigo_eliminar_respaldo',
+    ),
     path('respaldos/<str:nombre>/eliminar/', views.eliminar_respaldo, name='eliminar_respaldo'),
     path('pantalla/<slug:clave>/', views.pantalla_placeholder, name='pantalla_placeholder'),
 ]

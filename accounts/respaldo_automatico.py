@@ -32,7 +32,7 @@ def nombres_automaticos():
     return sorted(locales | en_drive, key=_marca)
 
 
-def _token_drive():
+def token_drive():
     conexion = ConexionGoogleDrive.objects.first()
     if conexion is None or not conexion.conectada:
         return None
@@ -60,7 +60,7 @@ def aplicar_retencion(conservar=None):
         if fila is not None:
             try:
                 if not token_obtenido:
-                    token, token_obtenido = _token_drive(), True
+                    token, token_obtenido = token_drive(), True
                 if token is None:
                     raise servicio_nube.ErrorNube('Google Drive no está conectado')
                 servicio_nube.borrar_archivo(token, fila.drive_file_id)

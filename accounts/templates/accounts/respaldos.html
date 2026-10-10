@@ -221,11 +221,11 @@
                                             <button type="submit" class="btn btn-outline btn-sm">Subir a Drive</button>
                                         </form>
                                     {% endif %}
-                                    <form method="post" action="{% url 'eliminar_respaldo' r.nombre %}" style="display:inline;"
-                                          onsubmit="return confirm('¿Eliminar este respaldo? No se puede deshacer.');">
-                                        {% csrf_token %}
-                                        <button type="submit" class="btn btn-outline btn-sm" style="color:#dc2626;">Eliminar</button>
-                                    </form>
+                                    <button type="button" class="btn btn-outline btn-sm" style="color:#dc2626;"
+                                            data-eliminar="{{ r.nombre }}"
+                                            data-url-codigo="{% url 'solicitar_codigo_eliminar_respaldo' r.nombre %}"
+                                            data-url-eliminar="{% url 'eliminar_respaldo' r.nombre %}"
+                                            data-en-nube="{% if r.en_nube %}1{% endif %}">Eliminar</button>
                                 </td>
                             </tr>
                         {% endfor %}
@@ -375,6 +375,42 @@
     })();
     </script>
 
+    <dialog id="dialogo-eliminar" style="margin:auto;border:none;border-radius:var(--radius-lg);padding:1.4rem;max-width:30rem;width:92%;box-shadow:var(--shadow-lg);">
+        <h3 style="margin:0 0 0.3rem;">Eliminar este respaldo</h3>
+        <p id="eliminar-nombre" style="margin:0 0 0.8rem;font-size:0.85rem;color:var(--text-muted);word-break:break-all;"></p>
+        <div class="aviso-peligro">
+            Se borrará de este equipo<span id="eliminar-drive"> <strong>y también de Google Drive</strong></span>.
+            Esta acción no se puede deshacer.
+        </div>
+        {% if not correo_codigo_ok %}
+            <div class="aviso-peligro" style="background:var(--warning-light);color:#92400e;">
+                Su usuario no tiene un correo que pueda recibir el código. Cámbielo en
+                <a href="{% url 'mi_perfil' %}">Mi perfil</a> para poder eliminar copias.
+            </div>
+        {% endif %}
+        <form method="post" id="form-codigo-eliminar" style="margin-bottom:1rem;">
+            {% csrf_token %}
+            <p style="font-size:0.85rem;margin:0 0 0.5rem;">
+                <strong>1.</strong> Pida el código de seguridad: se envía a
+                <strong>{{ correo_codigo|default:"su correo" }}</strong> (vale 10 minutos).
+            </p>
+            <button type="submit" class="btn btn-outline btn-sm" {% if not correo_codigo_ok %}disabled{% endif %}>
+                {% if eliminar_pendiente %}Reenviar código{% else %}Enviarme el código{% endif %}
+            </button>
+        </form>
+        <form method="post" id="form-eliminar">
+            {% csrf_token %}
+            <p style="font-size:0.85rem;margin:0 0 0.5rem;"><strong>2.</strong> Escriba el código que le llegó.</p>
+            <input type="text" name="codigo" id="eliminar-codigo" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+                   autocomplete="one-time-code" required placeholder="000000"
+                   style="width:100%;margin-bottom:1rem;text-align:center;letter-spacing:0.3em;font-size:1.2rem;">
+            <div style="display:flex;gap:0.6rem;justify-content:flex-end;">
+                <button type="button" class="btn btn-outline" id="eliminar-cancelar">Cancelar</button>
+                <button type="submit" class="btn btn-primary" style="background:var(--danger);">Eliminar definitivamente</button>
+            </div>
+        </form>
+    </dialog>
+
     <dialog id="dialogo-cargar" style="margin:auto;border:none;border-radius:var(--radius-lg);padding:1.4rem;max-width:30rem;width:92%;box-shadow:var(--shadow-lg);">
         <h3 style="margin:0 0 0.3rem;">Cargar este respaldo</h3>
         <p id="cargar-nombre" style="margin:0 0 0.8rem;font-size:0.85rem;color:var(--text-muted);word-break:break-all;"></p>
@@ -416,6 +452,29 @@
             });
         });
         document.getElementById('cargar-cancelar').addEventListener('click', function () { dialogo.close(); });
+    })();
+    </script>
+    <script>
+    (function () {
+        var dialogo = document.getElementById('dialogo-eliminar');
+        if (!dialogo) { return; }
+        var pendiente = "{{ eliminar_pendiente|escapejs }}";
+        function abrir(boton) {
+            document.getElementById('form-codigo-eliminar').action = boton.getAttribute('data-url-codigo');
+            document.getElementById('form-eliminar').action = boton.getAttribute('data-url-eliminar');
+            document.getElementById('eliminar-nombre').textContent = boton.getAttribute('data-eliminar');
+            document.getElementById('eliminar-drive').style.display = boton.getAttribute('data-en-nube') ? 'inline' : 'none';
+            document.getElementById('eliminar-codigo').value = '';
+            dialogo.showModal();
+        }
+        document.querySelectorAll('[data-eliminar]').forEach(function (boton) {
+            boton.addEventListener('click', function () { abrir(boton); });
+            if (pendiente && boton.getAttribute('data-eliminar') === pendiente) {
+                abrir(boton);
+                document.getElementById('eliminar-codigo').focus();
+            }
+        });
+        document.getElementById('eliminar-cancelar').addEventListener('click', function () { dialogo.close(); });
     })();
     </script>
 {% endblock %}
