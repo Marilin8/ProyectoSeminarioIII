@@ -145,6 +145,7 @@ def puede_ver_comprobante_pago(user):
     trabajan la orden."""
     return user.is_authenticated and (
         es_administrador(user)
+        or es_administrador_financiero(user)
         or es_caja(user)
         or any(
             user.tiene_rol(rol) for rol in (
@@ -4871,6 +4872,29 @@ COLUMNAS_REPORTE = [
     'Técnico', 'Médico Referente', 'Emerg', 'Radiólogo', 'Precio',
 ]
 
+# Solo el reporte de Privado lleva estas columnas extra (placas y estado del pago).
+CAMPOS_PLACAS = ('placas_10x12', 'placas_14x17', 'placas_error_10x12', 'placas_error_14x17')
+COLUMNAS_REPORTE_PRIVADO = [
+    'Placas 10×12', 'Placas 14×17', 'Error 10×12', 'Error 14×17', 'Cancelado', 'Forma de pago',
+]
+PLACAS_MAXIMO_POR_ESTUDIO = 99
+
+
+def _cantidad_de_placas(texto):
+    """Cantidad escrita en un campo de placas: vacío cuenta como 0; solo enteros de 0 a 99.
+    Devuelve None si no es válida."""
+    texto = (texto or '').strip()
+    if not texto:
+        return 0
+    if not (texto.isascii() and texto.isdigit()):
+        return None
+    cantidad = int(texto)
+    return cantidad if cantidad <= PLACAS_MAXIMO_POR_ESTUDIO else None
+
+
+def _totales_placas(filas):
+    return {campo: sum(fila.get(campo) or 0 for fila in filas) for campo in CAMPOS_PLACAS}
+
 
 def _fecha_larga_es(fecha):
     dia_semana = DIAS_LARGOS_ES[fecha.weekday()]
@@ -4896,9 +4920,10 @@ def _solo_ve_reportes_enviados(user):
 
 def _filas_reporte(reporte):
     filas = []
+    es_privado = reporte.convenio == Cita.CONVENIO_PRIVADO
     for indice, cita in enumerate(reporte.citas(), start=1):
         tecnico = cita.tecnico_asignado
-        filas.append({
+        fila = {
             'no': indice,
             'cita_id': cita.id,
             'hora': cita.hora.strftime('%H:%M'),
@@ -4913,7 +4938,17 @@ def _filas_reporte(reporte):
             ),
             'precio': cita.precio,
             'ausente': cita.estado == Cita.ESTADO_AUSENTE,
-        })
+        }
+        if es_privado:
+            cobro = getattr(cita, 'cobro', None)
+            pagado = bool(cobro and cobro.pagado) and not fila['ausente']
+            fila.update({campo: getattr(cita, campo) for campo in CAMPOS_PLACAS})
+            fila.update({
+                'cancelado': pagado,
+                'forma_pago': (cobro.get_forma_pago_display() or 'No registrada') if pagado else '',
+                'cobro_id': cobro.id if pagado else None,
+            })
+        filas.append(fila)
     return filas
 
 
@@ -4937,13 +4972,15 @@ def _pacientes_con_datos_pendientes(reporte):
 
 def _reporte_pdf_bytes(reporte, filas):
     from io import BytesIO
+    from xml.sax.saxutils import escape
 
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import landscape, letter
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+    privado = reporte.convenio == Cita.CONVENIO_PRIVADO
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=landscape(letter),
@@ -4955,28 +4992,55 @@ def _reporte_pdf_bytes(reporte, filas):
         f'FECHA: {_fecha_larga_es(reporte.fecha).upper()}',
         estilos['Title'],
     )
+    estilo_celda = ParagraphStyle('celda', parent=estilos['BodyText'], fontSize=7, leading=8)
 
-    datos = [COLUMNAS_REPORTE]
+    def texto(valor):
+        # Con tantas columnas (Privado) los textos largos tienen que partirse en líneas.
+        return Paragraph(escape(str(valor)), estilo_celda) if privado else valor
+
+    encabezados = COLUMNAS_REPORTE + (COLUMNAS_REPORTE_PRIVADO if privado else [])
+    datos = [encabezados]
     for fila in filas:
-        datos.append([
-            fila['no'], fila['hora'], fila['paciente'], fila['edad'] if fila['edad'] is not None else '',
-            fila['estudio'], fila['tecnico'], fila['medico_referente'], fila['emerg'], fila['radiologo'],
-            f"Q{fila['precio']:.2f}",
-        ])
-    datos.append(['', '', '', '', '', '', '', '', 'TOTAL DEL DÍA', f'Q{reporte.total():.2f}'])
+        celdas = [
+            fila['no'], fila['hora'], texto(fila['paciente']),
+            fila['edad'] if fila['edad'] is not None else '',
+            texto(fila['estudio']), texto(fila['tecnico']), texto(fila['medico_referente']),
+            fila['emerg'], texto(fila['radiologo']), f"Q{fila['precio']:.2f}",
+        ]
+        if privado:
+            celdas += [fila[campo] or '' for campo in CAMPOS_PLACAS]
+            celdas += ['Sí' if fila['cancelado'] else 'No', texto(fila['forma_pago'])]
+        datos.append(celdas)
+    fila_total = ['', '', '', '', '', '', '', '', 'TOTAL DEL DÍA', f'Q{reporte.total():.2f}']
+    if privado:
+        totales = _totales_placas(filas)
+        fila_total += [totales[campo] for campo in CAMPOS_PLACAS] + ['', '']
+    datos.append(fila_total)
 
-    tabla = Table(datos, repeatRows=1)
+    anchos = None
+    if privado:
+        anchos = [0.8, 1.0, 3.6, 0.9, 3.2, 2.2, 2.2, 0.9, 2.0, 1.6, 1.1, 1.1, 1.1, 1.1, 1.3, 1.8]
+        anchos = [ancho * cm for ancho in anchos]
+    tabla = Table(datos, repeatRows=1, colWidths=anchos)
     ultima_fila = len(datos) - 1
-    tabla.setStyle(TableStyle([
+    estilo = [
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#c4b5fd')),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('FONTSIZE', (0, 0), (-1, -1), 7 if privado else 8),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('SPAN', (0, ultima_fila), (-3, ultima_fila)),
-        ('BACKGROUND', (-2, ultima_fila), (-1, ultima_fila), colors.HexColor('#fef08a')),
-        ('FONTNAME', (-2, ultima_fila), (-1, ultima_fila), 'Helvetica-Bold'),
-    ]))
+        ('SPAN', (0, ultima_fila), (7, ultima_fila)),
+        ('BACKGROUND', (8, ultima_fila), (9, ultima_fila), colors.HexColor('#fef08a')),
+        ('FONTNAME', (8, ultima_fila), (9, ultima_fila), 'Helvetica-Bold'),
+    ]
+    if privado:
+        estilo += [
+            ('BACKGROUND', (10, 0), (13, 0), colors.HexColor('#a78bfa')),
+            ('ALIGN', (10, 1), (14, -1), 'CENTER'),
+            ('BACKGROUND', (10, ultima_fila), (13, ultima_fila), colors.HexColor('#fef08a')),
+            ('FONTNAME', (10, ultima_fila), (13, ultima_fila), 'Helvetica-Bold'),
+        ]
+    tabla.setStyle(TableStyle(estilo))
     doc.build([titulo, Spacer(1, 12), tabla])
     return buffer.getvalue()
 
@@ -4986,43 +5050,56 @@ def _reporte_xlsx_bytes(reporte, filas):
 
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    privado = reporte.convenio == Cita.CONVENIO_PRIVADO
+    columnas = COLUMNAS_REPORTE + (COLUMNAS_REPORTE_PRIVADO if privado else [])
+    ultima_letra = get_column_letter(len(columnas))
 
     wb = Workbook()
     ws = wb.active
     ws.title = 'Reporte'
 
-    ws.merge_cells('A1:J1')
+    ws.merge_cells(f'A1:{ultima_letra}1')
     ws['A1'] = f'INFORME DIARIO "{reporte.get_convenio_display().upper()}"'
     ws['A1'].font = Font(bold=True, size=14)
     ws['A1'].alignment = Alignment(horizontal='center')
 
-    ws.merge_cells('A2:J2')
+    ws.merge_cells(f'A2:{ultima_letra}2')
     ws['A2'] = f'FECHA: {_fecha_larga_es(reporte.fecha).upper()}'
     ws['A2'].alignment = Alignment(horizontal='center')
 
     ws.append([])
-    ws.append(COLUMNAS_REPORTE)
+    ws.append(columnas)
     for celda in ws[ws.max_row]:
         celda.font = Font(bold=True, color='FFFFFF')
         celda.fill = PatternFill('solid', fgColor='7C3AED')
 
     for fila in filas:
-        ws.append([
+        valores = [
             fila['no'], fila['hora'], fila['paciente'], fila['edad'], fila['estudio'],
             fila['tecnico'], fila['medico_referente'], fila['emerg'], fila['radiologo'],
             float(fila['precio']),
-        ])
+        ]
+        if privado:
+            valores += [fila[campo] or None for campo in CAMPOS_PLACAS]
+            valores += ['Sí' if fila['cancelado'] else 'No', fila['forma_pago']]
+        ws.append(valores)
 
     fila_total = ws.max_row + 1
     ws.cell(row=fila_total, column=9, value='TOTAL DEL DÍA').font = Font(bold=True)
     celda_total = ws.cell(row=fila_total, column=10, value=float(reporte.total()))
     celda_total.font = Font(bold=True)
     celda_total.fill = PatternFill('solid', fgColor='FEF08A')
-
-    from openpyxl.utils import get_column_letter
+    if privado:
+        totales = _totales_placas(filas)
+        for desplazamiento, campo in enumerate(CAMPOS_PLACAS):
+            celda = ws.cell(row=fila_total, column=11 + desplazamiento, value=totales[campo])
+            celda.font = Font(bold=True)
+            celda.fill = PatternFill('solid', fgColor='FEF08A')
 
     encabezados_fila = 4
-    for indice_columna in range(1, len(COLUMNAS_REPORTE) + 1):
+    for indice_columna in range(1, len(columnas) + 1):
         letra = get_column_letter(indice_columna)
         longitud = max(
             (
@@ -5182,20 +5259,48 @@ def ver_reporte_diario(request, convenio, fecha):
         if not editable:
             messages.error(request, 'Este reporte ya no se puede editar.')
             return redirect(request.path)
+        con_placas_invalidas = []
         for cita in reporte.citas():
             valor = request.POST.get(f'medico_referente_{cita.id}', '').strip()
             if valor != cita.medico_referente:
                 cita.medico_referente = valor
                 cita.save(update_fields=['medico_referente'])
+            if reporte.convenio == Cita.CONVENIO_PRIVADO:
+                cambios = []
+                for campo in CAMPOS_PLACAS:
+                    texto = request.POST.get(f'{campo}_{cita.id}')
+                    if texto is None:
+                        continue  # esa fila no trajo el campo (ej. cita ausente)
+                    cantidad = _cantidad_de_placas(texto)
+                    if cantidad is None:
+                        if cita.paciente.nombre not in con_placas_invalidas:
+                            con_placas_invalidas.append(cita.paciente.nombre)
+                        continue
+                    if cantidad != getattr(cita, campo):
+                        setattr(cita, campo, cantidad)
+                        cambios.append(campo)
+                if cambios:
+                    cita.save(update_fields=cambios)
+        if con_placas_invalidas:
+            messages.error(
+                request,
+                'Placas no válidas (use números enteros de 0 a 99) en: '
+                + ', '.join(con_placas_invalidas) + '. Esas cantidades no se guardaron.',
+            )
         messages.success(request, 'Cambios guardados.')
         return redirect(request.path)
 
     pacientes_pendientes = _pacientes_con_datos_pendientes(reporte)
+    filas = _filas_reporte(reporte)
+    es_privado = convenio == Cita.CONVENIO_PRIVADO
     return render(request, 'pacientes/reporte_diario.html', {
         'reporte': reporte,
         'convenio_nombre': dict(Cita.CONVENIO_CHOICES).get(convenio, convenio),
         'columnas': COLUMNAS_REPORTE,
-        'filas': _filas_reporte(reporte),
+        'filas': filas,
+        'es_privado': es_privado,
+        'totales_placas': _totales_placas(filas) if es_privado else None,
+        'puede_ver_recibo': puede_ver_comprobante_pago(request.user),
         'total': reporte.total(),
         'editable': editable,
         'solo_lectura': solo_lectura,

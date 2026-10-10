@@ -6079,3 +6079,340 @@ class MedicoTratanteColegiadoFormTests(TestCase):
         self.assertEqual(edicion.context['form'].initial['numero_colegiado'], '31415')
         self.assertContains(edicion, 'Número de colegiado')
         self.assertContains(lista, 'Colegiado: 31415')
+
+
+class ReporteDiarioPlacasYPagoTests(TestCase):
+    """Reporte diario de Privado: columnas de placas (usadas y con error, 10×12 y 14×17), si el
+    estudio ya está cancelado (pagado) y el enlace al recibo de caja. COEX y Emergencia IGSS no
+    llevan nada de esto."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_placas', rol=Usuario.ROL_RECEPCIONISTA)
+        self.admin = crear_usuario('admin_placas', rol=Usuario.ROL_ADMINISTRADOR)
+        self.financiero = crear_usuario('fin_placas', rol=Usuario.ROL_ADMINISTRADOR_FINANCIERO)
+        self.fecha = timezone.localdate() - datetime.timedelta(days=1)
+        self.estudio = TipoEstudio.objects.create(nombre='RX reporte placas')
+        for convenio in (Cita.CONVENIO_PRIVADO, Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS):
+            for habil in (True, False):
+                PrecioEstudio.objects.create(
+                    tipo_estudio=self.estudio, convenio=convenio, horario_habil=habil, precio=Decimal('200'),
+                )
+        self.cita1 = self._cita('1', Cita.CONVENIO_PRIVADO, datetime.time(8, 0))
+        self.cita2 = self._cita('2', Cita.CONVENIO_PRIVADO, datetime.time(9, 0))
+        self.reporte = ReporteDiario.objects.create(fecha=self.fecha, convenio=Cita.CONVENIO_PRIVADO)
+        self.client.force_login(self.recepcion)
+
+    def _cita(self, sufijo, convenio, hora, estado=Cita.ESTADO_PROCESADA):
+        paciente = crear_paciente(dpi=f'55155155155{sufijo}{convenio[:1]}'.ljust(13, '0')[:13], nombre=f'Paciente{sufijo}')
+        return crear_cita(
+            self.recepcion, paciente=paciente, tipo_estudio=self.estudio, convenio=convenio,
+            estado=estado, fecha=self.fecha, hora=hora,
+        )
+
+    def _pagar(self, cita, forma='efectivo', numero=''):
+        cobro = Cobro.objects.create(cita=cita, forma_pago=forma, numero_boleta=numero)
+        cobro.marcar_pagado(self.admin)
+        return cobro
+
+    def _url(self, convenio=Cita.CONVENIO_PRIVADO):
+        return reverse('ver_reporte_diario', args=[convenio, self.fecha.isoformat()])
+
+    # --- solo en Privado ---
+    def test_el_reporte_de_privado_tiene_las_columnas_de_placas_y_de_pago(self):
+        respuesta = self.client.get(self._url())
+
+        self.assertTrue(respuesta.context['es_privado'])
+        self.assertContains(respuesta, 'Placas utilizadas')
+        self.assertContains(respuesta, 'Error placas')
+        self.assertContains(respuesta, '10×12')
+        self.assertContains(respuesta, '14×17')
+        self.assertContains(respuesta, 'Cancelado')
+        self.assertContains(respuesta, 'Recibo de caja')
+        self.assertContains(respuesta, f'name="placas_10x12_{self.cita1.id}"')
+        self.assertContains(respuesta, f'name="placas_error_14x17_{self.cita2.id}"')
+
+    def test_coex_y_emergencia_igss_no_llevan_placas_ni_pago(self):
+        for convenio in (Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS):
+            self._cita('7', convenio, datetime.time(10, 0))
+            ReporteDiario.objects.create(fecha=self.fecha, convenio=convenio)
+
+            respuesta = self.client.get(self._url(convenio))
+
+            self.assertFalse(respuesta.context['es_privado'], convenio)
+            self.assertNotContains(respuesta, 'Placas utilizadas', msg_prefix=convenio)
+            self.assertNotContains(respuesta, 'Cancelado', msg_prefix=convenio)
+            self.assertNotContains(respuesta, 'Recibo de caja', msg_prefix=convenio)
+            self.assertNotContains(respuesta, 'name="placas_', msg_prefix=convenio)
+            self.assertIsNone(respuesta.context['totales_placas'])
+
+    def test_un_post_con_placas_en_coex_no_guarda_nada(self):
+        cita = self._cita('8', Cita.CONVENIO_COEX, datetime.time(10, 0))
+        ReporteDiario.objects.create(fecha=self.fecha, convenio=Cita.CONVENIO_COEX)
+
+        self.client.post(self._url(Cita.CONVENIO_COEX), {f'placas_10x12_{cita.id}': '5'})
+
+        cita.refresh_from_db()
+        self.assertEqual(cita.placas_10x12, 0)
+
+    # --- guardar placas ---
+    def test_se_guardan_las_placas_de_cada_estudio(self):
+        self.client.post(self._url(), {
+            f'placas_10x12_{self.cita1.id}': '1', f'placas_14x17_{self.cita1.id}': '',
+            f'placas_error_10x12_{self.cita1.id}': '1', f'placas_error_14x17_{self.cita1.id}': '',
+            f'placas_10x12_{self.cita2.id}': '', f'placas_14x17_{self.cita2.id}': '2',
+            f'placas_error_10x12_{self.cita2.id}': '', f'placas_error_14x17_{self.cita2.id}': '1',
+        })
+
+        self.cita1.refresh_from_db()
+        self.cita2.refresh_from_db()
+        self.assertEqual(
+            (self.cita1.placas_10x12, self.cita1.placas_14x17, self.cita1.placas_error_10x12, self.cita1.placas_error_14x17),
+            (1, 0, 1, 0),
+        )
+        self.assertEqual(
+            (self.cita2.placas_10x12, self.cita2.placas_14x17, self.cita2.placas_error_10x12, self.cita2.placas_error_14x17),
+            (0, 2, 0, 1),
+        )
+
+    def test_los_totales_suman_cada_columna(self):
+        Cita.objects.filter(pk=self.cita1.pk).update(placas_10x12=1, placas_14x17=2, placas_error_10x12=1)
+        Cita.objects.filter(pk=self.cita2.pk).update(placas_10x12=3, placas_14x17=1, placas_error_14x17=2)
+
+        respuesta = self.client.get(self._url())
+
+        self.assertEqual(respuesta.context['totales_placas'], {
+            'placas_10x12': 4, 'placas_14x17': 3, 'placas_error_10x12': 1, 'placas_error_14x17': 2,
+        })
+
+    def test_vaciar_un_campo_lo_deja_en_cero(self):
+        Cita.objects.filter(pk=self.cita1.pk).update(placas_10x12=3)
+
+        self.client.post(self._url(), {f'placas_10x12_{self.cita1.id}': ''})
+
+        self.cita1.refresh_from_db()
+        self.assertEqual(self.cita1.placas_10x12, 0)
+
+    def test_un_campo_que_no_viene_en_el_formulario_no_se_toca(self):
+        Cita.objects.filter(pk=self.cita1.pk).update(placas_14x17=4)
+
+        self.client.post(self._url(), {f'placas_10x12_{self.cita1.id}': '2'})
+
+        self.cita1.refresh_from_db()
+        self.assertEqual((self.cita1.placas_10x12, self.cita1.placas_14x17), (2, 4))
+
+    def test_los_valores_invalidos_no_se_guardan_y_se_avisa(self):
+        for valor in ('abc', '-1', '100', '1.5', '١٢', '１２', '1e2'):
+            respuesta = self.client.post(self._url(), {
+                f'placas_10x12_{self.cita1.id}': valor, f'placas_14x17_{self.cita1.id}': '3',
+            }, follow=True)
+
+            self.cita1.refresh_from_db()
+            self.assertEqual(self.cita1.placas_10x12, 0, valor)
+            self.assertEqual(self.cita1.placas_14x17, 3, valor)  # lo válido sí se guardó
+            mensajes = [str(m) for m in respuesta.context['messages']]
+            self.assertTrue(any('Placas no válidas' in m and 'Paciente1' in m for m in mensajes), valor)
+
+    def test_el_limite_es_99_por_campo(self):
+        self.client.post(self._url(), {f'placas_10x12_{self.cita1.id}': '99'})
+        self.cita1.refresh_from_db()
+        self.assertEqual(self.cita1.placas_10x12, 99)
+
+    def test_un_reporte_enviado_ya_no_se_puede_editar(self):
+        self.reporte.estado = ReporteDiario.ESTADO_ENVIADO
+        self.reporte.save(update_fields=['estado'])
+
+        respuesta = self.client.post(self._url(), {f'placas_10x12_{self.cita1.id}': '5'}, follow=True)
+
+        self.cita1.refresh_from_db()
+        self.assertEqual(self.cita1.placas_10x12, 0)
+        self.assertContains(respuesta, 'ya no se puede editar')
+
+    def test_un_reporte_enviado_muestra_las_placas_sin_campos_editables(self):
+        Cita.objects.filter(pk=self.cita1.pk).update(placas_14x17=2)
+        self.reporte.estado = ReporteDiario.ESTADO_ENVIADO
+        self.reporte.save(update_fields=['estado'])
+
+        respuesta = self.client.get(self._url())
+
+        self.assertNotContains(respuesta, 'name="placas_')
+        self.assertContains(respuesta, '<td class="centro">2</td>', html=False)
+
+    def test_una_cita_ausente_no_tiene_campos_de_placas(self):
+        ausente = self._cita('9', Cita.CONVENIO_PRIVADO, datetime.time(11, 0), estado=Cita.ESTADO_AUSENTE)
+
+        respuesta = self.client.get(self._url())
+
+        self.assertNotContains(respuesta, f'name="placas_10x12_{ausente.id}"')
+        self.assertContains(respuesta, f'name="placas_10x12_{self.cita1.id}"')
+
+    def test_cantidad_de_placas(self):
+        from pacientes.views import _cantidad_de_placas
+        self.assertEqual(_cantidad_de_placas(''), 0)
+        self.assertEqual(_cantidad_de_placas('  '), 0)
+        self.assertEqual(_cantidad_de_placas(None), 0)
+        self.assertEqual(_cantidad_de_placas('0'), 0)
+        self.assertEqual(_cantidad_de_placas(' 7 '), 7)
+        self.assertEqual(_cantidad_de_placas('99'), 99)
+        for malo in ('100', '-1', '1.5', 'x', '١٢', '1,5'):
+            self.assertIsNone(_cantidad_de_placas(malo), malo)
+
+    # --- cancelado y recibo ---
+    def test_marca_como_cancelado_lo_pagado_y_enlaza_el_recibo_con_la_forma_de_pago(self):
+        cobro = self._pagar(self.cita1, forma='tarjeta')
+
+        respuesta = self.client.get(self._url())
+        filas = {fila['cita_id']: fila for fila in respuesta.context['filas']}
+
+        self.assertTrue(filas[self.cita1.id]['cancelado'])
+        self.assertEqual(filas[self.cita1.id]['forma_pago'], 'Tarjeta')
+        self.assertEqual(filas[self.cita1.id]['cobro_id'], cobro.id)
+        self.assertContains(respuesta, reverse('boleta_pago_pdf', args=[cobro.id]))
+        self.assertContains(respuesta, 'Tarjeta · Ver recibo')
+        self.assertFalse(filas[self.cita2.id]['cancelado'])
+
+    def test_lo_no_pagado_figura_como_no_y_sin_recibo(self):
+        Cobro.objects.create(cita=self.cita1)  # cobro pendiente
+        # cita2 ni siquiera tiene registro de cobro
+
+        respuesta = self.client.get(self._url())
+
+        for fila in respuesta.context['filas']:
+            self.assertFalse(fila['cancelado'])
+            self.assertIsNone(fila['cobro_id'])
+        self.assertNotContains(respuesta, '/boleta/')
+        self.assertContains(respuesta, 'no-pagado', count=2 + 1)  # 2 filas + la definición del estilo
+
+    def test_cada_forma_de_pago_se_muestra_con_su_nombre(self):
+        self._pagar(self.cita1, forma='efectivo')
+        self._pagar(self.cita2, forma='transferencia')
+
+        respuesta = self.client.get(self._url())
+
+        self.assertContains(respuesta, 'Efectivo · Ver recibo')
+        self.assertContains(respuesta, 'Transferencia · Ver recibo')
+
+    def test_un_pago_sin_forma_registrada_dice_no_registrada(self):
+        self._pagar(self.cita1, forma='')
+
+        respuesta = self.client.get(self._url())
+
+        self.assertContains(respuesta, 'No registrada · Ver recibo')
+
+    def test_el_enlace_del_recibo_abre_el_pdf(self):
+        cobro = self._pagar(self.cita1, forma='efectivo')
+
+        respuesta = self.client.get(reverse('boleta_pago_pdf', args=[cobro.id]))
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTrue(respuesta.content.startswith(b'%PDF'))
+
+    def test_el_administrador_financiero_ve_el_reporte_enviado_y_abre_el_recibo(self):
+        cobro = self._pagar(self.cita1, forma='transferencia')
+        self.reporte.estado = ReporteDiario.ESTADO_ENVIADO
+        self.reporte.save(update_fields=['estado'])
+        self.client.force_login(self.financiero)
+
+        pagina = self.client.get(self._url())
+        recibo = self.client.get(reverse('boleta_pago_pdf', args=[cobro.id]))
+
+        self.assertTrue(pagina.context['puede_ver_recibo'])
+        self.assertContains(pagina, 'Transferencia · Ver recibo')
+        self.assertEqual(recibo.status_code, 200)
+
+    def test_quien_no_puede_ver_recibos_ve_la_forma_de_pago_pero_sin_enlace(self):
+        from unittest import mock
+        cobro = self._pagar(self.cita1, forma='tarjeta')
+
+        with mock.patch('pacientes.views.puede_ver_comprobante_pago', return_value=False):
+            respuesta = self.client.get(self._url())
+
+        self.assertContains(respuesta, 'Tarjeta')
+        self.assertNotContains(respuesta, reverse('boleta_pago_pdf', args=[cobro.id]))
+
+    def test_una_cita_ausente_no_figura_como_cancelada_aunque_tuviera_un_cobro_pagado(self):
+        ausente = self._cita('6', Cita.CONVENIO_PRIVADO, datetime.time(12, 0), estado=Cita.ESTADO_AUSENTE)
+        self._pagar(ausente)
+
+        respuesta = self.client.get(self._url())
+        fila = next(f for f in respuesta.context['filas'] if f['cita_id'] == ausente.id)
+
+        self.assertFalse(fila['cancelado'])
+
+    # --- PDF y Excel ---
+    def _enviar_reporte(self):
+        self.reporte.estado = ReporteDiario.ESTADO_ENVIADO
+        self.reporte.save(update_fields=['estado'])
+        self.client.force_login(self.admin)
+
+    def _hoja(self, convenio=Cita.CONVENIO_PRIVADO):
+        from io import BytesIO
+
+        from openpyxl import load_workbook
+        respuesta = self.client.get(reverse('descargar_reporte_xlsx', args=[convenio, self.fecha.isoformat()]))
+        self.assertEqual(respuesta.status_code, 200)
+        return load_workbook(BytesIO(respuesta.content)).active
+
+    def test_el_excel_de_privado_trae_placas_pago_y_totales(self):
+        Cita.objects.filter(pk=self.cita1.pk).update(placas_10x12=1, placas_error_10x12=1)
+        Cita.objects.filter(pk=self.cita2.pk).update(placas_14x17=2, placas_10x12=1)
+        self._pagar(self.cita1, forma='efectivo')
+        self._enviar_reporte()
+
+        hoja = self._hoja()
+        encabezados = [c.value for c in hoja[4]]
+        filas = [[c.value for c in hoja[fila]] for fila in (5, 6)]
+        total = [c.value for c in hoja[hoja.max_row]]
+
+        self.assertEqual(encabezados[10:], [
+            'Placas 10×12', 'Placas 14×17', 'Error 10×12', 'Error 14×17', 'Cancelado', 'Forma de pago',
+        ])
+        self.assertEqual(filas[0][10:], [1, None, 1, None, 'Sí', 'Efectivo'])
+        self.assertEqual(filas[1][10:], [1, 2, None, None, 'No', None])
+        self.assertEqual(total[8], 'TOTAL DEL DÍA')
+        self.assertEqual(total[10:14], [2, 2, 1, 0])
+
+    def test_el_excel_de_coex_no_cambia(self):
+        self._cita('5', Cita.CONVENIO_COEX, datetime.time(10, 0))
+        reporte = ReporteDiario.objects.create(
+            fecha=self.fecha, convenio=Cita.CONVENIO_COEX, estado=ReporteDiario.ESTADO_ENVIADO,
+        )
+        self.client.force_login(self.admin)
+
+        hoja = self._hoja(Cita.CONVENIO_COEX)
+
+        self.assertEqual(len([c for c in hoja[4] if c.value]), 10)
+        self.assertEqual(reporte.convenio, Cita.CONVENIO_COEX)
+
+    def test_el_pdf_de_privado_se_genera(self):
+        Cita.objects.filter(pk=self.cita1.pk).update(placas_10x12=1)
+        self._pagar(self.cita1)
+        self._enviar_reporte()
+
+        respuesta = self.client.get(reverse('descargar_reporte_pdf', args=[Cita.CONVENIO_PRIVADO, self.fecha.isoformat()]))
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTrue(respuesta.content.startswith(b'%PDF'))
+
+    def test_el_pdf_de_privado_aguanta_nombres_con_simbolos(self):
+        paciente = crear_paciente(dpi='5515515515599', nombre='Ana <&> María', apellido="O'Neil & Hijos")
+        crear_cita(
+            self.recepcion, paciente=paciente, tipo_estudio=self.estudio, convenio=Cita.CONVENIO_PRIVADO,
+            estado=Cita.ESTADO_PROCESADA, fecha=self.fecha, hora=datetime.time(13, 0),
+            medico_referente='Dr. <b>X</b> & Cía',
+        )
+        self._enviar_reporte()
+
+        respuesta = self.client.get(reverse('descargar_reporte_pdf', args=[Cita.CONVENIO_PRIVADO, self.fecha.isoformat()]))
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTrue(respuesta.content.startswith(b'%PDF'))
+
+    def test_el_pdf_de_coex_se_genera_como_antes(self):
+        self._cita('4', Cita.CONVENIO_COEX, datetime.time(10, 0))
+        ReporteDiario.objects.create(fecha=self.fecha, convenio=Cita.CONVENIO_COEX, estado=ReporteDiario.ESTADO_ENVIADO)
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.get(reverse('descargar_reporte_pdf', args=[Cita.CONVENIO_COEX, self.fecha.isoformat()]))
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTrue(respuesta.content.startswith(b'%PDF'))

@@ -45,6 +45,13 @@
             font-weight: bold;
             background: #f8fafc;
         }
+        td.centro, th.centro { text-align: center; }
+        tr.grupos th { text-align: center; border-bottom: none; }
+        tr.grupos th.grupo { background: #a78bfa; color: #fff; }
+        input.placas { width: 3.6rem; text-align: center; padding: 0.25rem 0.3rem; }
+        .si-pagado { color: #15803d; font-weight: 700; }
+        .no-pagado { color: #b91c1c; font-weight: 600; }
+        td.recibo a { white-space: nowrap; }
     </style>
 {% endblock %}
 
@@ -87,10 +94,26 @@
                 <div class="card-body" style="padding:0; overflow-x:auto;">
                     <table>
                         <thead>
+                            {% if es_privado %}
+                                <tr class="grupos">
+                                    <th colspan="10"></th>
+                                    <th colspan="2" class="grupo">Placas utilizadas</th>
+                                    <th colspan="2" class="grupo">Error placas</th>
+                                    <th colspan="2"></th>
+                                </tr>
+                            {% endif %}
                             <tr>
                                 {% for columna in columnas %}
                                     <th{% if columna == 'Precio' %} class="precio"{% endif %}>{{ columna }}</th>
                                 {% endfor %}
+                                {% if es_privado %}
+                                    <th class="centro">10×12</th>
+                                    <th class="centro">14×17</th>
+                                    <th class="centro">10×12</th>
+                                    <th class="centro">14×17</th>
+                                    <th class="centro">Cancelado</th>
+                                    <th>Recibo de caja</th>
+                                {% endif %}
                             </tr>
                         </thead>
                         <tbody>
@@ -116,6 +139,31 @@
                                     <td>{{ fila.emerg }}</td>
                                     <td>{{ fila.radiologo|default:'—' }}</td>
                                     <td class="precio">Q{{ fila.precio|floatformat:2 }}</td>
+                                    {% if es_privado %}
+                                        {% if editable and not fila.ausente %}
+                                            <td class="centro"><input class="placas" type="number" min="0" max="99" inputmode="numeric" name="placas_10x12_{{ fila.cita_id }}" value="{% if fila.placas_10x12 %}{{ fila.placas_10x12 }}{% endif %}"></td>
+                                            <td class="centro"><input class="placas" type="number" min="0" max="99" inputmode="numeric" name="placas_14x17_{{ fila.cita_id }}" value="{% if fila.placas_14x17 %}{{ fila.placas_14x17 }}{% endif %}"></td>
+                                            <td class="centro"><input class="placas" type="number" min="0" max="99" inputmode="numeric" name="placas_error_10x12_{{ fila.cita_id }}" value="{% if fila.placas_error_10x12 %}{{ fila.placas_error_10x12 }}{% endif %}"></td>
+                                            <td class="centro"><input class="placas" type="number" min="0" max="99" inputmode="numeric" name="placas_error_14x17_{{ fila.cita_id }}" value="{% if fila.placas_error_14x17 %}{{ fila.placas_error_14x17 }}{% endif %}"></td>
+                                        {% else %}
+                                            <td class="centro">{% if fila.placas_10x12 %}{{ fila.placas_10x12 }}{% endif %}</td>
+                                            <td class="centro">{% if fila.placas_14x17 %}{{ fila.placas_14x17 }}{% endif %}</td>
+                                            <td class="centro">{% if fila.placas_error_10x12 %}{{ fila.placas_error_10x12 }}{% endif %}</td>
+                                            <td class="centro">{% if fila.placas_error_14x17 %}{{ fila.placas_error_14x17 }}{% endif %}</td>
+                                        {% endif %}
+                                        <td class="centro">
+                                            {% if fila.ausente %}—{% elif fila.cancelado %}<span class="si-pagado">Sí</span>{% else %}<span class="no-pagado">No</span>{% endif %}
+                                        </td>
+                                        <td class="recibo">
+                                            {% if fila.cancelado %}
+                                                {% if puede_ver_recibo %}
+                                                    <a href="{% url 'boleta_pago_pdf' fila.cobro_id %}" target="_blank" rel="noopener">{{ fila.forma_pago }} · Ver recibo</a>
+                                                {% else %}
+                                                    {{ fila.forma_pago }}
+                                                {% endif %}
+                                            {% else %}—{% endif %}
+                                        </td>
+                                    {% endif %}
                                 </tr>
                             {% endfor %}
                         </tbody>
@@ -124,6 +172,13 @@
                                 <td colspan="8"></td>
                                 <td>TOTAL DEL DÍA</td>
                                 <td class="precio">Q{{ total|floatformat:2 }}</td>
+                                {% if es_privado %}
+                                    <td class="centro">{{ totales_placas.placas_10x12 }}</td>
+                                    <td class="centro">{{ totales_placas.placas_14x17 }}</td>
+                                    <td class="centro">{{ totales_placas.placas_error_10x12 }}</td>
+                                    <td class="centro">{{ totales_placas.placas_error_14x17 }}</td>
+                                    <td colspan="2"></td>
+                                {% endif %}
                             </tr>
                         </tfoot>
                     </table>

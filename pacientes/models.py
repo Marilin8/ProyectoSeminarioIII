@@ -749,6 +749,19 @@ class Cita(models.Model):
         verbose_name='médico referente',
         help_text='Nombre del médico externo que refiere al paciente (para el reporte diario).',
     )
+    # Placas (películas) gastadas en el estudio, por tamaño, para el reporte diario de Privado.
+    placas_10x12 = models.PositiveSmallIntegerField(
+        default=0, verbose_name='placas 10×12 utilizadas',
+    )
+    placas_14x17 = models.PositiveSmallIntegerField(
+        default=0, verbose_name='placas 14×17 utilizadas',
+    )
+    placas_error_10x12 = models.PositiveSmallIntegerField(
+        default=0, verbose_name='placas 10×12 con error',
+    )
+    placas_error_14x17 = models.PositiveSmallIntegerField(
+        default=0, verbose_name='placas 14×17 con error',
+    )
     codigo_igss = models.CharField(
         max_length=50, blank=True,
         verbose_name='código IGSS',
@@ -1202,7 +1215,7 @@ class ReporteDiario(models.Model):
         return (
             Cita.objects.filter(convenio=self.convenio, fecha=self.fecha)
             .exclude(estado__in=(Cita.ESTADO_PENDIENTE, Cita.ESTADO_RECHAZADA))
-            .select_related('paciente', 'tipo_estudio', 'radiologo')
+            .select_related('paciente', 'tipo_estudio', 'radiologo', 'cobro')
             .prefetch_related('tipo_estudio__precios')
             .order_by('hora')
         )
