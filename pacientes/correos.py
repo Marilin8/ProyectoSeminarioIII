@@ -191,10 +191,15 @@ def enviar_estudio_medico_tratante(orden):
 
     link_visor = link_visor_medico_tratante(orden)
 
-    if medico.acceso_otp:
+    if medico.llave_de_acceso == medico.LLAVE_OTP:
         aviso_acceso = (
             'Al abrir el enlace le enviaremos un código de 6 dígitos a este mismo correo\n'
             'para que pueda entrar. No comparta el código ni el enlace.'
+        )
+    elif medico.llave_de_acceso == medico.LLAVE_COLEGIADO:
+        aviso_acceso = (
+            'Se le pedirá su número de colegiado para acceder. No comparta el enlace\n'
+            'con nadie más.'
         )
     else:
         aviso_acceso = (

@@ -74,11 +74,26 @@
                 </label>
                 {{ form.dpi }}
                 <p style="color:#64748b; font-size:0.8rem; margin:4px 0 0;">
-                    Llave de acceso al visor del estudio cuando NO se usa el código OTP (obligatorio si es
-                    privado o ambos y no marcó el acceso por código).
+                    Llave de acceso al visor del estudio cuando NO se usa el código OTP. Si no tiene DPI,
+                    use el número de colegiado.
                 </p>
                 {% if form.dpi.errors %}
                     <p style="color:#dc2626; font-size:0.8rem; margin:4px 0 0;">{{ form.dpi.errors|join:" " }}</p>
+                {% endif %}
+            </div>
+
+            <div style="margin-bottom:20px;">
+                <label for="{{ form.numero_colegiado.id_for_label }}"
+                       style="display:block; font-weight:600; margin-bottom:8px;">
+                    Número de colegiado
+                </label>
+                {{ form.numero_colegiado }}
+                <p style="color:#64748b; font-size:0.8rem; margin:4px 0 0;">
+                    Es la llave de acceso cuando el médico no tiene DPI registrado y no usa el código OTP.
+                    Es un dato público y corto: si puede, prefiera el DPI o el código OTP.
+                </p>
+                {% if form.numero_colegiado.errors %}
+                    <p style="color:#dc2626; font-size:0.8rem; margin:4px 0 0;">{{ form.numero_colegiado.errors|join:" " }}</p>
                 {% endif %}
             </div>
 

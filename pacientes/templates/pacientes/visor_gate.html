@@ -68,6 +68,29 @@
                         <input type="hidden" name="accion" value="reenviar">
                         ¿No le llegó? <button type="submit" class="enlace-reenviar">Reenviar código</button>
                     </form>
+                {% elif modo_colegiado %}
+                    <p class="text-sm text-muted" style="margin-bottom: 1rem;">
+                        Para proteger la información del paciente, ingrese su
+                        <strong>número de colegiado</strong>.
+                    </p>
+                    {% if error %}
+                        <div class="alert alert-danger">
+                            {{ error }}
+                            {% if intentos_restantes > 0 %}
+                                Le quedan {{ intentos_restantes }} intento{{ intentos_restantes|pluralize }}.
+                            {% endif %}
+                        </div>
+                    {% endif %}
+                    <form method="post" action="?{{ query_string }}">
+                        {% csrf_token %}
+                        <label for="colegiado">Número de colegiado</label>
+                        <input type="text" name="colegiado" id="colegiado"
+                               inputmode="numeric" pattern="[0-9]{1,10}" maxlength="10"
+                               autocomplete="off" required autofocus>
+                        <button type="submit" class="btn btn-primary btn-block mt-2">
+                            Ver el estudio
+                        </button>
+                    </form>
                 {% else %}
                     <p class="text-sm text-muted" style="margin-bottom: 1rem;">
                         Para proteger su información, ingrese su <strong>DPI completo</strong>

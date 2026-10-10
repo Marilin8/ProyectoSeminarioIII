@@ -5826,3 +5826,256 @@ class EnvioEstudioMedicoConOtpTests(TestCase):
         orden.refresh_from_db()
         self.assertIsNotNone(orden.enviado_medico_tratante_en)
         self.assertEqual(mail.outbox[0].to, ['solocodigo@example.com'])
+
+
+@override_settings(**CONFIG_CORREO_PRUEBA)
+class AccesoColegiadoMedicoTratanteTests(TestCase):
+    """Si el médico tratante no tiene DPI y no usa código OTP, su número de colegiado es la llave
+    para abrir el visor. Prioridad de llaves: OTP > DPI > número de colegiado."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_colegiado', rol=Usuario.ROL_RECEPCIONISTA)
+        self.medico = MedicoTratante.objects.create(
+            nombre='Dr. Colegiado', numero_colegiado='54321', correo='colegiado@example.com',
+            tipo=MedicoTratante.TIPO_PRIVADO,
+        )
+        self.paciente = crear_paciente(dpi='6336336336001', correo='')
+        self.estudio = TipoEstudio.objects.create(nombre='Radiografía acceso colegiado')
+        self.cita = crear_cita(
+            self.recepcion, paciente=self.paciente, tipo_estudio=self.estudio,
+            convenio=Cita.CONVENIO_PRIVADO, estado=Cita.ESTADO_PROCESADA, medico_tratante=self.medico,
+        )
+        self.orden = OrdenTrabajo.objects.create(
+            cita=self.cita, motivo='x', creada_por=self.recepcion, enviado_medico_tratante_en=timezone.now(),
+        )
+        InformeEstudio.objects.create(orden=self.orden, tipo_estudio=self.estudio, texto='Sin hallazgos.')
+        token = self.orden.asegurar_token_publico()
+        self.ac = base64.urlsafe_b64encode(str(token).encode()).decode().rstrip('=')
+        self.qs = f'studyId={self.orden.id}&ac={self.ac}'
+        self.url = f"{reverse('visor_estudio_medico_tratante')}?{self.qs}"
+        self.url_visor = f"{reverse('visor_estudio')}?{self.qs}"
+
+    # --- la llave que corresponde a cada médico ---
+    def test_llave_de_acceso_segun_lo_que_tenga_el_medico(self):
+        m = MedicoTratante(nombre='x', correo='a@b.com', tipo=MedicoTratante.TIPO_PRIVADO)
+        self.assertIsNone(m.llave_de_acceso)
+        m.numero_colegiado = '123'
+        self.assertEqual(m.llave_de_acceso, MedicoTratante.LLAVE_COLEGIADO)
+        m.dpi = '1234567890123'
+        self.assertEqual(m.llave_de_acceso, MedicoTratante.LLAVE_DPI)
+        m.acceso_otp = True
+        self.assertEqual(m.llave_de_acceso, MedicoTratante.LLAVE_OTP)
+        m.correo = ''
+        self.assertIsNone(m.llave_de_acceso)  # OTP sin correo: no hay a dónde mandar el código
+
+    # --- visor ---
+    def test_pide_el_numero_de_colegiado_y_no_el_dpi(self):
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, 'número de colegiado')
+        self.assertContains(respuesta, 'name="colegiado"')
+        self.assertNotContains(respuesta, 'DPI completo')
+        self.assertNotContains(respuesta, 'name="codigo"')
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_el_colegiado_correcto_abre_el_visor(self):
+        respuesta = self.client.post(self.url, {'colegiado': '54321'}, follow=True)
+
+        self.assertRedirects(respuesta, self.url_visor)
+        self.assertContains(respuesta, self.estudio.nombre)
+
+    def test_acepta_espacios_alrededor(self):
+        respuesta = self.client.post(self.url, {'colegiado': '  54321 '}, follow=True)
+
+        self.assertContains(respuesta, self.estudio.nombre)
+
+    def test_un_colegiado_incorrecto_no_abre_y_cuenta_intentos(self):
+        respuesta = self.client.post(self.url, {'colegiado': '11111'})
+
+        self.assertContains(respuesta, 'El número de colegiado no coincide')
+        self.assertContains(respuesta, 'Le quedan 4 intentos')
+        self.assertNotContains(respuesta, self.estudio.nombre)
+
+    def test_el_dpi_del_paciente_no_abre_en_modo_colegiado(self):
+        respuesta = self.client.post(self.url, {'colegiado': self.paciente.dpi})
+
+        self.assertContains(respuesta, 'no coincide')
+
+    def test_un_valor_vacio_no_abre(self):
+        respuesta = self.client.post(self.url, {'colegiado': ''})
+
+        self.assertContains(respuesta, 'no coincide')
+
+    def test_se_bloquea_tras_cinco_intentos_en_la_misma_sesion(self):
+        for _ in range(5):
+            self.client.post(self.url, {'colegiado': '00000'})
+
+        respuesta = self.client.post(self.url, {'colegiado': '54321'})
+
+        self.assertContains(respuesta, 'Demasiados intentos')
+
+    def test_el_tope_por_estudio_no_se_salta_cambiando_de_navegador(self):
+        """El colegiado es corto y público: un atacante que borre las cookies no debe
+        poder reiniciar el contador de intentos."""
+        from django.core.cache import cache
+        with override_settings(CACHES={'default': {
+            'BACKUP': 'x', 'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'colegiado-prueba',
+        }}):
+            cache.clear()
+            for numero in range(10):
+                self.client_class().post(self.url, {'colegiado': f'{numero:05d}'})
+            nuevo_navegador = self.client_class()
+
+            respuesta = nuevo_navegador.post(self.url, {'colegiado': '54321'})
+            cache.clear()
+
+        self.assertContains(respuesta, 'Demasiados intentos')
+        self.assertNotContains(respuesta, self.estudio.nombre)
+
+    # --- prioridad entre llaves ---
+    def test_si_tiene_dpi_la_llave_es_el_dpi_y_el_colegiado_no_abre(self):
+        self.medico.dpi = '9339339339001'
+        self.medico.save(update_fields=['dpi'])
+
+        gate = self.client.get(self.url)
+        self.assertContains(gate, 'DPI completo')
+        self.assertNotContains(gate, 'name="colegiado"')
+        self.assertNotContains(self.client.post(self.url, {'dpi_ultimos': '54321'}), self.estudio.nombre)
+        self.assertNotContains(self.client.post(self.url, {'colegiado': '54321'}), self.estudio.nombre)
+        respuesta = self.client.post(self.url, {'dpi_ultimos': '9339339339001'}, follow=True)
+        self.assertContains(respuesta, self.estudio.nombre)
+
+    def test_si_tiene_otp_la_llave_es_el_codigo_y_el_colegiado_no_abre(self):
+        self.medico.acceso_otp = True
+        self.medico.save(update_fields=['acceso_otp'])
+
+        gate = self.client.get(self.url)
+        self.assertContains(gate, 'name="codigo"')
+        self.assertEqual(len(mail.outbox), 1)
+        respuesta = self.client.post(self.url, {'colegiado': '54321'})
+        self.assertNotContains(respuesta, self.estudio.nombre)
+
+    def test_sin_ninguna_llave_da_404(self):
+        self.medico.numero_colegiado = None
+        self.medico.save(update_fields=['numero_colegiado'])
+
+        self.assertEqual(self.client.get(self.url).status_code, 404)
+
+    # --- correo del estudio ---
+    def test_el_correo_del_estudio_avisa_que_se_pedira_el_colegiado(self):
+        from pacientes.correos import enviar_estudio_medico_tratante
+
+        self.assertEqual(enviar_estudio_medico_tratante(self.orden), '')
+
+        cuerpo = mail.outbox[-1].body
+        self.assertIn('número de colegiado', cuerpo)
+        self.assertNotIn('54321', cuerpo)
+        self.assertNotIn('DPI completo', cuerpo)
+
+    def test_el_medico_con_colegiado_sin_dpi_recibe_el_aviso_al_completarse_el_informe(self):
+        radiologo = crear_usuario('rad_colegiado', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        cita = crear_cita(
+            self.recepcion, paciente=crear_paciente(dpi='6336336336002', correo=''),
+            tipo_estudio=self.estudio, convenio=Cita.CONVENIO_COEX, estado=Cita.ESTADO_EN_PROCESO,
+            medico_tratante=self.medico,
+        )
+        orden = OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        ImagenEstudio.objects.create(
+            orden=orden, tipo_estudio=self.estudio,
+            archivo=SimpleUploadedFile('rx.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg'),
+            subida_por=self.recepcion,
+        )
+        self.client.force_login(radiologo)
+
+        self.client.post(reverse('adjuntar_informe', args=[cita.id]), {f'texto_{self.estudio.id}': 'Sin hallazgos.'})
+
+        orden.refresh_from_db()
+        self.assertIsNotNone(orden.enviado_medico_tratante_en)
+        self.assertEqual(mail.outbox[0].to, ['colegiado@example.com'])
+
+
+class MedicoTratanteColegiadoFormTests(TestCase):
+    def setUp(self):
+        self.admin = crear_usuario('admin_colegiado_form', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.client.force_login(self.admin)
+
+    def _datos(self, **cambios):
+        datos = {'nombre': 'Dr. Colegiado Form', 'tipo': MedicoTratante.TIPO_PRIVADO, 'correo': 'cf@gmail.com'}
+        datos.update(cambios)
+        return datos
+
+    def test_el_colegiado_reemplaza_al_dpi_para_un_medico_privado(self):
+        form = MedicoTratanteForm(self._datos(numero_colegiado='12345'))
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_sin_dpi_ni_colegiado_ni_otp_se_exige_alguno(self):
+        form = MedicoTratanteForm(self._datos())
+        self.assertFalse(form.is_valid())
+        self.assertIn('número de colegiado', form.errors['dpi'][0])
+
+    def test_el_colegiado_solo_acepta_numeros(self):
+        for valor in ('12a45', '12-45', '12 45', '１２３'):
+            form = MedicoTratanteForm(self._datos(numero_colegiado=valor))
+            self.assertFalse(form.is_valid(), valor)
+            self.assertIn('numero_colegiado', form.errors, valor)
+
+    def test_el_colegiado_no_puede_pasar_de_diez_digitos(self):
+        form = MedicoTratanteForm(self._datos(numero_colegiado='12345678901'))
+        self.assertFalse(form.is_valid())
+
+    def test_no_se_repite_el_colegiado(self):
+        MedicoTratante.objects.create(nombre='Dr. Ya Tiene', numero_colegiado='777')
+
+        form = MedicoTratanteForm(self._datos(numero_colegiado='777'))
+
+        self.assertFalse(form.is_valid())
+        self.assertIn('numero_colegiado', form.errors)
+
+    def test_al_editar_se_puede_conservar_el_propio_colegiado(self):
+        medico = MedicoTratante.objects.create(
+            nombre='Dr. Conserva', numero_colegiado='888', correo='conserva@gmail.com',
+            tipo=MedicoTratante.TIPO_PRIVADO,
+        )
+        form = MedicoTratanteForm(
+            self._datos(nombre='Dr. Conserva', correo='conserva@gmail.com', numero_colegiado='888'),
+            medico_actual=medico,
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_crear_y_editar_guardan_el_colegiado(self):
+        self.client.post(reverse('crear_medico_tratante'), self._datos(numero_colegiado='4545'))
+        medico = MedicoTratante.objects.get(nombre='Dr. Colegiado Form')
+        self.assertEqual(medico.numero_colegiado, '4545')
+        self.assertIsNone(medico.dpi)
+
+        self.client.post(
+            reverse('editar_medico_tratante', args=[medico.id]),
+            self._datos(numero_colegiado='9090', nombre='Dr. Colegiado Form'),
+        )
+        medico.refresh_from_db()
+        self.assertEqual(medico.numero_colegiado, '9090')
+
+        self.client.post(
+            reverse('editar_medico_tratante', args=[medico.id]),
+            self._datos(numero_colegiado='', dpi='9449449449001', nombre='Dr. Colegiado Form'),
+        )
+        medico.refresh_from_db()
+        self.assertIsNone(medico.numero_colegiado)
+
+    def test_dos_medicos_sin_colegiado_conviven(self):
+        MedicoTratante.objects.create(nombre='Dr. Sin 1')
+        MedicoTratante.objects.create(nombre='Dr. Sin 2')
+        self.assertEqual(MedicoTratante.objects.filter(numero_colegiado__isnull=True).count(), 2)
+
+    def test_la_pantalla_de_edicion_y_la_lista_muestran_el_colegiado(self):
+        medico = MedicoTratante.objects.create(
+            nombre='Dr. Se Ve', numero_colegiado='31415', correo='seve@gmail.com', tipo=MedicoTratante.TIPO_PRIVADO,
+        )
+
+        edicion = self.client.get(reverse('editar_medico_tratante', args=[medico.id]))
+        lista = self.client.get(reverse('lista_medicos_tratantes'))
+
+        self.assertEqual(edicion.context['form'].initial['numero_colegiado'], '31415')
+        self.assertContains(edicion, 'Número de colegiado')
+        self.assertContains(lista, 'Colegiado: 31415')

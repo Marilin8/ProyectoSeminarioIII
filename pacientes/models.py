@@ -212,6 +212,10 @@ class MedicoTratante(models.Model):
         max_length=20, unique=True, null=True, blank=True, verbose_name='DPI',
         help_text='Llave de acceso al visor del estudio cuando el tipo es privado o ambos.',
     )
+    numero_colegiado = models.CharField(
+        max_length=10, unique=True, null=True, blank=True, verbose_name='número de colegiado',
+        help_text='Llave de acceso al visor cuando el médico no tiene DPI registrado ni usa código OTP.',
+    )
     correo = models.EmailField(blank=True, verbose_name='correo electrónico')
     tipo = models.CharField(
         max_length=10, choices=TIPO_CHOICES, blank=True, default='', verbose_name='tipo',
@@ -235,6 +239,25 @@ class MedicoTratante(models.Model):
     @property
     def recibe_estudios_privados(self):
         return self.tipo in self.TIPOS_QUE_RECIBEN_ESTUDIO
+
+    LLAVE_OTP = 'otp'
+    LLAVE_DPI = 'dpi'
+    LLAVE_COLEGIADO = 'colegiado'
+
+    @property
+    def llave_de_acceso(self):
+        """Con qué entra al visor de un paciente: código OTP por correo si el
+        administrador se lo activó; si no, su DPI; y si tampoco tiene DPI, su
+        número de colegiado. None si no tiene ninguna (no puede entrar)."""
+        if self.acceso_otp and self.correo:
+            return self.LLAVE_OTP
+        if self.acceso_otp:
+            return None
+        if self.dpi:
+            return self.LLAVE_DPI
+        if self.numero_colegiado:
+            return self.LLAVE_COLEGIADO
+        return None
 
     @classmethod
     def disponibles_para(cls, lado):

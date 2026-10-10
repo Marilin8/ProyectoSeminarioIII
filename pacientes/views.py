@@ -785,11 +785,11 @@ def _intentar_envio_medico_tratante(request, cita, orden):
     medico = cita.medico_tratante
     if not medico or not medico.recibe_estudios_privados or orden.enviado_medico_tratante_en:
         return False
-    if not medico.correo or not (medico.dpi or medico.acceso_otp):
+    if not medico.correo or not medico.llave_de_acceso:
         messages.warning(
             request,
             f'El médico tratante {medico.nombre} es {medico.get_tipo_display()} pero le falta '
-            'DPI o correo registrado: no se le pudo enviar el estudio. Completá sus datos '
+            'correo o llave de acceso (DPI, colegiado u OTP): no se le pudo enviar el estudio. Completá sus datos '
             'desde "Médicos tratantes".',
         )
         return False
@@ -2019,7 +2019,7 @@ def crear_medico_tratante(request):
             cd = form.cleaned_data
             medico = MedicoTratante.objects.create(
                 nombre=cd['nombre'], dpi=cd['dpi'] or None, correo=cd['correo'], tipo=cd['tipo'],
-                acceso_otp=cd['acceso_otp'],
+                acceso_otp=cd['acceso_otp'], numero_colegiado=cd['numero_colegiado'] or None,
             )
             messages.success(request, f'Médico tratante "{medico.nombre}" creado correctamente.')
             return redirect('lista_medicos_tratantes')
@@ -2043,13 +2043,16 @@ def editar_medico_tratante(request, medico_id):
             medico.correo = cd['correo']
             medico.tipo = cd['tipo']
             medico.acceso_otp = cd['acceso_otp']
-            medico.save(update_fields=['nombre', 'dpi', 'correo', 'tipo', 'acceso_otp', 'actualizado_en'])
+            medico.numero_colegiado = cd['numero_colegiado'] or None
+            medico.save(update_fields=[
+                'nombre', 'dpi', 'correo', 'tipo', 'acceso_otp', 'numero_colegiado', 'actualizado_en',
+            ])
             messages.success(request, f'Médico tratante "{medico.nombre}" actualizado correctamente.')
             return redirect('lista_medicos_tratantes')
     else:
         form = MedicoTratanteForm(initial={
             'nombre': medico.nombre, 'dpi': medico.dpi or '', 'correo': medico.correo, 'tipo': medico.tipo,
-            'acceso_otp': medico.acceso_otp,
+            'acceso_otp': medico.acceso_otp, 'numero_colegiado': medico.numero_colegiado or '',
         }, medico_actual=medico)
 
     return render(request, 'pacientes/crear_medico_tratante.html', {
@@ -5517,9 +5520,10 @@ def _visor_medico_con_otp(request, orden, medico, qs):
 
 def visor_estudio_medico_tratante(request):
     """Igual que visor_estudio pero para el médico tratante (correo
-    enviado por enviar_estudio_medico_tratante). Se desbloquea con su DPI o, si
-    el administrador le marcó "acceso con código OTP", con un código de 6 dígitos
-    que se le manda a su correo cada vez que abre el enlace. Una vez que entra, usa
+    enviado por enviar_estudio_medico_tratante). Se desbloquea con su llave de
+    acceso (ver MedicoTratante.llave_de_acceso): un código de 6 dígitos que se le manda
+    a su correo cada vez que abre el enlace (si tiene "acceso con código OTP"), su DPI o,
+    si no tiene DPI, su número de colegiado. Una vez que entra, usa
     el mismo visor_estudio.html y las mismas descargas (visor_imagen/visor_jpg/
     visor_informe_pdf/visor_dicom): todas miran la misma bandera de sesión
     visor_ok_<orden>, sin importar quién la puso ahí."""
@@ -5527,46 +5531,50 @@ def visor_estudio_medico_tratante(request):
     medico = orden.cita.medico_tratante
     if not medico or not medico.recibe_estudios_privados:
         raise Http404
-    if medico.acceso_otp:
-        if not medico.correo:
-            raise Http404
-    elif not medico.dpi:
+    llave = medico.llave_de_acceso
+    if llave is None:
         raise Http404
     _visor_otp_limpiar_si_vencio(request)
     clave_ok = f'visor_ok_{orden.id}'
     clave_intentos = f'visor_intentos_medico_{orden.id}'
     qs = request.META.get('QUERY_STRING', '')
 
-    if medico.acceso_otp and request.session.get(clave_ok) is not True:
+    if request.session.get(clave_ok) is True:
+        return redirect(f'{reverse("visor_estudio")}?{qs}')
+
+    if llave == MedicoTratante.LLAVE_OTP:
         return _visor_medico_con_otp(request, orden, medico, qs)
 
-    if request.session.get(clave_ok) is not True:
-        intentos = request.session.get(clave_intentos, 0)
-        contexto = {'medico': medico, 'query_string': qs}
+    es_colegiado = llave == MedicoTratante.LLAVE_COLEGIADO
+    esperado = (medico.numero_colegiado if es_colegiado else medico.dpi) or ''
+    campo = 'colegiado' if es_colegiado else 'dpi_ultimos'
+    nombre_llave = 'número de colegiado' if es_colegiado else 'DPI'
+    intentos = request.session.get(clave_intentos, 0)
+    contexto = {'medico': medico, 'query_string': qs, 'modo_colegiado': es_colegiado}
+    bloqueado = intentos >= VISOR_MAX_INTENTOS or bool(limitador.LLAVE_MEDICO.espera(orden.id))
 
-        if request.method == 'POST':
-            if intentos >= VISOR_MAX_INTENTOS:
-                contexto['bloqueado'] = True
-                return render(request, 'pacientes/visor_gate.html', contexto)
-            dpi_ingresado = (request.POST.get('dpi_ultimos') or '').strip()
-            if dpi_ingresado and dpi_ingresado == (medico.dpi or ''):
-                request.session[clave_ok] = True
-                # El médico tratante también queda autorizado a navegar todo
-                # el historial clínico de ESTE paciente desde acá, aunque no
-                # haya sido él el médico tratante en esos otros estudios (ver
-                # _historial_clinico/visor_estudio_historial).
-                request.session[f'visor_paciente_ok_{orden.cita.paciente_id}'] = True
-                request.session.pop(clave_intentos, None)
-                return redirect(f'{reverse("visor_estudio")}?{qs}')
-            request.session[clave_intentos] = intentos + 1
-            contexto['error'] = 'El DPI no coincide con el registrado.'
-            contexto['intentos_restantes'] = VISOR_MAX_INTENTOS - (intentos + 1)
+    if request.method == 'POST':
+        if bloqueado:
+            contexto['bloqueado'] = True
             return render(request, 'pacientes/visor_gate.html', contexto)
-
-        contexto['bloqueado'] = intentos >= VISOR_MAX_INTENTOS
+        ingresado = (request.POST.get(campo) or '').strip()
+        if ingresado and constant_time_compare(ingresado, esperado):
+            request.session[clave_ok] = True
+            # El médico tratante también queda autorizado a navegar todo
+            # el historial clínico de ESTE paciente desde acá, aunque no
+            # haya sido él el médico tratante en esos otros estudios (ver
+            # _historial_clinico/visor_estudio_historial).
+            request.session[f'visor_paciente_ok_{orden.cita.paciente_id}'] = True
+            request.session.pop(clave_intentos, None)
+            return redirect(f'{reverse("visor_estudio")}?{qs}')
+        request.session[clave_intentos] = intentos + 1
+        limitador.LLAVE_MEDICO.fallo(orden.id)
+        contexto['error'] = f'El {nombre_llave} no coincide con el registrado.'
+        contexto['intentos_restantes'] = VISOR_MAX_INTENTOS - (intentos + 1)
         return render(request, 'pacientes/visor_gate.html', contexto)
 
-    return redirect(f'{reverse("visor_estudio")}?{qs}')
+    contexto['bloqueado'] = bloqueado
+    return render(request, 'pacientes/visor_gate.html', contexto)
 
 
 def visor_estudio_historial(request, orden_id):

@@ -623,6 +623,17 @@ class MedicoTratanteForm(forms.Form):
             'title': 'El DPI debe tener exactamente 13 dígitos.',
         }),
     )
+    numero_colegiado = forms.CharField(
+        label='Número de colegiado',
+        max_length=10,
+        required=False,
+        widget=forms.TextInput(attrs={
+            'maxlength': 10,
+            'inputmode': 'numeric',
+            'pattern': r'\d{1,10}',
+            'title': 'Solo números (hasta 10 dígitos).',
+        }),
+    )
     correo = forms.EmailField(label='Correo electrónico', required=False)
     tipo = forms.ChoiceField(
         label='Tipo', choices=MedicoTratante.TIPO_CHOICES, required=False,
@@ -654,7 +665,7 @@ class MedicoTratanteForm(forms.Form):
         dpi = (self.cleaned_data.get('dpi') or '').strip()
         if not dpi:
             return ''
-        if not dpi.isdigit() or len(dpi) != 13:
+        if not (dpi.isascii() and dpi.isdigit()) or len(dpi) != 13:
             raise forms.ValidationError('El DPI debe tener exactamente 13 dígitos.')
         duplicado = MedicoTratante.objects.filter(dpi=dpi)
         if self.medico_actual:
@@ -662,6 +673,19 @@ class MedicoTratanteForm(forms.Form):
         if duplicado.exists():
             raise forms.ValidationError('Ya existe un médico tratante con ese DPI.')
         return dpi
+
+    def clean_numero_colegiado(self):
+        numero = (self.cleaned_data.get('numero_colegiado') or '').strip()
+        if not numero:
+            return ''
+        if not (numero.isascii() and numero.isdigit()):
+            raise forms.ValidationError('El número de colegiado debe tener solo números.')
+        duplicado = MedicoTratante.objects.filter(numero_colegiado=numero)
+        if self.medico_actual:
+            duplicado = duplicado.exclude(id=self.medico_actual.id)
+        if duplicado.exists():
+            raise forms.ValidationError('Ya existe un médico tratante con ese número de colegiado.')
+        return numero
 
     def clean_correo(self):
         correo = (self.cleaned_data.get('correo') or '').strip().lower()
@@ -674,12 +698,13 @@ class MedicoTratanteForm(forms.Form):
         cleaned = super().clean()
         usa_otp = cleaned.get('acceso_otp')
         if cleaned.get('tipo') in MedicoTratante.TIPOS_QUE_RECIBEN_ESTUDIO:
-            # Con OTP la llave es el código que llega al correo; sin OTP, el DPI.
-            if not cleaned.get('dpi') and not usa_otp:
+            # Con OTP la llave es el código que llega al correo; sin OTP, el DPI y, si no
+            # tiene DPI, el número de colegiado.
+            if not cleaned.get('dpi') and not cleaned.get('numero_colegiado') and not usa_otp:
                 self.add_error(
                     'dpi',
-                    'El DPI es obligatorio para un médico privado o ambos: es la llave '
-                    'con la que va a entrar a revisar el estudio (o marque el acceso por código OTP).',
+                    'Escriba el DPI o el número de colegiado del médico (es la llave con la que va a '
+                    'entrar a revisar el estudio), o marque el acceso por código OTP.',
                 )
             if not cleaned.get('correo'):
                 self.add_error(
