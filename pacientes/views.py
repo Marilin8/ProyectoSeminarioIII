@@ -1,13 +1,16 @@
 import base64
 import binascii
 import datetime
+import functools
 import os
 import time
 import zipfile
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
+from pathlib import Path
 
 from django import forms
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.files.base import ContentFile
@@ -828,6 +831,18 @@ def enviar_estudio(request, cita_id):
     return redirect('historial_paciente', paciente_id=cita.paciente_id)
 
 
+@functools.lru_cache(maxsize=1)
+def _logo_cime_data_uri():
+    """Logo de CIME como data URI para la hoja del QR. Se incrusta en vez de usar
+    {% static %} para que la hoja no dependa de haber corrido collectstatic.
+    Devuelve '' si el archivo no está (la hoja entonces muestra solo el título)."""
+    ruta = Path(settings.BASE_DIR) / 'static' / 'img' / 'logo_cime.png'
+    try:
+        return 'data:image/png;base64,' + base64.b64encode(ruta.read_bytes()).decode('ascii')
+    except OSError:
+        return ''
+
+
 @login_required
 @user_passes_test(es_recepcionista)
 def qr_estudio(request, cita_id):
@@ -862,8 +877,8 @@ def qr_estudio(request, cita_id):
     return render(request, 'pacientes/qr_estudio.html', {
         'cita': cita,
         'paciente': cita.paciente,
-        'enlace': enlace,
         'qr_data_uri': qr_data_uri(enlace),
+        'logo_data_uri': _logo_cime_data_uri(),
         'volver_url': reverse('historial_paciente', args=[cita.paciente_id]),
     })
 

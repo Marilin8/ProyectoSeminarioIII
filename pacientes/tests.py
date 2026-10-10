@@ -5251,15 +5251,36 @@ class QRResultadosTests(TestCase):
         self.assertIn('/visor/?', mail.outbox[0].body)
         self.assertEqual(mail.outbox[0].alternatives, [])
 
-    def test_la_pantalla_del_qr_muestra_el_qr_y_el_mismo_enlace_del_correo(self):
+    def test_la_pantalla_del_qr_muestra_el_qr_y_codifica_el_mismo_enlace_del_correo(self):
         respuesta = self.client.get(reverse('qr_estudio', args=[self.cita.id]))
 
         self.assertEqual(respuesta.status_code, 200)
         self.assertContains(respuesta, 'data:image/png;base64')
         self.assertContains(respuesta, 'DPI completo')
-        from pacientes.correos import link_visor_paciente
+        from pacientes.correos import link_visor_paciente, qr_data_uri
         self.orden.refresh_from_db()
-        self.assertContains(respuesta, link_visor_paciente(self.orden).replace('&', '&amp;'))
+        # El QR de la hoja es exactamente el del enlace del correo.
+        self.assertEqual(respuesta.context['qr_data_uri'], qr_data_uri(link_visor_paciente(self.orden)))
+
+    def test_la_hoja_del_qr_no_muestra_el_enlace_ni_el_estudio(self):
+        from pacientes.correos import link_visor_paciente
+        respuesta = self.client.get(reverse('qr_estudio', args=[self.cita.id]))
+
+        self.orden.refresh_from_db()
+        enlace = link_visor_paciente(self.orden)
+        self.assertNotContains(respuesta, enlace.replace('&', '&amp;'))
+        self.assertNotContains(respuesta, '/visor/?')
+        self.assertNotContains(respuesta, self.cita.tipo_estudio.nombre)
+        self.assertContains(respuesta, self.paciente.nombre)
+
+    def test_la_hoja_del_qr_lleva_el_logo_de_cime_arriba(self):
+        respuesta = self.client.get(reverse('qr_estudio', args=[self.cita.id]))
+        pagina = respuesta.content.decode()
+
+        self.assertContains(respuesta, 'class="qr-logo"')
+        self.assertTrue(respuesta.context['logo_data_uri'].startswith('data:image/png;base64,'))
+        # el logo va antes que el QR
+        self.assertLess(pagina.index('class="qr-logo"'), pagina.index('Código QR para ver los resultados'))
 
     def test_descargar_el_qr_en_png(self):
         respuesta = self.client.get(reverse('qr_estudio', args=[self.cita.id]), {'formato': 'png'})
