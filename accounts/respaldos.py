@@ -12,7 +12,8 @@ from django.db import connection
 
 from . import cifrado
 
-NOMBRE_VALIDO = re.compile(r'^respaldo_\d{8}_\d{6}(_con_archivos)?\.zip(\.cif)?$')
+PREFIJO_AUTOMATICO = 'auto_'
+NOMBRE_VALIDO = re.compile(r'^(respaldo|auto)_\d{8}_\d{6}(_con_archivos)?\.zip(\.cif)?$')
 LARGO_MINIMO_CLAVE = 16
 TIMEOUT_DUMP_SEGUNDOS = 600
 
@@ -106,7 +107,7 @@ def _volcar_base_de_datos(destino):
         raise ErrorRespaldo(f'mysqldump falló: {detalle[-1] if detalle else "error desconocido"}')
 
 
-def crear_respaldo(incluir_archivos=False, progreso=None):
+def crear_respaldo(incluir_archivos=False, progreso=None, prefijo='respaldo_'):
     """Genera un respaldo en la carpeta de respaldos: un .zip con el volcado SQL
     de la base de datos y, si se pide, la carpeta media/ (imágenes e informes).
     Si hay RESPALDOS_CLAVE en el .env, el .zip se guarda cifrado (.zip.cif) y
@@ -118,7 +119,7 @@ def crear_respaldo(incluir_archivos=False, progreso=None):
 
     clave = clave_de_cifrado()
     ahora = datetime.datetime.now()
-    base = f'respaldo_{ahora:%Y%m%d_%H%M%S}{"_con_archivos" if incluir_archivos else ""}.zip'
+    base = f'{prefijo}{ahora:%Y%m%d_%H%M%S}{"_con_archivos" if incluir_archivos else ""}.zip'
     nombre = base + ('.cif' if clave else '')
     carpeta = carpeta_respaldos()
     final = carpeta / nombre
@@ -169,6 +170,7 @@ def listar_respaldos():
                 'fecha': datetime.datetime.fromtimestamp(info.st_mtime),
                 'con_archivos': '_con_archivos' in ruta.name,
                 'cifrado': ruta.name.endswith('.cif'),
+                'automatico': ruta.name.startswith(PREFIJO_AUTOMATICO),
                 'en_nube': ruta.name in en_nube,
             })
     return sorted(respaldos, key=lambda r: r['fecha'], reverse=True)

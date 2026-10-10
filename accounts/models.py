@@ -509,6 +509,39 @@ class PagoComisionLinea(models.Model):
         unique_together = ('cita', 'rol_en_cita')
 
 
+class EjecucionRespaldoAutomatico(models.Model):
+    """Una fila por día: qué pasó con la copia automática de esa fecha. La fecha es
+    única, así que aunque hubiera dos procesos del servidor solo uno la reclama."""
+
+    ESTADO_EN_CURSO = 'en_curso'
+    ESTADO_OK = 'ok'
+    ESTADO_ERROR = 'error'
+    ESTADO_OMITIDO = 'omitido'
+    ESTADO_CHOICES = [
+        (ESTADO_EN_CURSO, 'En curso'),
+        (ESTADO_OK, 'Correcta'),
+        (ESTADO_ERROR, 'Con error'),
+        (ESTADO_OMITIDO, 'Omitida'),
+    ]
+
+    fecha = models.DateField(unique=True)
+    estado = models.CharField(max_length=10, choices=ESTADO_CHOICES, default=ESTADO_EN_CURSO)
+    intentos = models.PositiveSmallIntegerField(default=1)
+    nombre = models.CharField(max_length=120, blank=True)
+    detalle = models.TextField(blank=True)
+    iniciado_en = models.DateTimeField(auto_now_add=True)
+    terminado_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'ejecuciones_respaldo_automatico'
+        verbose_name = 'ejecución de respaldo automático'
+        verbose_name_plural = 'ejecuciones de respaldo automático'
+        ordering = ['-fecha']
+
+    def __str__(self):
+        return f'{self.fecha:%d/%m/%Y} · {self.get_estado_display()}'
+
+
 class ConexionGoogleDrive(models.Model):
     """Credenciales de la cuenta de Google Drive donde se suben los respaldos
     (una sola por sistema). El client secret y el refresh token se guardan

@@ -2286,3 +2286,606 @@ class EncabezadosDeSeguridadTests(TestCase):
     def test_el_acceso_http_de_la_lan_no_se_redirige(self):
         respuesta = self.client.get(reverse('login'))
         self.assertEqual(respuesta.status_code, 200)
+
+
+class RespaldoAutomaticoBase(TestCase):
+    """Base de las pruebas de copias automáticas: carpeta temporal, volcado simulado y
+    Google Drive simulado."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        from django.test import override_settings
+
+        from accounts import trabajos
+        trabajos.reiniciar()
+        self.addCleanup(trabajos.reiniciar)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.carpeta = Path(self._tmp.name) / 'respaldos'
+        self.carpeta.mkdir()
+        configuracion = override_settings(
+            BACKUP_DIR=self.carpeta, MEDIA_ROOT=Path(self._tmp.name) / 'media', RESPALDOS_CLAVE='',
+            RESPALDOS_AUTOMATICOS_CONSERVAR=6, RESPALDOS_AUTOMATICOS_INCLUYEN_ARCHIVOS=False,
+        )
+        configuracion.enable()
+        self.addCleanup(configuracion.disable)
+        parche = mock.patch(
+            'accounts.respaldos._volcar_base_de_datos', side_effect=lambda d: d.write_text('-- x'),
+        )
+        parche.start()
+        self.addCleanup(parche.stop)
+        self.admin = crear_usuario('admin_auto', rol=Usuario.ROL_ADMINISTRADOR)
+        self.client.force_login(self.admin)
+
+    # --- ayudas ---
+    def _nombre_auto(self, dia, cifrado=False):
+        return f'auto_202609{dia:02d}_000000.zip' + ('.cif' if cifrado else '')
+
+    def _crear_archivo(self, nombre, drive_id=None):
+        from accounts.models import RespaldoEnNube
+        (self.carpeta / nombre).write_bytes(b'zip')
+        if drive_id:
+            RespaldoEnNube.objects.create(nombre=nombre, drive_file_id=drive_id)
+
+    def _conectar_drive(self):
+        from accounts import nube
+        from accounts.models import ConexionGoogleDrive
+        return ConexionGoogleDrive.objects.create(
+            client_id='cid', client_secret_cifrado=nube.cifrar('s'), refresh_token_cifrado=nube.cifrar('r'),
+            carpeta_id='carpeta1', correo_cuenta='clinica@gmail.com',
+        )
+
+    def _drive_simulado(self):
+        """Parchea las llamadas a Google; devuelve (subir, borrar)."""
+        from unittest import mock
+        patches = [
+            mock.patch('accounts.nube.token_de_acceso', return_value='acceso'),
+            mock.patch('accounts.nube.subir_archivo', side_effect=lambda t, ruta, c: f'drive-{ruta.name}'),
+            mock.patch('accounts.nube.borrar_archivo'),
+        ]
+        dobles = [p.start() for p in patches]
+        for p in patches:
+            self.addCleanup(p.stop)
+        return dobles[1], dobles[2]
+
+    def _auto_en_disco(self):
+        return sorted(p.name for p in self.carpeta.glob('auto_*'))
+
+
+class RotacionDeCopiasAutomaticasTests(RespaldoAutomaticoBase):
+    def test_los_nombres_automaticos_son_validos_y_distintos_de_los_manuales(self):
+        from accounts import respaldos
+        for nombre in ('auto_20261010_000001.zip', 'auto_20261010_000001_con_archivos.zip.cif'):
+            self.assertTrue(respaldos.NOMBRE_VALIDO.match(nombre), nombre)
+        for nombre in ('auto_x.zip', 'automatico_20261010_000001.zip', 'auto_20261010_000001.exe', '../auto_20261010_000001.zip'):
+            self.assertFalse(respaldos.NOMBRE_VALIDO.match(nombre), nombre)
+
+    def test_crear_respaldo_con_prefijo_automatico(self):
+        from accounts import respaldos
+        nombre = respaldos.crear_respaldo(prefijo=respaldos.PREFIJO_AUTOMATICO)
+        self.assertTrue(nombre.startswith('auto_'))
+        self.assertTrue((self.carpeta / nombre).is_file())
+        self.assertTrue(next(r for r in respaldos.listar_respaldos() if r['nombre'] == nombre)['automatico'])
+
+    def test_deja_las_seis_mas_nuevas_y_borra_la_mas_antigua_en_el_servidor_y_en_drive(self):
+        from accounts import respaldo_automatico
+        from accounts.models import RespaldoEnNube
+        self._conectar_drive()
+        _subir, borrar = self._drive_simulado()
+        for dia in range(1, 8):
+            self._crear_archivo(self._nombre_auto(dia), drive_id=f'id{dia}')
+
+        resultado = respaldo_automatico.aplicar_retencion()
+
+        self.assertEqual(resultado['eliminados'], [self._nombre_auto(1)])
+        self.assertEqual(self._auto_en_disco(), [self._nombre_auto(d) for d in range(2, 8)])
+        borrar.assert_called_once()
+        self.assertEqual(borrar.call_args.args, ('acceso', 'id1'))
+        self.assertFalse(RespaldoEnNube.objects.filter(nombre=self._nombre_auto(1)).exists())
+        self.assertEqual(RespaldoEnNube.objects.count(), 6)
+
+    def test_con_seis_o_menos_no_se_borra_nada(self):
+        from accounts import respaldo_automatico
+        for dia in range(1, 7):
+            self._crear_archivo(self._nombre_auto(dia))
+
+        resultado = respaldo_automatico.aplicar_retencion()
+
+        self.assertEqual(resultado, {'eliminados': [], 'fallos': []})
+        self.assertEqual(len(self._auto_en_disco()), 6)
+
+    def test_las_copias_manuales_nunca_se_borran_ni_cuentan(self):
+        from accounts import respaldo_automatico
+        from accounts.models import RespaldoEnNube
+        self._conectar_drive()
+        _subir, borrar = self._drive_simulado()
+        for numero in range(1, 11):
+            self._crear_archivo(f'respaldo_2026080{numero % 9 + 1}_0{numero:02d}000.zip'.replace('_0', '_1', 1)
+                                if False else f'respaldo_20260801_{numero:06d}.zip', drive_id=f'manual{numero}')
+        for dia in range(1, 8):
+            self._crear_archivo(self._nombre_auto(dia), drive_id=f'id{dia}')
+
+        respaldo_automatico.aplicar_retencion()
+
+        manuales = sorted(p.name for p in self.carpeta.glob('respaldo_*'))
+        self.assertEqual(len(manuales), 10)
+        self.assertEqual(RespaldoEnNube.objects.filter(nombre__startswith='respaldo_').count(), 10)
+        ids_borrados = [c.args[1] for c in borrar.call_args_list]
+        self.assertEqual(ids_borrados, ['id1'])
+
+    def test_cuenta_juntas_las_copias_del_servidor_y_las_de_drive(self):
+        """Si alguien borró un archivo local pero sigue en Drive, igual cuenta y se rota."""
+        from accounts import respaldo_automatico
+        from accounts.models import RespaldoEnNube
+        self._conectar_drive()
+        _subir, borrar = self._drive_simulado()
+        RespaldoEnNube.objects.create(nombre=self._nombre_auto(1), drive_file_id='solo-en-drive')
+        for dia in range(2, 8):
+            self._crear_archivo(self._nombre_auto(dia), drive_id=f'id{dia}')
+
+        resultado = respaldo_automatico.aplicar_retencion()
+
+        self.assertEqual(resultado['eliminados'], [self._nombre_auto(1)])
+        self.assertEqual(borrar.call_args.args, ('acceso', 'solo-en-drive'))
+        self.assertEqual(len(self._auto_en_disco()), 6)
+
+    def test_ordena_por_la_fecha_del_nombre_y_no_por_la_fecha_del_archivo(self):
+        import os
+
+        from accounts import respaldo_automatico
+        for dia in range(1, 8):
+            self._crear_archivo(self._nombre_auto(dia))
+        # el archivo más antiguo por nombre es el más reciente en disco
+        os.utime(self.carpeta / self._nombre_auto(1), (4_000_000_000, 4_000_000_000))
+
+        respaldo_automatico.aplicar_retencion()
+
+        self.assertNotIn(self._nombre_auto(1), self._auto_en_disco())
+
+    def test_si_drive_falla_al_borrar_se_conserva_todo_y_se_reintenta_despues(self):
+        from accounts import respaldo_automatico
+        from accounts.models import RespaldoEnNube
+        from accounts.nube import ErrorNube
+        self._conectar_drive()
+        _subir, borrar = self._drive_simulado()
+        for dia in range(1, 8):
+            self._crear_archivo(self._nombre_auto(dia), drive_id=f'id{dia}')
+        borrar.side_effect = ErrorNube('sin red')
+
+        resultado = respaldo_automatico.aplicar_retencion()
+
+        self.assertEqual(resultado['eliminados'], [])
+        self.assertIn('Google Drive', resultado['fallos'][0])
+        self.assertTrue(RespaldoEnNube.objects.filter(nombre=self._nombre_auto(1)).exists())
+
+        borrar.side_effect = None
+        resultado = respaldo_automatico.aplicar_retencion()
+        self.assertEqual(resultado['eliminados'], [self._nombre_auto(1)])
+        self.assertEqual(len(self._auto_en_disco()), 6)
+
+    def test_un_archivo_en_uso_no_revienta_y_se_reintenta(self):
+        from unittest import mock
+
+        from accounts import respaldo_automatico
+        for dia in range(1, 8):
+            self._crear_archivo(self._nombre_auto(dia))
+
+        with mock.patch('pathlib.Path.unlink', side_effect=PermissionError('en uso')):
+            resultado = respaldo_automatico.aplicar_retencion()
+
+        self.assertEqual(resultado['eliminados'], [])
+        self.assertIn('en el servidor', resultado['fallos'][0])
+        self.assertEqual(len(self._auto_en_disco()), 7)
+        self.assertEqual(respaldo_automatico.aplicar_retencion()['eliminados'], [self._nombre_auto(1)])
+
+    def test_sin_drive_conectado_igual_rota_lo_local(self):
+        from accounts import respaldo_automatico
+        for dia in range(1, 8):
+            self._crear_archivo(self._nombre_auto(dia))
+
+        resultado = respaldo_automatico.aplicar_retencion()
+
+        self.assertEqual(resultado['eliminados'], [self._nombre_auto(1)])
+        self.assertEqual(len(self._auto_en_disco()), 6)
+
+    def test_el_limite_se_puede_cambiar_en_la_configuracion(self):
+        from django.test import override_settings
+
+        from accounts import respaldo_automatico
+        for dia in range(1, 6):
+            self._crear_archivo(self._nombre_auto(dia))
+
+        with override_settings(RESPALDOS_AUTOMATICOS_CONSERVAR=3):
+            respaldo_automatico.aplicar_retencion()
+
+        self.assertEqual(self._auto_en_disco(), [self._nombre_auto(d) for d in (3, 4, 5)])
+
+
+class CrearCopiaAutomaticaTests(RespaldoAutomaticoBase):
+    def test_la_septima_copia_borra_la_primera_y_sube_la_nueva(self):
+        from accounts import respaldo_automatico
+        from accounts.models import RespaldoEnNube
+        self._conectar_drive()
+        subir, borrar = self._drive_simulado()
+        for dia in range(1, 7):
+            self._crear_archivo(self._nombre_auto(dia), drive_id=f'id{dia}')
+        self._crear_archivo('respaldo_20260801_000000.zip', drive_id='manual')
+
+        resumen = respaldo_automatico.ejecutar()
+
+        self.assertTrue(resumen['nombre'].startswith('auto_'))
+        self.assertTrue(resumen['subida_ok'])
+        self.assertEqual(resumen['eliminados'], [self._nombre_auto(1)])
+        self.assertEqual(len(self._auto_en_disco()), 6)
+        self.assertIn(resumen['nombre'], self._auto_en_disco())
+        self.assertNotIn(self._nombre_auto(1), self._auto_en_disco())
+        self.assertTrue(RespaldoEnNube.objects.filter(nombre=resumen['nombre']).exists())
+        self.assertEqual(borrar.call_args.args[1], 'id1')
+        self.assertEqual(subir.call_args.args[2], 'carpeta1')
+        self.assertTrue((self.carpeta / 'respaldo_20260801_000000.zip').exists())
+        self.assertTrue(RespaldoEnNube.objects.filter(nombre='respaldo_20260801_000000.zip').exists())
+        self.assertIn('Se borró la más antigua', resumen['texto'])
+        self.assertTrue(Bitacora.objects.filter(
+            accion=Bitacora.ACCION_CREAR_RESPALDO, descripcion__contains='Copia automática creada',
+        ).exists())
+
+    def test_sin_drive_la_copia_queda_en_el_servidor_y_se_avisa(self):
+        from accounts import respaldo_automatico
+
+        resumen = respaldo_automatico.ejecutar()
+
+        self.assertFalse(resumen['subida_ok'])
+        self.assertIn('No se pudo subir a Google Drive', resumen['texto'])
+        self.assertEqual(len(self._auto_en_disco()), 1)
+
+    def test_si_falla_la_subida_a_drive_no_se_pierde_la_copia(self):
+        from accounts import respaldo_automatico
+        from accounts.nube import ErrorNube
+        self._conectar_drive()
+        subir, _borrar = self._drive_simulado()
+        subir.side_effect = ErrorNube('sin red')
+
+        resumen = respaldo_automatico.ejecutar()
+
+        self.assertFalse(resumen['subida_ok'])
+        self.assertEqual(len(self._auto_en_disco()), 1)
+
+    def test_si_no_se_puede_crear_la_copia_no_se_borra_nada(self):
+        from unittest import mock
+
+        from accounts import respaldo_automatico
+        from accounts.respaldos import ErrorRespaldo
+        for dia in range(1, 8):
+            self._crear_archivo(self._nombre_auto(dia))
+
+        with mock.patch('accounts.respaldos._volcar_base_de_datos', side_effect=ErrorRespaldo('mysqldump falló')):
+            with self.assertRaises(ErrorRespaldo):
+                respaldo_automatico.ejecutar()
+
+        self.assertEqual(len(self._auto_en_disco()), 7)
+
+    def test_reintenta_subir_las_copias_que_se_quedaron_sin_subir(self):
+        from accounts import respaldo_automatico
+        from accounts.models import RespaldoEnNube
+        self._conectar_drive()
+        subir, _borrar = self._drive_simulado()
+        self._crear_archivo(self._nombre_auto(5))  # quedó sin subir en una corrida anterior
+
+        respaldo_automatico.ejecutar()
+
+        self.assertTrue(RespaldoEnNube.objects.filter(nombre=self._nombre_auto(5)).exists())
+        self.assertEqual(subir.call_count, 2)
+
+    def test_el_progreso_avanza_sin_retroceder_y_llega_a_cien(self):
+        from accounts import respaldo_automatico
+        pasos = []
+
+        respaldo_automatico.ejecutar(lambda p, e: pasos.append(p))
+
+        self.assertEqual(pasos, sorted(pasos))
+        self.assertEqual(pasos[-1], 100)
+
+    def test_incluye_las_imagenes_si_asi_esta_configurado(self):
+        import zipfile
+        from pathlib import Path
+
+        from django.test import override_settings
+
+        from accounts import respaldo_automatico
+        media = Path(self._tmp.name) / 'media'
+        (media / 'estudios').mkdir(parents=True)
+        (media / 'estudios' / 'rx.jpg').write_bytes(b'imagen')
+
+        with override_settings(RESPALDOS_AUTOMATICOS_INCLUYEN_ARCHIVOS=True):
+            resumen = respaldo_automatico.ejecutar()
+
+        self.assertIn('_con_archivos', resumen['nombre'])
+        with zipfile.ZipFile(self.carpeta / resumen['nombre']) as zf:
+            self.assertIn('media/estudios/rx.jpg', zf.namelist())
+
+    def test_el_comando_crea_una_copia_automatica(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        call_command('respaldo_automatico', '--sin-archivos', stdout=StringIO())
+
+        self.assertEqual(len(self._auto_en_disco()), 1)
+
+
+class ProgramadorDeCopiasTests(RespaldoAutomaticoBase):
+    """Una copia por día, a partir de las 00:00 hora de Guatemala."""
+
+    def _ahora(self, **delta):
+        import datetime
+
+        from django.utils import timezone
+        return timezone.now() + datetime.timedelta(**delta)
+
+    def _reloj(self, ahora):
+        """Congela django.utils.timezone.now: la tarea estampa la hora con ese reloj."""
+        from unittest import mock
+        return mock.patch('django.utils.timezone.now', return_value=ahora)
+
+    def test_la_primera_vez_no_hace_una_copia_pesada_en_pleno_dia(self):
+        from accounts import programador
+        from accounts.models import EjecucionRespaldoAutomatico as Ejecucion
+
+        self.assertIsNone(programador.revisar())
+
+        self.assertEqual(self._auto_en_disco(), [])
+        self.assertEqual(Ejecucion.objects.get().estado, Ejecucion.ESTADO_OMITIDO)
+
+    def test_al_cambiar_de_dia_crea_la_copia_y_la_registra(self):
+        from accounts import programador
+        from accounts.models import EjecucionRespaldoAutomatico as Ejecucion
+        programador.revisar()
+
+        pk = programador.revisar(self._ahora(days=1))
+
+        self.assertIsNotNone(pk)
+        ejecucion = Ejecucion.objects.get(pk=pk)
+        self.assertEqual(ejecucion.estado, Ejecucion.ESTADO_OK)
+        self.assertTrue(ejecucion.nombre.startswith('auto_'))
+        self.assertEqual(len(self._auto_en_disco()), 1)
+
+    def test_no_hace_dos_copias_el_mismo_dia(self):
+        from accounts import programador
+        programador.revisar()
+        manana = self._ahora(days=1)
+        programador.revisar(manana)
+
+        self.assertIsNone(programador.revisar(manana))
+        self.assertIsNone(programador.revisar(manana + __import__('datetime').timedelta(hours=5)))
+
+        self.assertEqual(len(self._auto_en_disco()), 1)
+
+    def test_corre_justo_pasada_la_medianoche_hora_de_guatemala(self):
+        import datetime
+        from zoneinfo import ZoneInfo
+
+        from accounts import programador
+        from accounts.models import EjecucionRespaldoAutomatico as Ejecucion
+        guate = ZoneInfo('America/Guatemala')
+        Ejecucion.objects.create(
+            fecha=datetime.date(2026, 10, 10), estado=Ejecucion.ESTADO_OK, intentos=1,
+        )
+
+        antes = datetime.datetime(2026, 10, 10, 23, 59, 30, tzinfo=guate)
+        despues = datetime.datetime(2026, 10, 11, 0, 0, 30, tzinfo=guate)
+
+        self.assertIsNone(programador.revisar(antes))
+        self.assertIsNotNone(programador.revisar(despues))
+        self.assertEqual(Ejecucion.objects.get(fecha=datetime.date(2026, 10, 11)).estado, Ejecucion.ESTADO_OK)
+
+    def test_si_el_servidor_estaba_apagado_a_medianoche_la_hace_al_volver(self):
+        from accounts import programador
+        programador.revisar()
+        tarde = self._ahora(days=2, hours=9)
+
+        self.assertIsNotNone(programador.revisar(tarde))
+
+    def test_un_fallo_se_registra_y_se_reintenta_despues_de_30_minutos_hasta_3_veces(self):
+        import datetime
+        from unittest import mock
+
+        from accounts import programador
+        from accounts.models import EjecucionRespaldoAutomatico as Ejecucion
+        programador.revisar()
+        manana = self._ahora(days=1)
+
+        def en(minutos):
+            return self._reloj(manana + datetime.timedelta(minutes=minutos))
+
+        with mock.patch('accounts.respaldo_automatico.ejecutar', side_effect=RuntimeError('disco lleno')):
+            with en(0):
+                pk = programador.revisar(manana)
+            ejecucion = Ejecucion.objects.get(pk=pk)
+            self.assertEqual(ejecucion.estado, Ejecucion.ESTADO_ERROR)
+            self.assertIn('disco lleno', ejecucion.detalle)
+            self.assertEqual(ejecucion.intentos, 1)
+
+            with en(10):
+                self.assertIsNone(programador.revisar(manana + datetime.timedelta(minutes=10)))  # muy pronto
+            with en(40):
+                self.assertIsNotNone(programador.revisar(manana + datetime.timedelta(minutes=40)))
+            self.assertEqual(Ejecucion.objects.get(pk=pk).intentos, 2)
+            with en(90):
+                self.assertIsNotNone(programador.revisar(manana + datetime.timedelta(minutes=90)))
+            self.assertEqual(Ejecucion.objects.get(pk=pk).intentos, 3)
+            with en(200):
+                self.assertIsNone(programador.revisar(manana + datetime.timedelta(minutes=200)))  # tope del día
+
+        self.assertEqual(Ejecucion.objects.get(pk=pk).intentos, 3)
+    def test_tras_un_fallo_el_reintento_puede_salir_bien(self):
+        import datetime
+        from unittest import mock
+
+        from accounts import programador
+        from accounts.models import EjecucionRespaldoAutomatico as Ejecucion
+        programador.revisar()
+        manana = self._ahora(days=1)
+        with mock.patch('accounts.respaldo_automatico.ejecutar', side_effect=RuntimeError('x')):
+            with self._reloj(manana):
+                pk = programador.revisar(manana)
+
+        mas_tarde = manana + datetime.timedelta(minutes=40)
+        with self._reloj(mas_tarde):
+            programador.revisar(mas_tarde)
+
+        self.assertEqual(Ejecucion.objects.get(pk=pk).estado, Ejecucion.ESTADO_OK)
+        self.assertEqual(len(self._auto_en_disco()), 1)
+    def test_una_ejecucion_en_curso_perdida_por_un_reinicio_se_retoma(self):
+        import datetime
+
+        from django.utils import timezone
+
+        from accounts import programador
+        from accounts.models import EjecucionRespaldoAutomatico as Ejecucion
+        # Hay historial, y la copia de hoy quedó "en curso" hace 5 horas (el servidor se reinició).
+        Ejecucion.objects.create(fecha=timezone.localdate() - datetime.timedelta(days=1), estado=Ejecucion.ESTADO_OK)
+        ejecucion = Ejecucion.objects.create(fecha=timezone.localdate(), estado=Ejecucion.ESTADO_EN_CURSO)
+        Ejecucion.objects.filter(pk=ejecucion.pk).update(iniciado_en=self._ahora(hours=-5))
+
+        self.assertIsNotNone(programador.revisar())
+
+        ejecucion.refresh_from_db()
+        self.assertEqual(ejecucion.estado, Ejecucion.ESTADO_OK)
+        self.assertEqual(ejecucion.intentos, 2)
+    def test_una_ejecucion_en_curso_reciente_no_se_duplica(self):
+        import datetime
+
+        from django.utils import timezone
+
+        from accounts import programador
+        from accounts.models import EjecucionRespaldoAutomatico as Ejecucion
+        Ejecucion.objects.create(fecha=timezone.localdate() - datetime.timedelta(days=1), estado=Ejecucion.ESTADO_OK)
+        Ejecucion.objects.create(fecha=timezone.localdate(), estado=Ejecucion.ESTADO_EN_CURSO)  # recién empezó
+
+        self.assertIsNone(programador.revisar())
+        self.assertEqual(self._auto_en_disco(), [])
+    def test_si_hay_otro_trabajo_en_curso_espera_sin_gastar_un_intento(self):
+        from unittest import mock
+
+        from accounts import programador
+        from accounts.models import EjecucionRespaldoAutomatico as Ejecucion
+        programador.revisar()
+        manana = self._ahora(days=1)
+
+        with mock.patch('accounts.trabajos.iniciar', return_value=False):
+            self.assertIsNone(programador.revisar(manana))
+
+        self.assertEqual(Ejecucion.objects.count(), 1)  # solo la de "omitido" de hoy
+        self.assertIsNotNone(programador.revisar(manana))  # y al liberarse, sí corre
+
+    def test_el_hilo_solo_arranca_si_las_copias_automaticas_estan_activadas(self):
+        from unittest import mock
+
+        from django.test import override_settings
+
+        from accounts import programador
+        with mock.patch('accounts.programador.threading.Thread') as hilo:
+            with override_settings(RESPALDOS_AUTOMATICOS=False):
+                self.assertFalse(programador.iniciar())
+            hilo.assert_not_called()
+            with override_settings(RESPALDOS_AUTOMATICOS=True):
+                hilo.return_value.is_alive.return_value = False
+                self.assertTrue(programador.iniciar())
+                hilo.return_value.is_alive.return_value = True
+                self.assertFalse(programador.iniciar())  # no se duplica
+            hilo.return_value.start.assert_called_once()
+        programador._hilo = None
+
+
+class PantallaCopiasAutomaticasTests(RespaldoAutomaticoBase):
+    def test_la_tarjeta_explica_el_horario_el_limite_y_que_las_manuales_no_se_borran(self):
+        from django.test import override_settings
+        with override_settings(RESPALDOS_AUTOMATICOS=True):
+            pagina = self.client.get(reverse('respaldos'))
+
+        self.assertContains(pagina, 'Copias automáticas')
+        self.assertContains(pagina, 'Activadas')
+        self.assertContains(pagina, '00:00')
+        self.assertContains(pagina, 'últimas <strong>6</strong>')
+        self.assertContains(pagina, 'no se borran solas')
+
+    def test_avisa_cuando_estan_desactivadas(self):
+        pagina = self.client.get(reverse('respaldos'))
+
+        self.assertContains(pagina, 'Desactivadas')
+
+    def test_avisa_si_google_drive_no_esta_conectado(self):
+        from django.test import override_settings
+        with override_settings(RESPALDOS_AUTOMATICOS=True):
+            self.assertContains(self.client.get(reverse('respaldos')), 'solo se guardan en este equipo')
+            self._conectar_drive()
+            self.assertNotContains(self.client.get(reverse('respaldos')), 'solo se guardan en este equipo')
+
+    def test_muestra_la_ultima_ejecucion_y_su_resultado(self):
+        import datetime
+
+        from django.test import override_settings
+        from django.utils import timezone
+
+        from accounts.models import EjecucionRespaldoAutomatico as Ejecucion
+        ayer = timezone.localdate() - datetime.timedelta(days=1)
+        Ejecucion.objects.create(fecha=ayer, estado=Ejecucion.ESTADO_ERROR, detalle='Disco lleno')
+        with override_settings(RESPALDOS_AUTOMATICOS=True):
+            pagina = self.client.get(reverse('respaldos'))
+
+        self.assertContains(pagina, 'con error')
+        self.assertContains(pagina, 'Disco lleno')
+
+    def test_la_tabla_marca_las_automaticas(self):
+        self._crear_archivo(self._nombre_auto(3))
+        self._crear_archivo('respaldo_20260801_000000.zip')
+
+        pagina = self.client.get(reverse('respaldos'))
+
+        self.assertContains(pagina, 'Automático', count=1)
+
+    def test_un_administrador_puede_eliminar_a_mano_una_automatica(self):
+        self._crear_archivo(self._nombre_auto(3))
+
+        self.client.post(reverse('eliminar_respaldo', args=[self._nombre_auto(3)]))
+
+        self.assertEqual(self._auto_en_disco(), [])
+
+
+class BorrarArchivoDeDriveTests(TestCase):
+    def test_hace_un_delete_con_el_token_y_el_id_del_archivo(self):
+        from unittest import mock
+
+        from accounts import nube
+        with mock.patch('accounts.nube.urllib.request.urlopen') as abrir:
+            abrir.return_value.__enter__.return_value = mock.Mock()
+            nube.borrar_archivo('mi-token', 'abc123')
+
+        peticion = abrir.call_args.args[0]
+        self.assertEqual(peticion.get_method(), 'DELETE')
+        self.assertTrue(peticion.full_url.endswith('/files/abc123'))
+        self.assertEqual(peticion.get_header('Authorization'), 'Bearer mi-token')
+
+    def test_si_el_archivo_ya_no_existe_no_es_error(self):
+        import urllib.error
+        from io import BytesIO
+        from unittest import mock
+
+        from accounts import nube
+        error = urllib.error.HTTPError('u', 404, 'No', {}, BytesIO(b'{}'))
+        with mock.patch('accounts.nube.urllib.request.urlopen', side_effect=error):
+            nube.borrar_archivo('t', 'ya-borrado')  # no lanza
+
+    def test_otros_errores_si_se_informan(self):
+        import urllib.error
+        from io import BytesIO
+        from unittest import mock
+
+        from accounts import nube
+        error = urllib.error.HTTPError('u', 403, 'No', {}, BytesIO(b'{"error": {"message": "sin permiso"}}'))
+        with mock.patch('accounts.nube.urllib.request.urlopen', side_effect=error):
+            with self.assertRaisesMessage(nube.ErrorNube, 'sin permiso'):
+                nube.borrar_archivo('t', 'x')

@@ -140,6 +140,50 @@
         </div>
     </div>
 
+    <div class="card mb-2">
+        <div class="card-body">
+            <h3 style="margin:0 0 0.4rem;">Copias automáticas</h3>
+            {% if auto.activo %}
+                <p style="margin:0 0 0.5rem;font-size:0.9rem;">
+                    <span class="badge" style="background:#dcfce7;color:#15803d;">Activadas</span>
+                    Todos los días a las <strong>00:00</strong> el sistema crea solo una copia de la base de datos
+                    {% if auto.incluye_archivos %}y de las imágenes e informes{% endif %}
+                    {% if auto.drive_conectado %}y la sube a Google Drive{% endif %}.
+                </p>
+                <p style="margin:0 0 0.5rem;font-size:0.85rem;color:var(--text-muted);">
+                    Se conservan las últimas <strong>{{ auto.conservar }}</strong>: al crearse la
+                    {{ auto.conservar|add:1 }}.ª se borra la más antigua (en este equipo y en Drive).
+                    Las copias que usted crea a mano <strong>no se borran solas</strong>.
+                    Ahora hay {{ auto.cantidad }} automática{{ auto.cantidad|pluralize }}.
+                </p>
+                {% if not auto.drive_conectado %}
+                    <p style="margin:0 0 0.5rem;font-size:0.85rem;color:#b45309;">
+                        Google Drive no está conectado: las copias automáticas solo se guardan en este equipo.
+                    </p>
+                {% endif %}
+                <p style="margin:0;font-size:0.85rem;color:var(--text-muted);">
+                    Próxima: <strong>{{ auto.proxima|date:'d/m/Y H:i' }}</strong>
+                    {% if auto.ultima %}
+                        · Última: {{ auto.ultima.fecha|date:'d/m/Y' }},
+                        {% if auto.ultima.estado == 'ok' %}
+                            <span style="color:#15803d;">correcta</span>
+                        {% elif auto.ultima.estado == 'error' %}
+                            <span style="color:#dc2626;">con error</span>
+                            {% if auto.ultima.detalle %}({{ auto.ultima.detalle|truncatechars:140 }}){% endif %}
+                        {% else %}
+                            {{ auto.ultima.get_estado_display|lower }}
+                        {% endif %}
+                    {% endif %}
+                </p>
+            {% else %}
+                <p style="margin:0;font-size:0.9rem;color:var(--text-muted);">
+                    <span class="badge" style="background:#fef3c7;color:#b45309;">Desactivadas</span>
+                    Las copias automáticas están apagadas (<code>RESPALDOS_AUTOMATICOS</code> en el archivo .env).
+                </p>
+            {% endif %}
+        </div>
+    </div>
+
     <div class="card">
         <div class="card-body" style="padding:0;overflow-x:auto;">
             {% if respaldos %}
@@ -159,6 +203,7 @@
                                 <td>{{ r.nombre }}</td>
                                 <td>
                                     {% if r.con_archivos %}Base de datos + archivos{% else %}Solo base de datos{% endif %}
+                                    {% if r.automatico %}<br><span class="badge" style="background:#fef3c7;color:#92400e;">Automático</span>{% endif %}
                                     {% if r.cifrado %}<br><span class="badge" style="background:#dcfce7;color:#15803d;">Cifrado</span>{% endif %}
                                     {% if r.en_nube %}<br><span class="badge" style="background:#dbeafe;color:#1d4ed8;">En Google Drive</span>{% endif %}
                                 </td>

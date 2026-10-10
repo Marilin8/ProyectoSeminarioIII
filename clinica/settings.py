@@ -227,6 +227,15 @@ RESPALDOS_CLAVE = config('RESPALDOS_CLAVE', default='')
 # progreso; las pruebas lo apagan para que todo ocurra dentro de la petición.
 RESPALDOS_EN_SEGUNDO_PLANO = True
 
+# Copia automática diaria a las 00:00 (base de datos + imágenes e informes), subida a Google Drive.
+# Se conservan solo las últimas N automáticas (la N+1 borra la más antigua, en el servidor y en
+# Drive); las copias que el administrador crea a mano nunca se borran solas.
+RESPALDOS_AUTOMATICOS = config('RESPALDOS_AUTOMATICOS', default=True, cast=bool)
+RESPALDOS_AUTOMATICOS_CONSERVAR = config('RESPALDOS_AUTOMATICOS_CONSERVAR', default=6, cast=int)
+RESPALDOS_AUTOMATICOS_INCLUYEN_ARCHIVOS = config(
+    'RESPALDOS_AUTOMATICOS_INCLUYEN_ARCHIVOS', default=True, cast=bool,
+)
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 

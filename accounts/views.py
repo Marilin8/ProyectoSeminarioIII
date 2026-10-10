@@ -35,7 +35,7 @@ from .forms import (
     PerfilForm,
     RegistrarPagoForm,
 )
-from . import limitador
+from . import limitador, respaldo_automatico
 from . import nube as servicio_nube
 from . import respaldos as servicio_respaldos
 from . import tareas_respaldo, trabajos
@@ -1040,6 +1040,7 @@ def respaldos(request):
         'cifrado_activo': bool((getattr(settings, 'RESPALDOS_CLAVE', '') or '').strip()),
         'uri_redireccion': servicio_nube.uri_de_redireccion(),
         'trabajo': trabajos.estado(),
+        'auto': respaldo_automatico.estado_para_pantalla(),
     })
 
 

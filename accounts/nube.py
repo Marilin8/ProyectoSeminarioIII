@@ -200,6 +200,24 @@ def _pedir_json_con_cabeceras(url, datos, token):
     return ubicacion
 
 
+def borrar_archivo(token, file_id):
+    """Borra de Google Drive un archivo creado por esta aplicación (el alcance
+    drive.file solo permite tocar lo que ella creó). Si ya no existe, no es error."""
+    peticion = urllib.request.Request(
+        f'{DRIVE_URL}/files/{urllib.parse.quote(file_id, safe="")}',
+        headers={'Authorization': f'Bearer {token}'}, method='DELETE',
+    )
+    try:
+        with urllib.request.urlopen(peticion, timeout=TIMEOUT_SEGUNDOS):
+            return
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return
+        raise ErrorNube(_mensaje_de_error(error.read(), error.code))
+    except (urllib.error.URLError, OSError) as error:
+        raise ErrorNube(f'no se pudo conectar con Google ({getattr(error, "reason", error)})')
+
+
 def revocar(token):
     try:
         url = TOKEN_URL.replace('/token', '/revoke') + '?' + urlencode({'token': token})

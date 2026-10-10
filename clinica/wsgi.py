@@ -14,3 +14,9 @@ from django.core.wsgi import get_wsgi_application
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'clinica.settings')
 
 application = get_wsgi_application()
+
+# El servidor de producción (Waitress) carga este módulo una sola vez: acá arranca el hilo que
+# crea la copia de seguridad automática de cada día (ver accounts/programador.py).
+from accounts import programador  # noqa: E402
+
+programador.iniciar()
