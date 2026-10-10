@@ -7,7 +7,7 @@ hay un % de comisión guardado -- el administrador ve cuántas citas refirió
 el médico y cuánto suman, y decide a mano cuánto pagarle según el contrato
 que tenga (ver PagoComisionMedicoTratante)."""
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from .models import Cita
 
@@ -52,3 +52,24 @@ def resumen(citas):
     citas = list(citas)
     total = sum((c.precio for c in citas), Decimal('0.00'))
     return {'citas': citas, 'cantidad': len(citas), 'total': total}
+
+
+def parsear_porcentaje(texto):
+    """Porcentaje escrito por el administrador ("10", "7.5", "7,5"). Devuelve un
+    Decimal entre 0.01 y 100, o None si está vacío o no es válido (negativo, cero,
+    mayor a 100, texto, NaN, Infinity)."""
+    texto = (texto or '').strip().replace(',', '.')
+    if not texto:
+        return None
+    try:
+        valor = Decimal(texto)
+    except InvalidOperation:
+        return None
+    if not valor.is_finite() or valor <= 0 or valor > 100:
+        return None
+    return valor.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+
+def calcular_comision(total, porcentaje):
+    """Comisión = total referido x porcentaje / 100, redondeada al centavo."""
+    return (total * porcentaje / Decimal('100')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)

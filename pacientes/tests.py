@@ -5027,6 +5027,108 @@ class ComisionMedicoTratanteTests(TestCase):
 
         self.assertNotEqual(respuesta.status_code, 200)
 
+    # --- porcentaje de comisión ---
+    def _reporte(self, **params):
+        return self.client.get(reverse('reporte_comision_medico_tratante', args=[self.medico.id]), params)
+
+    def test_con_porcentaje_calcula_la_comision_sobre_el_total_referido(self):
+        hoy = timezone.localdate()
+        self._crear_cita_procesada('6006006006101', hoy)
+        self._crear_cita_procesada('6006006006102', hoy)
+
+        respuesta = self._reporte(porcentaje='10')
+
+        self.assertEqual(respuesta.context['datos']['total'], Decimal('600.00'))
+        self.assertEqual(respuesta.context['porcentaje'], Decimal('10.00'))
+        self.assertEqual(respuesta.context['comision'], Decimal('60.00'))
+        self.assertContains(respuesta, 'Comisión a pagar (10%)')
+        self.assertContains(respuesta, 'Q60,00')
+
+    def test_sin_porcentaje_no_muestra_comision(self):
+        self._crear_cita_procesada('6006006006103', timezone.localdate())
+
+        respuesta = self._reporte()
+
+        self.assertIsNone(respuesta.context['comision'])
+        self.assertNotContains(respuesta, 'Comisión a pagar')
+
+    def test_el_porcentaje_acepta_decimales_con_coma_o_punto_y_redondea_al_centavo(self):
+        self._crear_cita_procesada('6006006006104', timezone.localdate())
+
+        self.assertEqual(self._reporte(porcentaje='7,5').context['comision'], Decimal('22.50'))
+        self.assertEqual(self._reporte(porcentaje='7.5').context['comision'], Decimal('22.50'))
+        self.assertEqual(self._reporte(porcentaje='3.33').context['comision'], Decimal('9.99'))
+        self.assertEqual(self._reporte(porcentaje='100').context['comision'], Decimal('300.00'))
+
+    def test_porcentajes_invalidos_se_ignoran_y_avisan(self):
+        self._crear_cita_procesada('6006006006105', timezone.localdate())
+        for valor in ('abc', '0', '-5', '101', 'NaN', 'Infinity', '-Infinity', '1e999'):
+            respuesta = self._reporte(porcentaje=valor)
+            self.assertEqual(respuesta.status_code, 200, valor)
+            self.assertIsNone(respuesta.context['comision'], valor)
+            mensajes = [str(m) for m in respuesta.context['messages']]
+            self.assertTrue(any('porcentaje' in m for m in mensajes), valor)
+
+    def test_el_monto_a_pagar_viene_precargado_con_la_comision(self):
+        self._crear_cita_procesada('6006006006106', timezone.localdate())
+
+        respuesta = self._reporte(porcentaje='10')
+
+        self.assertEqual(respuesta.context['form'].initial['monto'], Decimal('30.00'))
+        self.assertContains(respuesta, 'Calculado: 10% de Q300,00')
+
+    def test_el_porcentaje_se_conserva_al_cambiar_de_periodo_y_en_el_pdf(self):
+        self._crear_cita_procesada('6006006006107', timezone.localdate())
+
+        respuesta = self._reporte(modo='mes', porcentaje='12.5')
+
+        self.assertContains(respuesta, 'name="porcentaje" value="12.5"')
+        self.assertContains(respuesta, 'porcentaje=12.5')
+
+    def test_el_pago_guarda_el_porcentaje_que_se_uso(self):
+        self._crear_cita_procesada('6006006006108', timezone.localdate())
+        comprobante = SimpleUploadedFile('c.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg')
+
+        self.client.post(
+            reverse('reporte_comision_medico_tratante', args=[self.medico.id]) + '?porcentaje=10',
+            {'monto': '30.00', 'comprobante': comprobante},
+        )
+
+        pago = PagoComisionMedicoTratante.objects.get(medico_tratante=self.medico)
+        self.assertEqual(pago.porcentaje, Decimal('10.00'))
+        self.assertEqual(pago.monto, Decimal('30.00'))
+        self.assertContains(self._reporte(), '10%')
+
+    def test_un_pago_sin_porcentaje_queda_sin_porcentaje(self):
+        self._crear_cita_procesada('6006006006109', timezone.localdate())
+        comprobante = SimpleUploadedFile('c.jpg', b'\xff\xd8\xff\xe0fake', content_type='image/jpeg')
+
+        self.client.post(
+            reverse('reporte_comision_medico_tratante', args=[self.medico.id]),
+            {'monto': '45.00', 'comprobante': comprobante},
+        )
+
+        self.assertIsNone(PagoComisionMedicoTratante.objects.get(medico_tratante=self.medico).porcentaje)
+
+    def test_el_pdf_con_porcentaje_se_genera(self):
+        self._crear_cita_procesada('6006006006110', timezone.localdate())
+
+        respuesta = self.client.get(
+            reverse('comision_medico_tratante_pdf', args=[self.medico.id]), {'porcentaje': '10'},
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTrue(respuesta.content.startswith(b'%PDF'))
+
+    def test_el_pdf_con_porcentaje_invalido_se_genera_sin_comision(self):
+        self._crear_cita_procesada('6006006006111', timezone.localdate())
+
+        respuesta = self.client.get(
+            reverse('comision_medico_tratante_pdf', args=[self.medico.id]), {'porcentaje': 'NaN'},
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+
     def test_pdf_se_genera_correctamente(self):
         self._crear_cita_procesada('6006006006041', timezone.localdate())
 

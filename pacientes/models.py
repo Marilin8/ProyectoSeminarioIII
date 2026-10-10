@@ -1093,6 +1093,11 @@ class PagoComisionMedicoTratante(models.Model):
     numero_boleta = models.CharField(
         max_length=60, blank=True, verbose_name='número de boleta / referencia',
     )
+    porcentaje = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        verbose_name='porcentaje aplicado',
+        help_text='Porcentaje del total referido que se usó en el reporte para calcular la comisión.',
+    )
     notas = models.CharField(max_length=255, blank=True)
     registrado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT,

@@ -1370,6 +1370,7 @@ def orden_pago_pdf(request, orden_id):
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('FONTNAME', (2, -1), (3, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (2, -2), (3, -2), 'Helvetica-Bold'),
         ('ALIGN', (3, 0), (3, -1), 'RIGHT'),
         ('GRID', (0, 0), (-1, -1), 0.5, gris),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
@@ -2106,7 +2107,9 @@ def reporte_comision_medico_tratante(request, medico_id):
     arranca automáticamente donde quedó pendiente el anterior. También se
     puede elegir semana, quincena, mes o un rango libre (mismo selector que
     la Planilla de empleados, ver accounts.periodos)."""
-    from .comisiones_medico_tratante import citas_pendientes_de_pago, resumen
+    from .comisiones_medico_tratante import (
+        calcular_comision, citas_pendientes_de_pago, parsear_porcentaje, resumen,
+    )
 
     medico = get_object_or_404(MedicoTratante, id=medico_id)
     if medico.tipo == MedicoTratante.TIPO_IGSS:
@@ -2120,6 +2123,14 @@ def reporte_comision_medico_tratante(request, medico_id):
 
     datos = resumen(citas_pendientes_de_pago(medico, periodo['desde'], periodo['hasta']))
 
+    # El porcentaje no se guarda por médico: el administrador lo escribe en el reporte
+    # (llega por la URL, igual que el período) y la comisión se calcula al instante.
+    texto_porcentaje = (request.GET.get('porcentaje') or '').strip()
+    porcentaje = parsear_porcentaje(texto_porcentaje)
+    if texto_porcentaje and porcentaje is None:
+        messages.error(request, 'El porcentaje debe ser un número mayor que 0 y hasta 100.')
+    comision = calcular_comision(datos['total'], porcentaje) if porcentaje is not None else None
+
     if request.method == 'POST':
         form = PagoComisionMedicoTratanteForm(request.POST, request.FILES)
         if not datos['citas']:
@@ -2130,7 +2141,7 @@ def reporte_comision_medico_tratante(request, medico_id):
                 medico_tratante=medico, desde=periodo['desde'], hasta=periodo['hasta'],
                 monto=cd['monto'], comprobante=cd['comprobante'],
                 numero_boleta=cd['numero_boleta'], notas=cd['notas'],
-                registrado_por=request.user,
+                porcentaje=porcentaje, registrado_por=request.user,
             )
             PagoComisionMedicoTratanteLinea.objects.bulk_create([
                 PagoComisionMedicoTratanteLinea(pago=pago, cita=cita, precio=cita.precio)
@@ -2152,7 +2163,8 @@ def reporte_comision_medico_tratante(request, medico_id):
             destino = reverse('reporte_comision_medico_tratante', args=[medico.id])
             return redirect(f'{destino}?{query}' if query else destino)
     else:
-        form = PagoComisionMedicoTratanteForm()
+        # Con porcentaje, el monto a pagar ya viene calculado (el administrador lo puede ajustar).
+        form = PagoComisionMedicoTratanteForm(initial={'monto': comision} if comision else None)
 
     pagos_anteriores = (
         medico.pagos_comision.select_related('registrado_por').prefetch_related('lineas__cita__paciente')
@@ -2163,6 +2175,10 @@ def reporte_comision_medico_tratante(request, medico_id):
         'periodo': periodo,
         'query': query,
         'datos': datos,
+        'porcentaje': porcentaje,
+        'porcentaje_texto': f'{porcentaje:f}'.rstrip('0').rstrip('.') if porcentaje is not None else '',
+        'comision': comision,
+        'otros_parametros': [(k, v) for k, v in request.GET.items() if k != 'porcentaje'],
         'form': form,
         'pagos_anteriores': pagos_anteriores,
     })
@@ -2182,7 +2198,9 @@ def comision_medico_tratante_pdf(request, medico_id):
     from reportlab.lib.units import cm
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-    from .comisiones_medico_tratante import citas_pendientes_de_pago, resumen
+    from .comisiones_medico_tratante import (
+        calcular_comision, citas_pendientes_de_pago, parsear_porcentaje, resumen,
+    )
 
     medico = get_object_or_404(MedicoTratante, id=medico_id)
     hoy = timezone.localdate()
@@ -2209,6 +2227,10 @@ def comision_medico_tratante_pdf(request, medico_id):
             f'Q{cita.precio:.2f}',
         ])
     filas.append(['', '', 'Total:', f'Q{datos["total"]:.2f}'])
+    porcentaje = parsear_porcentaje(request.GET.get('porcentaje'))
+    if porcentaje is not None:
+        comision = calcular_comision(datos['total'], porcentaje)
+        filas.append(['', '', f'Comisión ({porcentaje:f}%):'.replace('.00%', '%'), f'Q{comision:.2f}'])
 
     tabla = Table(filas, colWidths=[2.6 * cm, 5.5 * cm, 5.5 * cm, 3.0 * cm], repeatRows=1)
     tabla.setStyle(TableStyle([

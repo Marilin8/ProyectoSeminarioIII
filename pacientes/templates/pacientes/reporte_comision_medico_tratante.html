@@ -20,7 +20,12 @@
         }
         .col-num { text-align: right; white-space: nowrap; }
         table tfoot td { font-weight: 700; border-top: 2px solid var(--border-light); }
-        .resumen-totales { display: flex; gap: 2rem; padding: 0.9rem 1rem; }
+        .resumen-totales { display: flex; gap: 2rem; padding: 0.9rem 1rem; flex-wrap: wrap; align-items: center; }
+        .pct-form { display: flex; align-items: flex-end; gap: 0.4rem; }
+        .pct-form .campo-pct { position: relative; }
+        .pct-form input[type=number] { width: 6.5rem; padding-right: 1.6rem; }
+        .pct-form .simbolo { position: absolute; right: 0.6rem; bottom: 0.45rem; color: var(--text-muted); font-size: 0.85rem; }
+        .dato-comision { color: var(--success); }
         .resumen-totales .dato { font-size: 1.3rem; font-weight: 700; }
         .resumen-totales .etiqueta { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; }
     </style>
@@ -36,12 +41,13 @@
 {% block content %}
 
     <form method="get" class="card mb-2 periodo-form">
+        {% if porcentaje %}<input type="hidden" name="porcentaje" value="{{ porcentaje_texto }}">{% endif %}
         <div class="modos">
-            <a href="{% url 'reporte_comision_medico_tratante' medico.id %}" class="{% if periodo.modo == 'pendiente' %}on{% endif %}">Pendiente de pago</a>
-            <a href="?modo=mes" class="{% if periodo.modo == 'mes' %}on{% endif %}">Mes</a>
-            <a href="?modo=quincena&quincena={{ periodo.quincena_mes }}&q={{ periodo.quincena_q }}" class="{% if periodo.modo == 'quincena' %}on{% endif %}">Quincena</a>
-            <a href="?modo=semana&semana={{ periodo.semana_valor }}" class="{% if periodo.modo == 'semana' %}on{% endif %}">Semana</a>
-            <a href="?modo=rango" class="{% if periodo.modo == 'rango' %}on{% endif %}">Rango libre</a>
+            <a href="{% url 'reporte_comision_medico_tratante' medico.id %}{% if porcentaje %}?porcentaje={{ porcentaje_texto }}{% endif %}" class="{% if periodo.modo == 'pendiente' %}on{% endif %}">Pendiente de pago</a>
+            <a href="?modo=mes{% if porcentaje %}&porcentaje={{ porcentaje_texto }}{% endif %}" class="{% if periodo.modo == 'mes' %}on{% endif %}">Mes</a>
+            <a href="?modo=quincena&quincena={{ periodo.quincena_mes }}&q={{ periodo.quincena_q }}{% if porcentaje %}&porcentaje={{ porcentaje_texto }}{% endif %}" class="{% if periodo.modo == 'quincena' %}on{% endif %}">Quincena</a>
+            <a href="?modo=semana&semana={{ periodo.semana_valor }}{% if porcentaje %}&porcentaje={{ porcentaje_texto }}{% endif %}" class="{% if periodo.modo == 'semana' %}on{% endif %}">Semana</a>
+            <a href="?modo=rango{% if porcentaje %}&porcentaje={{ porcentaje_texto }}{% endif %}" class="{% if periodo.modo == 'rango' %}on{% endif %}">Rango libre</a>
         </div>
 
         {% if periodo.modo == 'mes' %}
@@ -100,9 +106,28 @@
             <div class="etiqueta">Total</div>
             <div class="dato">Q{{ datos.total|floatformat:2 }}</div>
         </div>
+        <form method="get" class="pct-form" id="form-porcentaje">
+            {% for nombre, valor in otros_parametros %}<input type="hidden" name="{{ nombre }}" value="{{ valor }}">{% endfor %}
+            <div class="campo-pct">
+                <div class="etiqueta"><label for="porcentaje" style="margin:0;">Porcentaje de comisión</label></div>
+                <input type="number" name="porcentaje" id="porcentaje" min="0.01" max="100" step="0.01"
+                       inputmode="decimal" placeholder="Ej. 10" value="{{ porcentaje_texto }}">
+                <span class="simbolo">%</span>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">Calcular</button>
+            {% if porcentaje %}
+                <a class="btn btn-outline btn-sm" href="?{% for nombre, valor in otros_parametros %}{{ nombre }}={{ valor|urlencode }}{% if not forloop.last %}&{% endif %}{% endfor %}">Quitar</a>
+            {% endif %}
+        </form>
+        {% if comision is not None %}
+            <div>
+                <div class="etiqueta">Comisión a pagar ({{ porcentaje_texto }}%)</div>
+                <div class="dato dato-comision">Q{{ comision|floatformat:2 }}</div>
+            </div>
+        {% endif %}
         <div style="margin-left:auto;align-self:center;">
             {% if datos.citas %}
-                <a class="btn btn-outline btn-sm" href="{% url 'comision_medico_tratante_pdf' medico.id %}{% if query %}?{{ query }}{% endif %}" target="_blank">
+                <a class="btn btn-outline btn-sm" href="{% url 'comision_medico_tratante_pdf' medico.id %}{% if query or porcentaje %}?{{ query }}{% if query and porcentaje %}&{% endif %}{% if porcentaje %}porcentaje={{ porcentaje_texto }}{% endif %}{% endif %}" target="_blank">
                     <svg width="14" height="14"><use href="#i-download"/></svg>
                     Descargar PDF
                 </a>
@@ -137,6 +162,9 @@
             {% if datos.citas %}
                 <tfoot>
                     <tr><td colspan="4">Total</td><td class="col-num">Q{{ datos.total|floatformat:2 }}</td></tr>
+                    {% if comision is not None %}
+                        <tr><td colspan="4">Comisión ({{ porcentaje_texto }}%)</td><td class="col-num">Q{{ comision|floatformat:2 }}</td></tr>
+                    {% endif %}
                 </tfoot>
             {% endif %}
         </table>
@@ -151,6 +179,11 @@
 
                 <label for="{{ form.monto.id_for_label }}">Monto a pagar (Q)</label>
                 {{ form.monto }}
+                {% if comision is not None %}
+                    <p class="ayuda" style="margin:0.2rem 0 0;">
+                        Calculado: {{ porcentaje_texto }}% de Q{{ datos.total|floatformat:2 }}. Puede ajustarlo si hace falta.
+                    </p>
+                {% endif %}
                 {{ form.monto.errors }}
 
                 <label for="{{ form.comprobante.id_for_label }}">Comprobante (boleta o transferencia)</label>
@@ -178,6 +211,7 @@
                     <tr>
                         <th>Período</th>
                         <th>Estudios</th>
+                        <th class="col-num">%</th>
                         <th class="col-num">Monto</th>
                         <th>Registrado por</th>
                         <th>Comprobante</th>
@@ -188,6 +222,7 @@
                         <tr>
                             <td>{{ pago.periodo_etiqueta }}</td>
                             <td>{{ pago.lineas.count }}</td>
+                            <td class="col-num">{% if pago.porcentaje is not None %}{{ pago.porcentaje|floatformat:"-2" }}%{% else %}—{% endif %}</td>
                             <td class="col-num">Q{{ pago.monto|floatformat:2 }}</td>
                             <td>{{ pago.registrado_por.get_full_name|default:pago.registrado_por.username }}</td>
                             <td><a href="{{ pago.comprobante.url }}" target="_blank">Ver</a></td>
