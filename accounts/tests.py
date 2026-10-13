@@ -2645,6 +2645,15 @@ class ProgramadorDeCopiasTests(RespaldoAutomaticoBase):
         from django.utils import timezone
         return timezone.now() + datetime.timedelta(**delta)
 
+    def _manana(self):
+        """Mañana a las 00:30 hora local. No se usa "ahora + 1 día": si las pruebas corren de
+        noche, sumarle unas horas a eso ya cae en el día siguiente (otra fecha, otra copia)."""
+        import datetime
+
+        from django.utils import timezone
+        fecha = timezone.localdate() + datetime.timedelta(days=1)
+        return timezone.make_aware(datetime.datetime.combine(fecha, datetime.time(0, 30)))
+
     def _reloj(self, ahora):
         """Congela django.utils.timezone.now: la tarea estampa la hora con ese reloj."""
         from unittest import mock
@@ -2675,7 +2684,7 @@ class ProgramadorDeCopiasTests(RespaldoAutomaticoBase):
     def test_no_hace_dos_copias_el_mismo_dia(self):
         from accounts import programador
         programador.revisar()
-        manana = self._ahora(days=1)
+        manana = self._manana()
         programador.revisar(manana)
 
         self.assertIsNone(programador.revisar(manana))
@@ -2715,7 +2724,7 @@ class ProgramadorDeCopiasTests(RespaldoAutomaticoBase):
         from accounts import programador
         from accounts.models import EjecucionRespaldoAutomatico as Ejecucion
         programador.revisar()
-        manana = self._ahora(days=1)
+        manana = self._manana()
 
         def en(minutos):
             return self._reloj(manana + datetime.timedelta(minutes=minutos))
@@ -2747,7 +2756,7 @@ class ProgramadorDeCopiasTests(RespaldoAutomaticoBase):
         from accounts import programador
         from accounts.models import EjecucionRespaldoAutomatico as Ejecucion
         programador.revisar()
-        manana = self._ahora(days=1)
+        manana = self._manana()
         with mock.patch('accounts.respaldo_automatico.ejecutar', side_effect=RuntimeError('x')):
             with self._reloj(manana):
                 pk = programador.revisar(manana)
@@ -2793,7 +2802,7 @@ class ProgramadorDeCopiasTests(RespaldoAutomaticoBase):
         from accounts import programador
         from accounts.models import EjecucionRespaldoAutomatico as Ejecucion
         programador.revisar()
-        manana = self._ahora(days=1)
+        manana = self._manana()
 
         with mock.patch('accounts.trabajos.iniciar', return_value=False):
             self.assertIsNone(programador.revisar(manana))
