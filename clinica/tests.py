@@ -204,3 +204,25 @@ class LoginNextSeguroTests(TestCase):
     def test_next_interno_se_respeta(self):
         respuesta = self._entrar(reverse('dashboard') + '?x=1')
         self.assertRedirects(respuesta, reverse('dashboard') + '?x=1', fetch_redirect_response=False)
+
+
+class CollectstaticDeProduccionTests(TestCase):
+    """Las pruebas usan el storage de estáticos simple (settings_test), así
+    que esto corre collectstatic con el storage con manifest de producción:
+    falla si un CSS/JS referencia un archivo que no existe (pasó con el
+    `sourceMappingURL=chart.umd.js.map` de Chart.js, que tumbaba el
+    despliegue)."""
+
+    def test_collectstatic_con_manifest_no_falla(self):
+        import tempfile
+
+        from django.core.management import call_command
+
+        with tempfile.TemporaryDirectory() as destino, override_settings(
+            STATIC_ROOT=destino,
+            STORAGES={
+                'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+                'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
+            },
+        ):
+            call_command('collectstatic', interactive=False, verbosity=0)
