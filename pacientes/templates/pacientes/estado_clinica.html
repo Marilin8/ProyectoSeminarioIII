@@ -1,0 +1,316 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Estado de la Clínica - Clínica de Imágenes{% endblock %}
+{% block page_title %}Estado de la Clínica{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .ec-barra { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; align-items: center; margin-bottom: 1rem; }
+        .ec-periodos { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: #fff; }
+        .ec-periodos button { border: 0; background: transparent; padding: 0.45rem 0.85rem; font-size: 0.82rem; cursor: pointer; color: var(--text); }
+        .ec-periodos button + button { border-left: 1px solid var(--border); }
+        .ec-periodos button.activo { background: var(--primary); color: #fff; font-weight: 600; }
+        .ec-barra select { width: auto; min-width: 11rem; }
+        .ec-actualizado { font-size: 0.78rem; color: var(--text-muted); margin-left: auto; display: flex; align-items: center; gap: 0.6rem; }
+        .ec-actualizado label { display: flex; align-items: center; gap: 0.3rem; margin: 0; font-weight: 500; cursor: pointer; }
+        .ec-actualizado input { width: auto; }
+
+        .ec-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+        .ec-kpi { background: #fff; border: 1px solid var(--border-light); border-left: 5px solid var(--c); border-radius: var(--radius); padding: 0.8rem 1rem; }
+        .ec-kpi .valor { font-size: 1.7rem; font-weight: 700; color: var(--c); line-height: 1.1; }
+        .ec-kpi .etiqueta { font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+        .ec-kpi .sub { font-size: 0.74rem; color: var(--text-muted); margin-top: 0.15rem; }
+
+        .ec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1rem; }
+        .ec-panel { background: #fff; border: 1px solid var(--border-light); border-top: 5px solid var(--c); border-radius: var(--radius-lg, 10px); padding: 1rem 1.1rem 1.1rem; position: relative; }
+        .ec-panel.ancho { grid-column: 1 / -1; }
+        .ec-panel h2 { margin: 0; font-size: 1rem; color: var(--c); }
+        .ec-panel .desc { font-size: 0.78rem; color: var(--text-muted); margin: 0.15rem 0 0.7rem; }
+        .ec-mini { display: flex; gap: 1.2rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
+        .ec-mini div { font-size: 0.78rem; color: var(--text-muted); }
+        .ec-mini strong { display: block; font-size: 1.15rem; color: var(--c); }
+        .ec-lienzo { position: relative; height: 280px; }
+        .ec-vacio { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; color: var(--text-muted); font-size: 0.85rem; background: #fff; padding: 1rem; }
+        .ec-panel.sin-datos .ec-vacio { display: flex; }
+
+        .c-azul { --c: #2563eb; } .c-verde { --c: #16a34a; } .c-ambar { --c: #d97706; }
+        .c-rojo { --c: #dc2626; } .c-morado { --c: #7c3aed; } .c-naranja { --c: #ea580c; }
+        .c-gris { --c: #475569; } .c-turquesa { --c: #0d9488; }
+    </style>
+{% endblock %}
+
+{% block topbar_actions %}
+    <a class="btn btn-outline btn-sm" href="{% url 'dashboard' %}">
+        <svg width="14" height="14"><use href="#i-arrow-left"/></svg>
+        Volver al panel
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="ec-barra">
+        <div class="ec-periodos" id="ec-periodos" role="group" aria-label="Período">
+            {% for valor, etiqueta in periodos %}
+                <button type="button" data-dias="{{ valor }}" class="{% if valor == dias %}activo{% endif %}">{{ etiqueta }}</button>
+            {% endfor %}
+        </div>
+        <select id="ec-convenio" aria-label="Convenio">
+            {% for valor, etiqueta in convenios %}
+                <option value="{{ valor }}" {% if valor == convenio %}selected{% endif %}>{{ etiqueta }}</option>
+            {% endfor %}
+        </select>
+        <div class="ec-actualizado">
+            <span id="ec-rango"></span>
+            <span>Actualizado <strong id="ec-hora">—</strong></span>
+            <label><input type="checkbox" id="ec-auto" checked> Auto-actualizar (60 s)</label>
+            <button type="button" class="btn btn-outline btn-sm" id="ec-refrescar">Actualizar</button>
+        </div>
+    </div>
+
+    <div class="ec-kpis">
+        <div class="ec-kpi c-verde"><div class="valor" id="kpi-aprobadas">–</div><div class="etiqueta">Citas aprobadas</div><div class="sub" id="kpi-futuras"></div></div>
+        <div class="ec-kpi c-azul"><div class="valor" id="kpi-en-proceso">–</div><div class="etiqueta">Citas en proceso</div></div>
+        <div class="ec-kpi c-ambar"><div class="valor" id="kpi-pendientes">–</div><div class="etiqueta">Citas pendientes</div></div>
+        <div class="ec-kpi c-turquesa"><div class="valor" id="kpi-completadas">–</div><div class="etiqueta">Completadas</div></div>
+        <div class="ec-kpi c-rojo"><div class="valor" id="kpi-no-atendidas">–</div><div class="etiqueta">Rechazadas / ausentes</div></div>
+    </div>
+
+    <div class="ec-grid">
+        <section class="ec-panel c-azul" id="panel-citas">
+            <h2>Citas por estado</h2>
+            <p class="desc">Citas cuya fecha cae en el período elegido. Clic en la leyenda para ocultar un estado.</p>
+            <div class="ec-lienzo"><canvas id="grafica-citas"></canvas>
+                <div class="ec-vacio">No hay citas en este período.</div></div>
+        </section>
+
+        <section class="ec-panel c-verde" id="panel-frecuencia">
+            <h2>Estudios que más se realizan</h2>
+            <p class="desc">Estudios completados en el período, de mayor a menor frecuencia.</p>
+            <div class="ec-mini">
+                <div><strong id="frec-total">–</strong>realizados</div>
+                <div><strong id="frec-diario">–</strong>promedio por día</div>
+                <div><strong id="frec-semanal">–</strong>promedio por semana</div>
+            </div>
+            <div class="ec-lienzo" style="height:230px;"><canvas id="grafica-frecuencia"></canvas>
+                <div class="ec-vacio">Todavía no hay estudios completados en este período.</div></div>
+        </section>
+
+        <section class="ec-panel c-morado ancho" id="panel-tiempo">
+            <h2>Cuánto dura cada cita</h2>
+            <p class="desc">
+                Por tipo de estudio (los más frecuentes). Barras moradas: duración estimada del estudio, en
+                minutos (eje izquierdo). Barras claras: ciclo real desde que se genera la orden de trabajo
+                hasta el último informe, incluida la espera del informe (eje derecho).
+            </p>
+            <div class="ec-mini">
+                <div><strong id="tiempo-estimada">–</strong>duración estimada promedio</div>
+                <div><strong id="tiempo-ciclo">–</strong>ciclo real promedio</div>
+            </div>
+            <div class="ec-lienzo"><canvas id="grafica-tiempo"></canvas>
+                <div class="ec-vacio">Todavía no hay estudios completados en este período.</div></div>
+        </section>
+
+        <section class="ec-panel c-naranja" id="panel-radiologos">
+            <h2>Respuesta de los radiólogos (COEX)</h2>
+            <p class="desc">Tiempo que tarda cada radiólogo en aceptar o rechazar una solicitud de cita COEX, desde que recepción la crea.</p>
+            <div class="ec-mini">
+                <div><strong id="rad-promedio">–</strong>promedio general</div>
+                <div><strong id="rad-total">–</strong>solicitudes respondidas</div>
+            </div>
+            <div class="ec-lienzo" style="height:230px;"><canvas id="grafica-radiologos"></canvas>
+                <div class="ec-vacio">Ningún radiólogo respondió solicitudes COEX en este período.</div></div>
+        </section>
+
+        <section class="ec-panel c-rojo" id="panel-espera">
+            <h2>Espera según la urgencia</h2>
+            <p class="desc">Tiempo que espera el paciente en la fila (turno generado hasta que lo atienden), por nivel de urgencia.</p>
+            <div class="ec-mini">
+                <div><strong id="esp-total">–</strong>pacientes atendidos</div>
+            </div>
+            <div class="ec-lienzo" style="height:230px;"><canvas id="grafica-espera"></canvas>
+                <div class="ec-vacio">No hay turnos atendidos en este período.</div></div>
+        </section>
+    </div>
+
+    <script src="{% static 'js/chart.umd.min.js' %}"></script>
+    <script>
+    (function () {
+        var URL_DATOS = "{% url 'estado_clinica_datos' %}";
+        var estado = { dias: {{ dias }}, convenio: "{{ convenio }}" };
+        var COLORES = {
+            aprobadas: '#16a34a', en_proceso: '#2563eb', pendientes: '#d97706',
+            completadas: '#0d9488', rechazadas: '#dc2626', ausentes: '#94a3b8',
+        };
+        var graficas = {};
+
+        function formatoMinutos(min) {
+            min = Number(min) || 0;
+            if (min < 1) { return '0 min'; }
+            if (min < 60) { return min.toFixed(min % 1 ? 1 : 0) + ' min'; }
+            var h = Math.floor(min / 60), m = Math.round(min % 60);
+            if (h >= 24) { return (min / 1440).toFixed(1) + ' días'; }
+            return h + ' h' + (m ? ' ' + m + ' min' : '');
+        }
+        function texto(id, valor) { document.getElementById(id).textContent = valor; }
+        function marcarVacio(panelId, vacio) {
+            document.getElementById(panelId).classList.toggle('sin-datos', vacio);
+        }
+        function actualizar(clave, tipo, datos, opciones) {
+            if (graficas[clave]) {
+                graficas[clave].data = datos;
+                graficas[clave].update();
+                return;
+            }
+            graficas[clave] = new Chart(document.getElementById('grafica-' + clave), {
+                type: tipo, data: datos, options: opciones,
+            });
+        }
+        var base = { responsive: true, maintainAspectRatio: false, animation: { duration: 500 } };
+
+        function pintarCitas(c) {
+            texto('kpi-aprobadas', c.aprobadas);
+            texto('kpi-futuras', c.futuras_agendadas + ' agendadas a futuro');
+            texto('kpi-en-proceso', c.en_proceso);
+            texto('kpi-pendientes', c.pendientes);
+            texto('kpi-completadas', c.completadas);
+            texto('kpi-no-atendidas', c.rechazadas + c.ausentes);
+            marcarVacio('panel-citas', c.total === 0);
+            actualizar('citas', 'doughnut', {
+                labels: ['Aprobadas', 'En proceso', 'Pendientes', 'Completadas', 'Rechazadas', 'Ausentes'],
+                datasets: [{
+                    data: [c.aprobadas, c.en_proceso, c.pendientes, c.completadas, c.rechazadas, c.ausentes],
+                    backgroundColor: [COLORES.aprobadas, COLORES.en_proceso, COLORES.pendientes,
+                                      COLORES.completadas, COLORES.rechazadas, COLORES.ausentes],
+                    borderWidth: 2, borderColor: '#fff',
+                }],
+            }, Object.assign({}, base, {
+                cutout: '58%',
+                plugins: { legend: { position: 'right' } },
+            }));
+        }
+
+        function pintarFrecuencia(f) {
+            texto('frec-total', f.total);
+            texto('frec-diario', f.promedio_diario);
+            texto('frec-semanal', f.promedio_semanal);
+            marcarVacio('panel-frecuencia', f.total === 0);
+            actualizar('frecuencia', 'bar', {
+                labels: f.labels,
+                datasets: [{ label: 'Estudios realizados', data: f.valores, backgroundColor: '#16a34a', borderRadius: 4 }],
+            }, Object.assign({}, base, {
+                indexAxis: 'y',
+                plugins: { legend: { display: false } },
+                scales: { x: { beginAtZero: true, ticks: { precision: 0 } } },
+            }));
+        }
+
+        function pintarTiempo(t) {
+            texto('tiempo-estimada', formatoMinutos(t.estimada_promedio));
+            texto('tiempo-ciclo', t.ciclo_promedio ? formatoMinutos(t.ciclo_promedio) : 'sin datos');
+            marcarVacio('panel-tiempo', t.labels.length === 0);
+            actualizar('tiempo', 'bar', {
+                labels: t.labels,
+                datasets: [
+                    { label: 'Duración estimada (min)', data: t.estimada, backgroundColor: '#7c3aed', borderRadius: 4, yAxisID: 'y' },
+                    { label: 'Ciclo real orden → informe (min)', data: t.real, backgroundColor: '#c4b5fd', borderRadius: 4, yAxisID: 'y2' },
+                ],
+            }, Object.assign({}, base, {
+                plugins: {
+                    tooltip: { callbacks: { label: function (ctx) {
+                        return ctx.dataset.label.split(' (')[0] + ': ' + formatoMinutos(ctx.parsed.y);
+                    } } },
+                },
+                scales: {
+                    y: { beginAtZero: true, title: { display: true, text: 'Estimada (min)' } },
+                    y2: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false },
+                          title: { display: true, text: 'Ciclo real (min)' } },
+                },
+            }));
+        }
+
+        function pintarRadiologos(r) {
+            texto('rad-promedio', r.total ? formatoMinutos(r.promedio_global) : 'sin datos');
+            texto('rad-total', r.total);
+            marcarVacio('panel-radiologos', r.total === 0);
+            actualizar('radiologos', 'bar', {
+                labels: r.labels,
+                datasets: [{ label: 'Tiempo promedio de respuesta (min)', data: r.promedio_min,
+                             backgroundColor: '#ea580c', borderRadius: 4 }],
+            }, Object.assign({}, base, {
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: {
+                        label: function (ctx) { return 'Promedio: ' + formatoMinutos(ctx.parsed.y); },
+                        afterLabel: function (ctx) {
+                            var i = ctx.dataIndex;
+                            return r.solicitudes[i] + ' solicitud(es), ' + r.rechazadas[i] + ' rechazada(s)';
+                        },
+                    } },
+                },
+                scales: { y: { beginAtZero: true, title: { display: true, text: 'Minutos' } } },
+            }));
+        }
+
+        function pintarEspera(e) {
+            texto('esp-total', e.total);
+            marcarVacio('panel-espera', e.total === 0);
+            actualizar('espera', 'bar', {
+                labels: e.labels,
+                datasets: [
+                    { label: 'Espera promedio', data: e.promedio, backgroundColor: ['#16a34a', '#d97706', '#dc2626'], borderRadius: 4 },
+                    { label: 'Espera máxima', data: e.maximo, backgroundColor: ['#bbf7d0', '#fde68a', '#fecaca'], borderRadius: 4 },
+                ],
+            }, Object.assign({}, base, {
+                plugins: {
+                    tooltip: { callbacks: {
+                        label: function (ctx) { return ctx.dataset.label + ': ' + formatoMinutos(ctx.parsed.y); },
+                        afterBody: function (items) { return e.atendidos[items[0].dataIndex] + ' paciente(s) atendido(s)'; },
+                    } },
+                },
+                scales: { y: { beginAtZero: true, title: { display: true, text: 'Minutos' } } },
+            }));
+        }
+
+        function cargar() {
+            var url = URL_DATOS + '?dias=' + estado.dias + '&convenio=' + encodeURIComponent(estado.convenio);
+            fetch(url, { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                .then(function (r) { if (!r.ok) { throw new Error(r.status); } return r.json(); })
+                .then(function (d) {
+                    pintarCitas(d.citas);
+                    pintarFrecuencia(d.frecuencia);
+                    pintarTiempo(d.tiempo_por_cita);
+                    pintarRadiologos(d.radiologos);
+                    pintarEspera(d.espera);
+                    texto('ec-hora', d.periodo.actualizado);
+                    texto('ec-rango', d.periodo.desde + ' → ' + d.periodo.hasta);
+                })
+                .catch(function () { texto('ec-hora', 'error al actualizar'); });
+        }
+
+        document.querySelectorAll('#ec-periodos button').forEach(function (boton) {
+            boton.addEventListener('click', function () {
+                estado.dias = Number(boton.dataset.dias);
+                document.querySelectorAll('#ec-periodos button').forEach(function (b) {
+                    b.classList.toggle('activo', b === boton);
+                });
+                cargar();
+            });
+        });
+        document.getElementById('ec-convenio').addEventListener('change', function (e) {
+            estado.convenio = e.target.value;
+            cargar();
+        });
+        document.getElementById('ec-refrescar').addEventListener('click', cargar);
+
+        var temporizador = null;
+        function programarAuto() {
+            clearInterval(temporizador);
+            if (document.getElementById('ec-auto').checked) { temporizador = setInterval(cargar, 60000); }
+        }
+        document.getElementById('ec-auto').addEventListener('change', programarAuto);
+
+        cargar();
+        programarAuto();
+    })();
+    </script>
+{% endblock %}

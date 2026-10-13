@@ -35,6 +35,14 @@ RESPALDOS_CLAVE = ''  # nunca usar la clave real del .env en pruebas
 
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
 
+# Con DEBUG=False settings.py elige el storage con manifest, que exige haber
+# corrido collectstatic: un estático nuevo (ej. js/chart.umd.min.js) hacía
+# fallar las pruebas según el estado de staticfiles/ en cada máquina.
+STORAGES = {
+    **STORAGES,  # noqa: F405
+    'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
+}
+
 # validar_correo_existente hace una consulta DNS real por cada correo --
 # apagado acá para que las pruebas no dependan de salida a internet ni
 # tarden segundos por cada correo. Las pruebas que sí quieren ejercitar esa

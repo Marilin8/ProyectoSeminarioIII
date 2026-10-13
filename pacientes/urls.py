@@ -1,9 +1,11 @@
 from django.urls import path
 
-from . import views
+from . import estado_clinica, views
 from .models import Cita
 
 urlpatterns = [
+    path('estado-clinica/', estado_clinica.estado_clinica, name='estado_clinica'),
+    path('estado-clinica/datos/', estado_clinica.estado_clinica_datos, name='estado_clinica_datos'),
     path('estudios/nuevo/', views.crear_estudio, name='crear_estudio'),
     path('estudios/', views.lista_estudios, name='lista_estudios'),
     path('estudios/<int:estudio_id>/editar/', views.editar_estudio, name='editar_estudio'),
