@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from decimal import Decimal
 
 from django import forms
@@ -159,6 +160,78 @@ def limpiar_carnet_igss(carnet, *, dpi, requerido):
     return carnet
 
 
+# Títulos y conectores que no cuentan al comparar nombres ("Dr. Marcos de
+# León" y "Marcos León" son la misma persona).
+PALABRAS_IGNORADAS_EN_NOMBRE = {
+    'dr', 'dra', 'doctor', 'doctora', 'lic', 'licda', 'licenciado', 'licenciada',
+    'ing', 'de', 'del', 'la', 'las', 'los', 'y',
+}
+
+
+def _palabras_nombre(texto):
+    """Palabras de un nombre sin tildes, mayúsculas, puntos ni títulos."""
+    sin_tildes = ''.join(
+        c for c in unicodedata.normalize('NFD', texto or '') if unicodedata.category(c) != 'Mn'
+    )
+    palabras = re.findall(r'[a-zñ]+', sin_tildes.lower())
+    return {p for p in palabras if p not in PALABRAS_IGNORADAS_EN_NOMBRE}
+
+
+def es_mismo_nombre(nombre_a, nombre_b):
+    """True si un nombre está contenido en el otro, palabra por palabra
+    ("Marcos Pérez" coincide con "Marcos Antonio Pérez López"). Así se
+    acepta que un registro tenga el nombre completo y el otro uno abreviado,
+    pero "Marcos" no coincide con "Jorge"."""
+    a, b = _palabras_nombre(nombre_a), _palabras_nombre(nombre_b)
+    if not a or not b:
+        return False
+    return a <= b or b <= a
+
+
+def validar_dpi_identidad(dpi, nombre_completo, *, revisar_pacientes=True, medico_actual=None):
+    """Un DPI identifica a UNA persona en todo el sistema: si ya está
+    registrado como paciente o como médico tratante a nombre de otra
+    persona, se rechaza. Si el nombre coincide, se acepta, porque un médico
+    tratante también puede ser paciente de la clínica (y el paciente que
+    vuelve reutiliza su registro, ver obtener_o_actualizar_paciente).
+
+    `revisar_pacientes=True` compara contra Paciente; `medico_actual` es el
+    médico que se está editando (para no compararlo consigo mismo)."""
+    if not dpi or not nombre_completo:
+        return
+    if revisar_pacientes:
+        paciente = Paciente.objects.filter(dpi=dpi).first()
+        if paciente:
+            nombre_paciente = f'{paciente.nombre} {paciente.apellido}'.strip()
+            if not es_mismo_nombre(nombre_completo, nombre_paciente):
+                raise forms.ValidationError(
+                    f'Ese DPI ya está registrado con el paciente {nombre_paciente}. '
+                    'Revise que el DPI y el nombre estén bien escritos.'
+                )
+    medicos = MedicoTratante.objects.filter(dpi=dpi)
+    if medico_actual:
+        medicos = medicos.exclude(id=medico_actual.id)
+    medico = medicos.first()
+    if medico and not es_mismo_nombre(nombre_completo, medico.nombre):
+        raise forms.ValidationError(
+            f'Ese DPI ya está registrado con el médico tratante {medico.nombre}. '
+            'Revise que el DPI y el nombre estén bien escritos.'
+        )
+
+
+def validar_dpi_identidad_paciente(form, cleaned):
+    """Usada en el clean() de los formularios que registran pacientes: el
+    DPI se valida junto con nombre y apellido, que se limpian después."""
+    dpi = cleaned.get('dpi')
+    nombre, apellido = cleaned.get('nombre'), cleaned.get('apellido')
+    if not (dpi and nombre and apellido):
+        return
+    try:
+        validar_dpi_identidad(dpi, f'{nombre} {apellido}')
+    except forms.ValidationError as error:
+        form.add_error('dpi', error)
+
+
 class AgendarCitaForm(forms.Form):
     dpi = forms.CharField(
         label='DPI',
@@ -310,6 +383,7 @@ class AgendarCitaForm(forms.Form):
 
     def clean(self):
         cleaned = super().clean()
+        validar_dpi_identidad_paciente(self, cleaned)
         return resolver_radiologo_para_estudio(self, cleaned)
 
 
@@ -440,6 +514,7 @@ class AgendarCitaPrivadoForm(forms.Form):
 
     def clean(self):
         cleaned = super().clean()
+        validar_dpi_identidad_paciente(self, cleaned)
         return resolver_radiologo_para_estudio(self, cleaned)
 
 
@@ -541,6 +616,11 @@ class RegistrarTicketForm(forms.Form):
             dpi=self.cleaned_data.get('dpi'),
             requerido=True,
         )
+
+    def clean(self):
+        cleaned = super().clean()
+        validar_dpi_identidad_paciente(self, cleaned)
+        return cleaned
 
 
 class CompletarDatosPacienteForm(forms.Form):
@@ -696,6 +776,13 @@ class MedicoTratanteForm(forms.Form):
 
     def clean(self):
         cleaned = super().clean()
+        if cleaned.get('dpi') and cleaned.get('nombre'):
+            # clean_dpi ya rechaza un DPI repetido entre médicos; esto agrega que
+            # no sea el DPI de un paciente registrado con otro nombre.
+            try:
+                validar_dpi_identidad(cleaned['dpi'], cleaned['nombre'], medico_actual=self.medico_actual)
+            except forms.ValidationError as error:
+                self.add_error('dpi', error)
         usa_otp = cleaned.get('acceso_otp')
         if cleaned.get('tipo') in MedicoTratante.TIPOS_QUE_RECIBEN_ESTUDIO:
             # Con OTP la llave es el código que llega al correo; sin OTP, el DPI y, si no

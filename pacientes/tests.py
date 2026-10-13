@@ -13,7 +13,9 @@ from django.utils import timezone
 from accounts.models import Bitacora, RolAdicional
 from pacientes import horarios
 from pacientes.correos import enviar_resultados
-from pacientes.forms import AgendarCitaForm, MedicoTratanteForm, RegistrarTicketForm, validar_telefono_pais
+from pacientes.forms import (
+    AgendarCitaForm, AgendarCitaPrivadoForm, MedicoTratanteForm, RegistrarTicketForm, validar_telefono_pais,
+)
 from pacientes.models import (
     CambioEstudioProgramado,
     Cita,
@@ -1525,7 +1527,7 @@ class RegistrarTicketEmergenciaViewTests(TestCase):
         self.assertEqual(ticket.registrado_por, self.usuario)
 
     def test_registrar_ticket_reutiliza_paciente_existente_por_dpi(self):
-        paciente_existente = crear_paciente(dpi='6666666666666', nombre='Nombre Original')
+        paciente_existente = crear_paciente(dpi='6666666666666', nombre='Carlos', apellido='Gómez')
 
         self.client.post(reverse('registrar_ticket_emergencia'), self.datos_formulario)
 
@@ -1535,15 +1537,15 @@ class RegistrarTicketEmergenciaViewTests(TestCase):
 
     def test_registrar_ticket_no_pisa_nombre_pero_actualiza_contacto_y_completa_vacios(self):
         crear_paciente(
-            dpi='6666666666666', nombre='Nombre Viejo', telefono='00000000',
+            dpi='6666666666666', nombre='Carlos Alberto', apellido='Gómez', telefono='00000000',
             sexo='', fecha_nacimiento=None,
         )
 
         self.client.post(reverse('registrar_ticket_emergencia'), self.datos_formulario)
 
         paciente = Paciente.objects.get(dpi='6666666666666')
-        # El nombre ya guardado NO se cambia, aunque el form traiga otra cosa.
-        self.assertEqual(paciente.nombre, 'Nombre Viejo')
+        # El nombre ya guardado NO se cambia, aunque el form lo traiga abreviado.
+        self.assertEqual(paciente.nombre, 'Carlos Alberto')
         # El teléfono SÍ se corrige.
         self.assertEqual(paciente.telefono, '55551234')
         # Lo que estaba vacío SÍ se completa.
@@ -1739,7 +1741,7 @@ class AgendarCitaViewTests(TestCase):
         return f"{reverse('agendar_cita_coex')}?fecha={self.manana}&hora=10:00"
 
     def test_agendar_cita_no_duplica_paciente_existente_por_dpi(self):
-        paciente_existente = crear_paciente(dpi='2020202020202', nombre='Nombre Original')
+        paciente_existente = crear_paciente(dpi='2020202020202', nombre='Luis', apellido='Marroquín')
 
         self.client.post(self._url(), self.datos_formulario)
 
@@ -1749,7 +1751,7 @@ class AgendarCitaViewTests(TestCase):
 
     def test_agendar_cita_no_pisa_datos_ya_guardados_pero_actualiza_contacto(self):
         crear_paciente(
-            dpi='2020202020202', nombre='Nombre Viejo', telefono='00000000',
+            dpi='2020202020202', nombre='Luis Fernando', apellido='Marroquín', telefono='00000000',
             sexo='', fecha_nacimiento=None, correo='viejo@correo.com',
         )
 
@@ -1757,7 +1759,7 @@ class AgendarCitaViewTests(TestCase):
 
         paciente = Paciente.objects.get(dpi='2020202020202')
         # Nombre/apellido ya guardados: intactos.
-        self.assertEqual(paciente.nombre, 'Nombre Viejo')
+        self.assertEqual(paciente.nombre, 'Luis Fernando')
         # Teléfono y correo SÍ se corrigen desde el formulario.
         self.assertEqual(paciente.telefono, '55599999')
         self.assertEqual(paciente.correo, 'luis.marroquin@correo.com')
@@ -6416,3 +6418,86 @@ class ReporteDiarioPlacasYPagoTests(TestCase):
 
         self.assertEqual(respuesta.status_code, 200)
         self.assertTrue(respuesta.content.startswith(b'%PDF'))
+
+
+class DpiIdentidadUnicaTests(TestCase):
+    """Un DPI identifica a una sola persona: no se puede usar para un
+    paciente o un médico tratante con otro nombre, pero sí para la misma
+    persona (un médico que también es paciente)."""
+
+    DPI = '1111111111111'
+
+    def setUp(self):
+        self.tipo_estudio = TipoEstudio.objects.create(nombre='Radiografía de mano')
+        self.radiologo = crear_usuario('radiologo_dpi', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+
+    def _datos_paciente(self, nombre, apellido, **cambios):
+        datos = {
+            'dpi': self.DPI, 'nombre': nombre, 'apellido': apellido,
+            'sexo': Paciente.SEXO_MASCULINO, 'telefono': '', 'correo': 'paciente@gmail.com',
+            'tipo_estudio': self.tipo_estudio.id, 'radiologo': self.radiologo.id,
+            'fecha': timezone.localdate() + datetime.timedelta(days=1), 'hora': '09:00',
+            'carnet_igss': '99887766', 'motivo': '',
+        }
+        datos.update(cambios)
+        return datos
+
+    def _datos_medico(self, nombre, **cambios):
+        datos = {'nombre': nombre, 'dpi': self.DPI, 'tipo': MedicoTratante.TIPO_IGSS}
+        datos.update(cambios)
+        return datos
+
+    def test_medico_con_dpi_de_paciente_con_otro_nombre_falla(self):
+        Paciente.objects.create(dpi=self.DPI, nombre='Jorge', apellido='López', sexo='M')
+
+        form = MedicoTratanteForm(self._datos_medico('Dr. Marcos Pérez'))
+
+        self.assertFalse(form.is_valid())
+        self.assertIn('Jorge López', form.errors['dpi'][0])
+
+    def test_medico_que_tambien_es_paciente_se_acepta(self):
+        Paciente.objects.create(dpi=self.DPI, nombre='Marcos Antonio', apellido='Pérez López', sexo='M')
+
+        form = MedicoTratanteForm(self._datos_medico('Dr. Marcos Pérez'))
+
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_editar_medico_conserva_su_propio_dpi(self):
+        medico = MedicoTratante.objects.create(nombre='Dr. Marcos Pérez', dpi=self.DPI)
+
+        form = MedicoTratanteForm(self._datos_medico('Dr. Marcos Pérez'), medico_actual=medico)
+
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_paciente_con_dpi_de_medico_con_otro_nombre_falla(self):
+        MedicoTratante.objects.create(nombre='Dr. Marcos Pérez', dpi=self.DPI)
+
+        form = AgendarCitaForm(self._datos_paciente('Jorge', 'López'))
+
+        form.is_valid()
+        self.assertIn('Marcos Pérez', form.errors['dpi'][0])
+
+    def test_paciente_con_dpi_de_otro_paciente_con_otro_nombre_falla(self):
+        Paciente.objects.create(dpi=self.DPI, nombre='Jorge', apellido='López', sexo='M')
+
+        for form_class in (AgendarCitaForm, AgendarCitaPrivadoForm, RegistrarTicketForm):
+            with self.subTest(form=form_class.__name__):
+                form = form_class(self._datos_paciente('Marcos', 'Pérez'))
+                form.is_valid()
+                self.assertIn('Jorge López', form.errors['dpi'][0])
+
+    def test_paciente_que_regresa_con_su_mismo_nombre_se_acepta(self):
+        Paciente.objects.create(dpi=self.DPI, nombre='Jorge', apellido='López', sexo='M')
+
+        form = AgendarCitaForm(self._datos_paciente('JORGE', 'Lopez'))
+
+        form.is_valid()
+        self.assertNotIn('dpi', form.errors)
+
+    def test_paciente_que_tambien_es_medico_se_acepta(self):
+        MedicoTratante.objects.create(nombre='Dr. Marcos Pérez', dpi=self.DPI)
+
+        form = AgendarCitaForm(self._datos_paciente('Marcos', 'Pérez'))
+
+        form.is_valid()
+        self.assertNotIn('dpi', form.errors)
