@@ -9,6 +9,7 @@ from .models import Usuario
 #   entrar a esta pantalla, en vez del placeholder
 PANTALLAS_POR_ROL = {
     Usuario.ROL_ADMINISTRADOR: [
+        {'nombre': 'Estado de la Clínica', 'url_name': 'estado_clinica'},
         {'nombre': 'Crear usuario', 'url_name': 'crear_usuario'},
         {
             'nombre': 'Usuarios activos',

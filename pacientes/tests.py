@@ -5281,3 +5281,233 @@ class QRResultadosTests(TestCase):
         respuesta = self.client.get(reverse('historial_paciente', args=[self.paciente.id]))
 
         self.assertContains(respuesta, reverse('qr_estudio', args=[self.cita.id]))
+
+
+class EstadoClinicaTests(TestCase):
+    """Panel "Estado de la Clínica" del administrador (pacientes/estado_clinica.py):
+    solo lo ve un administrador y calcula citas por estado, tiempos, estudios
+    más frecuentes, respuesta de radiólogos en COEX y espera por urgencia."""
+
+    def setUp(self):
+        self.admin = crear_usuario('admin_estado', rol=Usuario.ROL_ADMINISTRADOR, is_superuser=True)
+        self.recepcion = crear_usuario('recep_estado', rol=Usuario.ROL_RECEPCIONISTA)
+        self.rad_rapido = crear_usuario(
+            'rad_rapido', rol=Usuario.ROL_MEDICO_RADIOLOGO, first_name='Ana', last_name='Rápida',
+        )
+        self.rad_lento = crear_usuario(
+            'rad_lento', rol=Usuario.ROL_MEDICO_RADIOLOGO, first_name='Luis', last_name='Lento',
+        )
+        self.hoy = timezone.localdate()
+        # El middleware marca ausentes las agendadas de hoy pasadas las 18:00
+        # en cada petición: se anula para que estos tests no dependan de la hora.
+        parche = patch.object(Cita, 'marcar_ausentes_vencidas', return_value=0)
+        parche.start()
+        self.addCleanup(parche.stop)
+        self.torax = TipoEstudio.objects.create(nombre='Tórax estado', duracion_minutos=20)
+        self.rodilla = TipoEstudio.objects.create(nombre='Rodilla estado', duracion_minutos=10)
+        self.client.force_login(self.admin)
+
+    def _datos(self, **params):
+        respuesta = self.client.get(reverse('estado_clinica_datos'), params)
+        self.assertEqual(respuesta.status_code, 200)
+        return respuesta.json()
+
+    def _cita(self, estado, convenio=Cita.CONVENIO_PRIVADO, tipo=None, fecha=None, **extra):
+        return crear_cita(
+            self.recepcion, paciente=crear_paciente(dpi=f'{Cita.objects.count() + 100:013d}'),
+            tipo_estudio=tipo or self.torax, estado=estado, convenio=convenio,
+            fecha=fecha or self.hoy, **extra,
+        )
+
+    # --- acceso --------------------------------------------------------
+
+    def test_solo_el_administrador_ve_el_panel_y_sus_datos(self):
+        self.client.force_login(self.recepcion)
+
+        self.assertEqual(self.client.get(reverse('estado_clinica')).status_code, 302)
+        self.assertEqual(self.client.get(reverse('estado_clinica_datos')).status_code, 302)
+
+    def test_el_administrador_ve_la_pagina(self):
+        respuesta = self.client.get(reverse('estado_clinica'))
+
+        self.assertContains(respuesta, 'Estado de la Clínica')
+        self.assertContains(respuesta, 'chart.umd.min.js')
+
+    def test_el_panel_del_administrador_tiene_el_boton(self):
+        respuesta = self.client.get(reverse('dashboard'))
+
+        self.assertContains(respuesta, reverse('estado_clinica'))
+        self.assertContains(respuesta, 'Estado de la Clínica')
+
+    # --- citas por estado -------------------------------------------------
+
+    def test_cuenta_citas_aprobadas_en_proceso_y_pendientes(self):
+        self._cita(Cita.ESTADO_AGENDADA)
+        self._cita(Cita.ESTADO_EN_ESPERA)
+        self._cita(Cita.ESTADO_EN_PROCESO)
+        self._cita(Cita.ESTADO_PENDIENTE)
+        self._cita(Cita.ESTADO_PENDIENTE)
+        self._cita(Cita.ESTADO_PROCESADA)
+        self._cita(Cita.ESTADO_RECHAZADA)
+        self._cita(Cita.ESTADO_AUSENTE)
+
+        citas = self._datos()['citas']
+
+        self.assertEqual(citas['aprobadas'], 2)
+        self.assertEqual(citas['en_proceso'], 1)
+        self.assertEqual(citas['pendientes'], 2)
+        self.assertEqual(citas['completadas'], 1)
+        self.assertEqual(citas['rechazadas'], 1)
+        self.assertEqual(citas['ausentes'], 1)
+        self.assertEqual(citas['total'], 8)
+
+    def test_el_periodo_deja_fuera_citas_viejas_y_las_futuras_se_cuentan_aparte(self):
+        self._cita(Cita.ESTADO_PROCESADA, fecha=self.hoy - datetime.timedelta(days=20))
+        self._cita(Cita.ESTADO_AGENDADA, fecha=self.hoy + datetime.timedelta(days=3))
+
+        semana = self._datos(dias=7)['citas']
+        mes = self._datos(dias=30)['citas']
+
+        self.assertEqual(semana['total'], 0)
+        self.assertEqual(semana['futuras_agendadas'], 1)
+        self.assertEqual(mes['completadas'], 1)
+
+    def test_el_filtro_de_convenio_limita_los_conteos(self):
+        self._cita(Cita.ESTADO_AGENDADA, convenio=Cita.CONVENIO_COEX)
+        self._cita(Cita.ESTADO_AGENDADA, convenio=Cita.CONVENIO_PRIVADO)
+
+        self.assertEqual(self._datos(convenio='coex')['citas']['aprobadas'], 1)
+        self.assertEqual(self._datos()['citas']['aprobadas'], 2)
+
+    def test_parametros_invalidos_usan_los_valores_por_defecto(self):
+        datos = self._datos(dias='abc', convenio='inventado')
+
+        self.assertEqual(datos['periodo']['dias'], 30)
+
+    # --- estudios más frecuentes ----------------------------------------
+
+    def test_estudios_mas_frecuentes_y_promedio_por_dia(self):
+        for _ in range(3):
+            self._cita(Cita.ESTADO_PROCESADA, tipo=self.torax)
+        self._cita(Cita.ESTADO_PROCESADA, tipo=self.rodilla)
+        self._cita(Cita.ESTADO_AGENDADA, tipo=self.rodilla)  # no cuenta: no está realizado
+
+        frecuencia = self._datos(dias=7)['frecuencia']
+
+        self.assertEqual(frecuencia['labels'], ['Tórax estado', 'Rodilla estado'])
+        self.assertEqual(frecuencia['valores'], [3, 1])
+        self.assertEqual(frecuencia['total'], 4)
+        self.assertEqual(frecuencia['promedio_diario'], round(4 / 7, 1))
+        self.assertEqual(frecuencia['promedio_semanal'], 4.0)
+
+    # --- tiempo por cita --------------------------------------------------
+
+    def test_tiempo_por_cita_compara_duracion_estimada_con_el_ciclo_real(self):
+        cita = self._cita(Cita.ESTADO_PROCESADA, tipo=self.torax)
+        orden = OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion)
+        inicio = timezone.now() - datetime.timedelta(hours=3)
+        OrdenTrabajo.objects.filter(pk=orden.pk).update(creada_en=inicio)
+        InformeEstudio.objects.create(
+            orden=orden, tipo_estudio=self.torax, texto='ok', creado_por=self.rad_rapido,
+            creado_en=inicio + datetime.timedelta(minutes=90),
+        )
+
+        tiempo = self._datos()['tiempo_por_cita']
+
+        self.assertEqual(tiempo['labels'], ['Tórax estado'])
+        self.assertEqual(tiempo['estimada'], [20])
+        self.assertEqual(tiempo['real'], [90.0])
+        self.assertEqual(tiempo['ciclo_promedio'], 90.0)
+
+    def test_tiempo_por_cita_sin_informes_no_inventa_el_ciclo(self):
+        self._cita(Cita.ESTADO_PROCESADA, tipo=self.torax)
+
+        tiempo = self._datos()['tiempo_por_cita']
+
+        self.assertEqual(tiempo['real'], [0])
+        self.assertEqual(tiempo['ciclo_promedio'], 0)
+
+    # --- respuesta de radiólogos (COEX) -------------------------------------
+
+    def test_promedio_de_respuesta_por_radiologo_en_coex(self):
+        ahora = timezone.now()
+        for radiologo, minutos in ((self.rad_rapido, 10), (self.rad_rapido, 20), (self.rad_lento, 120)):
+            cita = self._cita(
+                Cita.ESTADO_AGENDADA, convenio=Cita.CONVENIO_COEX,
+                radiologo=radiologo, revisada_por=radiologo,
+            )
+            Cita.objects.filter(pk=cita.pk).update(
+                creada_en=ahora - datetime.timedelta(minutes=minutos + 5),
+                revisada_en=ahora - datetime.timedelta(minutes=5),
+            )
+        # Una de Privado no entra en esta gráfica.
+        privada = self._cita(
+            Cita.ESTADO_AGENDADA, convenio=Cita.CONVENIO_PRIVADO, revisada_por=self.rad_lento,
+        )
+        Cita.objects.filter(pk=privada.pk).update(revisada_en=ahora)
+
+        radiologos = self._datos()['radiologos']
+
+        self.assertEqual(radiologos['labels'], ['Ana Rápida', 'Luis Lento'])
+        self.assertEqual(radiologos['promedio_min'], [15.0, 120.0])
+        self.assertEqual(radiologos['solicitudes'], [2, 1])
+        self.assertEqual(radiologos['total'], 3)
+
+    def test_las_solicitudes_rechazadas_tambien_cuentan_como_respondidas(self):
+        ahora = timezone.now()
+        cita = self._cita(
+            Cita.ESTADO_RECHAZADA, convenio=Cita.CONVENIO_COEX,
+            radiologo=self.rad_rapido, revisada_por=self.rad_rapido,
+        )
+        Cita.objects.filter(pk=cita.pk).update(
+            creada_en=ahora - datetime.timedelta(minutes=30), revisada_en=ahora,
+        )
+
+        radiologos = self._datos()['radiologos']
+
+        self.assertEqual(radiologos['rechazadas'], [1])
+        self.assertEqual(radiologos['promedio_min'], [30.0])
+
+    # --- espera por urgencia ------------------------------------------------
+
+    def _ticket(self, prioridad, espera_min, estado=Ticket.ESTADO_ATENDIDO, servicio=Ticket.SERVICIO_COEX):
+        ticket = Ticket.objects.create(
+            paciente=crear_paciente(dpi=f'{Ticket.objects.count() + 500:013d}'),
+            servicio=servicio, prioridad=prioridad, estado=estado,
+            registrado_por=self.recepcion,
+        )
+        ahora = timezone.now()
+        Ticket.objects.filter(pk=ticket.pk).update(
+            creado_en=ahora - datetime.timedelta(minutes=espera_min),
+            atendido_en=ahora if estado == Ticket.ESTADO_ATENDIDO else None,
+        )
+        return ticket
+
+    def test_espera_promedio_y_maxima_segun_la_urgencia(self):
+        self._ticket(Ticket.PRIORIDAD_NORMAL, 40)
+        self._ticket(Ticket.PRIORIDAD_NORMAL, 20)
+        self._ticket(Ticket.PRIORIDAD_URGENTE, 10)
+        self._ticket(Ticket.PRIORIDAD_CRITICA, 2)
+        self._ticket(Ticket.PRIORIDAD_NORMAL, 90, estado=Ticket.ESTADO_EN_ESPERA)  # todavía espera
+
+        espera = self._datos()['espera']
+
+        self.assertEqual(espera['labels'], ['Normal', 'Urgente', 'Crítica'])
+        self.assertEqual(espera['promedio'], [30.0, 10.0, 2.0])
+        self.assertEqual(espera['maximo'], [40.0, 10.0, 2.0])
+        self.assertEqual(espera['atendidos'], [2, 1, 1])
+        self.assertEqual(espera['total'], 4)
+
+    def test_la_espera_respeta_el_filtro_de_convenio(self):
+        self._ticket(Ticket.PRIORIDAD_NORMAL, 30, servicio=Ticket.SERVICIO_COEX)
+        self._ticket(Ticket.PRIORIDAD_NORMAL, 50, servicio=Ticket.SERVICIO_PRIVADO)
+
+        self.assertEqual(self._datos(convenio='privado')['espera']['promedio'][0], 50.0)
+
+    def test_sin_datos_devuelve_ceros_y_no_falla(self):
+        datos = self._datos()
+
+        self.assertEqual(datos['citas']['total'], 0)
+        self.assertEqual(datos['frecuencia']['total'], 0)
+        self.assertEqual(datos['radiologos']['labels'], [])
+        self.assertEqual(datos['espera']['total'], 0)
