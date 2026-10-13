@@ -21,8 +21,9 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.crypto import constant_time_compare, salted_hmac
-from django.utils.http import urlencode
+from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 from django.views.decorators.http import require_POST
+from django_otp import login as otp_login
 from django_otp.plugins.otp_totp.models import TOTPDevice
 
 import qrcode
@@ -125,7 +126,14 @@ def login(request):
             request.session['mfa_user_id'] = user.pk
             return redirect('login_vincular_mfa')
         auth_login(request, user)
-        return redirect(request.GET.get('next') or 'dashboard')
+        siguiente = request.GET.get('next')
+        # Solo a una dirección de este mismo sitio: si no, un enlace con
+        # ?next=https://otro-sitio mandaría a la persona afuera tras entrar.
+        if siguiente and url_has_allowed_host_and_scheme(
+            siguiente, allowed_hosts={request.get_host()}, require_https=request.is_secure(),
+        ):
+            return redirect(siguiente)
+        return redirect('dashboard')
 
     return render(request, 'registration/login.html', {'form': form})
 
@@ -170,6 +178,8 @@ def login_otp(request):
             limitador.CODIGO_MFA.limpiar(ip, user.pk)
             request.session.pop('mfa_user_id', None)
             auth_login(request, user)
+            # Marca la sesión como verificada con OTP: es lo que pide el admin de Django.
+            otp_login(request, device)
             return redirect('dashboard')
         limitador.CODIGO_MFA.fallo(ip, user.pk)
         messages.error(request, 'El código no es válido o ya expiró.')
@@ -213,6 +223,7 @@ def login_vincular_mfa(request):
                 device.save(update_fields=['confirmed'])
                 request.session.pop('mfa_user_id', None)
                 auth_login(request, user)
+                otp_login(request, device)
                 Bitacora.registrar(
                     request=request, usuario=user,
                     accion=Bitacora.ACCION_EDITAR_USUARIO,

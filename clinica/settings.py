@@ -42,7 +42,7 @@ ALLOWED_HOSTS = [
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
+    'clinica.admin_site.AdminConMFAConfig',  # admin de Django, solo con código OTP
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',

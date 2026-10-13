@@ -6,7 +6,10 @@ from django import forms
 from django.contrib.messages import get_messages
 from django.contrib.messages.storage.cookie import CookieStorage
 from django.core.exceptions import ValidationError
-from django.test import RequestFactory, SimpleTestCase, override_settings
+from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
+from django.urls import reverse
+from django_otp.oath import totp
+from django_otp.plugins.otp_totp.models import TOTPDevice
 
 from .validators import (
     CODIGO_CORREO_NO_EXISTENTE,
@@ -138,3 +141,66 @@ class AvisarSiCorreoNoExisteTests(SimpleTestCase):
         avisar_si_correo_no_existe(request, form)
 
         self.assertEqual(list(get_messages(request)), [])
+
+
+class AdminDjangoConMfaTests(TestCase):
+    """clinica/admin_site.py: /admin/ no tiene login propio (sin OTP) y solo
+    deja entrar a una sesión de staff que pasó el código OTP."""
+
+    def setUp(self):
+        from accounts.models import Usuario
+        self.ti = Usuario.objects.create_user(
+            username='ti_admin', password='clave-segura-123', is_staff=True, is_superuser=True,
+            rol=Usuario.ROL_ADMINISTRADOR,
+        )
+        self.device = TOTPDevice.objects.create(user=self.ti, confirmed=True)
+
+    def _codigo(self):
+        d = self.device
+        return f'{totp(d.bin_key, step=d.step, t0=d.t0, digits=d.digits):0{d.digits}d}'
+
+    def _entrar_con_otp(self):
+        self.client.post(reverse('login'), {'username': 'ti_admin', 'password': 'clave-segura-123'})
+        self.client.post(reverse('login_otp'), {'codigo': self._codigo()})
+
+    def test_login_propio_del_admin_manda_al_login_de_la_clinica(self):
+        respuesta = self.client.get('/admin/login/')
+        self.assertRedirects(respuesta, reverse('login'), fetch_redirect_response=False)
+
+    def test_superusuario_sin_otp_no_entra_al_admin(self):
+        self.client.force_login(self.ti)
+        respuesta = self.client.get('/admin/')
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_staff_con_otp_entra_al_admin(self):
+        self._entrar_con_otp()
+        self.assertEqual(self.client.get('/admin/').status_code, 200)
+
+    def test_superusuario_sin_staff_no_entra_aunque_pase_el_otp(self):
+        self.ti.is_staff = False
+        self.ti.save(update_fields=['is_staff'])
+        self._entrar_con_otp()
+        self.assertEqual(self.client.get('/admin/').status_code, 302)
+
+
+class LoginNextSeguroTests(TestCase):
+    """El ?next= del login solo puede llevar a una página de este sitio."""
+
+    def setUp(self):
+        from accounts.models import Usuario
+        Usuario.objects.create_user(username='recep_next', password='clave-segura-123',
+                                    rol=Usuario.ROL_RECEPCIONISTA)
+
+    def _entrar(self, siguiente):
+        return self.client.post(
+            f"{reverse('login')}?next={siguiente}",
+            {'username': 'recep_next', 'password': 'clave-segura-123'},
+        )
+
+    def test_next_a_otro_sitio_se_ignora(self):
+        respuesta = self._entrar('https://sitio-falso.com/')
+        self.assertRedirects(respuesta, reverse('dashboard'), fetch_redirect_response=False)
+
+    def test_next_interno_se_respeta(self):
+        respuesta = self._entrar(reverse('dashboard') + '?x=1')
+        self.assertRedirects(respuesta, reverse('dashboard') + '?x=1', fetch_redirect_response=False)
