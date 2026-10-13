@@ -66,6 +66,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'accounts.middleware.SesionUnicaMiddleware',
+    'accounts.middleware.SinCacheConSesionMiddleware',
     'pacientes.middleware.AutoMarcarAusenteMiddleware',
     'pacientes.middleware.AplicarCambiosEstudioProgramadosMiddleware',
 ]
@@ -200,6 +201,12 @@ CSRF_TRUSTED_ORIGINS = [
 # Cookies solo por HTTPS una vez que esto ya no es puro localhost/LAN.
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
+# Ningún JS lee la cookie csrftoken (la campana toma el token del formulario,
+# ver includes/notificaciones.html): que JavaScript no pueda leerla.
+CSRF_COOKIE_HTTPONLY = True
+# WhiteNoise pone Access-Control-Allow-Origin: * en /static/ por defecto; nadie
+# de otro dominio necesita cargar estos archivos.
+WHITENOISE_ALLOW_ALL_ORIGINS = False
 
 # Por defecto Django deja la cookie de sesion viva 2 semanas aunque se
 # cierre el navegador -- por eso alguien podia cerrar Chrome, abrirlo de

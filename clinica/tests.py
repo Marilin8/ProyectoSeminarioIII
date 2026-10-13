@@ -226,3 +226,33 @@ class CollectstaticDeProduccionTests(TestCase):
             },
         ):
             call_command('collectstatic', interactive=False, verbosity=0)
+
+
+class EncabezadosDeSeguridadTests(TestCase):
+    """Ajustes por el escaneo de OWASP ZAP: páginas con sesión sin caché del
+    navegador, cookie CSRF fuera del alcance de JavaScript y /static/ sin
+    Access-Control-Allow-Origin: *."""
+
+    def setUp(self):
+        from accounts.models import Usuario
+        self.usuario = Usuario.objects.create_user(
+            username='recep_cache', password='clave-segura-123', rol=Usuario.ROL_RECEPCIONISTA,
+        )
+
+    def test_pagina_con_sesion_no_se_guarda_en_cache(self):
+        self.client.force_login(self.usuario)
+        respuesta = self.client.get(reverse('dashboard'))
+        self.assertIn('no-store', respuesta['Cache-Control'])
+        self.assertIn('private', respuesta['Cache-Control'])
+
+    def test_pagina_sin_sesion_no_lleva_no_store(self):
+        respuesta = self.client.get(reverse('login'))
+        self.assertNotIn('no-store', respuesta.get('Cache-Control', ''))
+
+    def test_cookie_csrf_es_httponly(self):
+        respuesta = self.client.get(reverse('login'))
+        self.assertTrue(respuesta.cookies['csrftoken']['httponly'])
+
+    def test_whitenoise_no_permite_todos_los_origenes(self):
+        from django.conf import settings
+        self.assertFalse(settings.WHITENOISE_ALLOW_ALL_ORIGINS)

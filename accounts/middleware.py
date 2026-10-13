@@ -2,6 +2,7 @@ from django.contrib import messages
 from django.contrib.auth import logout
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect
+from django.utils.cache import add_never_cache_headers
 
 from . import trabajos
 
@@ -103,3 +104,23 @@ class ModoRestauracionMiddleware:
             respuesta['Cache-Control'] = 'no-store'
             return respuesta
         return self.get_response(request)
+
+
+class SinCacheConSesionMiddleware:
+    """Las páginas que se ven con sesión iniciada (datos de pacientes,
+    informes, cobros) no se guardan en la caché del navegador: en una
+    computadora compartida, después de cerrar sesión, el botón "Atrás" ya no
+    vuelve a mostrar la página anterior. Respeta un Cache-Control que la
+    vista haya puesto a propósito. Los estáticos no pasan por acá (WhiteNoise
+    los responde antes)."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        user = getattr(request, 'user', None)
+        con_sesion = user is not None and user.is_authenticated
+        response = self.get_response(request)
+        if con_sesion and not response.has_header('Cache-Control'):
+            add_never_cache_headers(response)
+        return response
