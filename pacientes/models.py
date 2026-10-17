@@ -1,4 +1,5 @@
 import datetime
+import hashlib
 import uuid
 from decimal import Decimal
 
@@ -1210,6 +1211,31 @@ class ReporteDiario(models.Model):
 
     def __str__(self):
         return f'Reporte {self.get_convenio_display()} - {self.fecha}'
+
+    @classmethod
+    def asegurar_del_dia(cls, fecha=None):
+        """Crea (en borrador) el reporte de cada convenio para `fecha` (hoy por
+        defecto), aunque todavía no tenga citas: así el reporte del día
+        existe desde las 00:00 y se va llenando a medida que se confirman
+        citas. Lo llama el programador en segundo plano cada minuto (ver
+        accounts/programador.py) y la lista de reportes como respaldo."""
+        fecha = fecha or timezone.localdate()
+        for convenio, _nombre in Cita.CONVENIO_CHOICES:
+            cls.objects.get_or_create(fecha=fecha, convenio=convenio)
+
+    @property
+    def en_curso(self):
+        """El día del reporte todavía no terminó: puede seguir cambiando."""
+        return self.fecha >= timezone.localdate()
+
+    def firma(self):
+        """Huella del contenido actual del reporte. Cambia cuando se agrega,
+        quita o modifica una cita; la página del reporte del día la consulta
+        cada pocos segundos para actualizarse sola."""
+        filas = self.citas().values_list(
+            'id', 'estado', 'hora', 'tipo_estudio_id', 'hora_llegada', 'medico_referente',
+        ).order_by('id')
+        return hashlib.sha1(repr(list(filas)).encode('utf-8')).hexdigest()
 
     def citas(self):
         return (

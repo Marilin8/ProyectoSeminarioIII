@@ -5216,18 +5216,22 @@ def lista_reportes_diarios(request, convenio):
     for fecha in fechas_con_citas:
         if fecha not in fechas_existentes:
             ReporteDiario.objects.get_or_create(fecha=fecha, convenio=convenio)
+    # El reporte de hoy existe desde las 00:00 (lo crea el programador cada
+    # minuto); por si el servidor recién arrancó, también se asegura aquí.
+    hoy = timezone.localdate()
+    ReporteDiario.asegurar_del_dia(hoy)
 
     # Los reportes ya creados son el registro permanente: una vez que
     # existen, deben seguir apareciendo aunque las citas que los originaron
     # cambien después (se reagenden a otra fecha, se rechacen, etc.). Por
     # eso se listan desde ReporteDiario y no recalculando a partir de Cita
-    # en cada visita. Solo se muestran días anteriores a hoy: el reporte de
-    # un día que todavía no terminó puede cambiar (citas que se cancelan,
-    # reagendan o completan durante el día), así que hasta que el día pasa
-    # no se puede confiar en el conteo de estudios realizados / cancelados /
-    # reagendados / finalizados.
+    # en cada visita. Se muestran hasta el día de hoy: el de hoy aparece
+    # "en curso" y se va llenando con las citas que se confirman, pero no se
+    # puede enviar hasta que el día termine (ver enviar_reporte_diario),
+    # porque todavía puede haber citas que se cancelen, reagenden o
+    # completen. Los de fechas futuras no se listan.
     reportes = ReporteDiario.objects.filter(
-        convenio=convenio, fecha__lt=timezone.localdate(),
+        convenio=convenio, fecha__lte=hoy,
     ).order_by('-fecha')
     if solo_enviados:
         reportes = reportes.filter(estado=ReporteDiario.ESTADO_ENVIADO)
@@ -5306,7 +5310,30 @@ def ver_reporte_diario(request, convenio, fecha):
         'solo_lectura': solo_lectura,
         'lista_url_name': f'lista_reportes_diarios_{convenio}',
         'pacientes_pendientes': pacientes_pendientes,
+        'en_curso': reporte.en_curso,
+        'firma': reporte.firma() if reporte.en_curso else '',
+        'segundos_actualizacion': SEGUNDOS_ACTUALIZACION_REPORTE,
     })
+
+
+# Cada cuánto la página del reporte de hoy consulta si cambió.
+SEGUNDOS_ACTUALIZACION_REPORTE = 20
+
+
+@login_required
+@user_passes_test(puede_ver_reportes_diarios)
+def firma_reporte_diario(request, convenio, fecha):
+    """Huella del contenido del reporte (ver ReporteDiario.firma): la
+    página del reporte del día la consulta para recargarse sola cuando se
+    agregan o cambian citas."""
+    _validar_convenio(convenio)
+    fecha_valor = parse_date(fecha)
+    if not fecha_valor:
+        raise Http404('Fecha no válida.')
+    reporte = get_object_or_404(ReporteDiario, convenio=convenio, fecha=fecha_valor)
+    if _solo_ve_reportes_enviados(request.user) and reporte.estado != ReporteDiario.ESTADO_ENVIADO:
+        raise Http404('Este reporte todavía no fue enviado.')
+    return JsonResponse({'firma': reporte.firma(), 'citas': reporte.citas().count()})
 
 
 @login_required

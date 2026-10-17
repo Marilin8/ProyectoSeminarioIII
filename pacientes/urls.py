@@ -297,6 +297,11 @@ urlpatterns = [
     ),
     path('reportes/<str:convenio>/<str:fecha>/', views.ver_reporte_diario, name='ver_reporte_diario'),
     path(
+        'reportes/<str:convenio>/<str:fecha>/firma/',
+        views.firma_reporte_diario,
+        name='firma_reporte_diario',
+    ),
+    path(
         'reportes/<str:convenio>/<str:fecha>/enviar/',
         views.enviar_reporte_diario,
         name='enviar_reporte_diario',

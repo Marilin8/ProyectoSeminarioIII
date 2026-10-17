@@ -63,6 +63,15 @@
 {% endblock %}
 
 {% block content %}
+    {% if en_curso and firma %}
+        <div class="alert alert-info" id="aviso-reporte-en-curso">
+            <strong>Reporte del día en curso.</strong>
+            Se generó a las 00:00 y se va llenando solo con las citas que se confirman
+            (se revisa cada {{ segundos_actualizacion }} segundos). Se puede enviar cuando termine el día.
+            <span id="aviso-reporte-cambios" style="display:none;"><br><strong>Hay citas nuevas o cambios:</strong> guarde lo que está editando para verlos.</span>
+        </div>
+    {% endif %}
+
     {% if editable and pacientes_pendientes %}
         <div class="aviso-pendientes">
             <strong>Este reporte no se puede enviar todavía: hay pacientes con datos pendientes de llenar.</strong>
@@ -195,7 +204,7 @@
             {% endif %}
         </form>
 
-        {% if editable and not pacientes_pendientes %}
+        {% if editable and not pacientes_pendientes and not en_curso %}
             <form method="post" action="{% url 'enviar_reporte_diario' reporte.convenio reporte.fecha|date:'Y-m-d' %}">
                 {% csrf_token %}
                 <div class="acciones-reporte">
@@ -208,5 +217,40 @@
         {% endif %}
     {% else %}
         <p class="vacio">Este reporte todavía no tiene citas registradas.</p>
+    {% endif %}
+
+    {% if en_curso and firma %}
+        <script>
+        (function () {
+            // Reporte del día: si cambian las citas, recargar. Si el usuario está
+            // editando algo sin guardar, no se recarga (se perdería): solo se avisa.
+            var url = "{% url 'firma_reporte_diario' reporte.convenio reporte.fecha|date:'Y-m-d' %}";
+            var firma = "{{ firma }}";
+            var editando = false;
+            document.querySelectorAll('form input, form select, form textarea').forEach(function (campo) {
+                campo.addEventListener('input', function () { editando = true; });
+                campo.addEventListener('change', function () { editando = true; });
+            });
+            document.querySelectorAll('form').forEach(function (f) {
+                f.addEventListener('submit', function () { editando = false; firma = null; });
+            });
+            function revisar() {
+                if (document.hidden || firma === null) { return; }
+                fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (datos) {
+                        if (!datos || datos.firma === firma) { return; }
+                        if (editando) {
+                            document.getElementById('aviso-reporte-cambios').style.display = '';
+                        } else {
+                            window.location.reload();
+                        }
+                    })
+                    .catch(function () {});
+            }
+            setInterval(revisar, {{ segundos_actualizacion }} * 1000);
+            document.addEventListener('visibilitychange', revisar);
+        })();
+        </script>
     {% endif %}
 {% endblock %}

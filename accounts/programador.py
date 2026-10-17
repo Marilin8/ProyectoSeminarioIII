@@ -55,6 +55,12 @@ def _bucle():
             revisar()
         except Exception:
             logger.exception('Falló la revisión de la copia de seguridad automática')
+        try:
+            # De paso, que el reporte diario de cada convenio exista desde las 00:00.
+            from pacientes.models import ReporteDiario
+            ReporteDiario.asegurar_del_dia()
+        except Exception:
+            logger.exception('No se pudieron crear los reportes diarios de hoy')
         finally:
             connections.close_all()
         if _parada.wait(SEGUNDOS_ENTRE_REVISIONES):

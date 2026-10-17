@@ -6731,3 +6731,78 @@ class EstadoClinicaTests(TestCase):
         self.assertEqual(datos['frecuencia']['total'], 0)
         self.assertEqual(datos['radiologos']['labels'], [])
         self.assertEqual(datos['espera']['total'], 0)
+
+
+class ReporteDiarioDelDiaEnCursoTests(TestCase):
+    """El reporte de hoy existe desde las 00:00 (sin esperar a la primera cita), aparece en la
+    lista como "en curso", se va llenando con las citas que se confirman y la página se
+    actualiza sola consultando su firma. Se envía recién cuando termina el día."""
+
+    def setUp(self):
+        self.recepcion = crear_usuario('recep_en_curso', rol=Usuario.ROL_RECEPCIONISTA)
+        self.hoy = timezone.localdate()
+        self.estudio = TipoEstudio.objects.create(nombre='RX reporte en curso')
+        self.client.force_login(self.recepcion)
+
+    def _url(self, nombre='ver_reporte_diario', convenio=Cita.CONVENIO_PRIVADO, fecha=None):
+        return reverse(nombre, args=[convenio, (fecha or self.hoy).isoformat()])
+
+    def test_asegurar_del_dia_crea_el_reporte_de_cada_convenio_aunque_no_haya_citas(self):
+        ReporteDiario.asegurar_del_dia(self.hoy)
+        ReporteDiario.asegurar_del_dia(self.hoy)  # no duplica
+
+        convenios = set(ReporteDiario.objects.filter(fecha=self.hoy).values_list('convenio', flat=True))
+        self.assertEqual(convenios, {c for c, _ in Cita.CONVENIO_CHOICES})
+        self.assertEqual(ReporteDiario.objects.filter(fecha=self.hoy).count(), 3)
+
+    def test_la_lista_muestra_el_reporte_de_hoy_en_curso_y_no_los_futuros(self):
+        ReporteDiario.objects.create(fecha=self.hoy + datetime.timedelta(days=3), convenio=Cita.CONVENIO_PRIVADO)
+
+        respuesta = self.client.get(reverse('lista_reportes_diarios_privado'))
+
+        fechas = [r.fecha for r in respuesta.context['reportes']]
+        self.assertIn(self.hoy, fechas)
+        self.assertNotIn(self.hoy + datetime.timedelta(days=3), fechas)
+        self.assertContains(respuesta, 'Hoy · en curso')
+
+    def test_el_reporte_de_hoy_se_llena_con_las_citas_confirmadas_y_cambia_la_firma(self):
+        ReporteDiario.asegurar_del_dia(self.hoy)
+        reporte = ReporteDiario.objects.get(fecha=self.hoy, convenio=Cita.CONVENIO_PRIVADO)
+        firma_vacia = self.client.get(self._url('firma_reporte_diario')).json()['firma']
+
+        crear_cita(self.recepcion, tipo_estudio=self.estudio, fecha=self.hoy, estado=Cita.ESTADO_AGENDADA)
+        crear_cita(self.recepcion, paciente=crear_paciente(dpi='7777777777701'), tipo_estudio=self.estudio,
+                   fecha=self.hoy, estado=Cita.ESTADO_PENDIENTE)  # sin confirmar: no entra
+
+        datos = self.client.get(self._url('firma_reporte_diario')).json()
+        self.assertNotEqual(datos['firma'], firma_vacia)
+        self.assertEqual(datos['citas'], 1)
+        self.assertEqual(reporte.citas().count(), 1)
+
+    def test_la_pagina_de_hoy_se_actualiza_sola_y_no_ofrece_enviar(self):
+        crear_cita(self.recepcion, tipo_estudio=self.estudio, fecha=self.hoy)
+        ReporteDiario.asegurar_del_dia(self.hoy)
+
+        respuesta = self.client.get(self._url())
+
+        self.assertTrue(respuesta.context['en_curso'])
+        self.assertContains(respuesta, 'Reporte del día en curso')
+        self.assertContains(respuesta, self._url('firma_reporte_diario'))
+        self.assertNotContains(respuesta, 'Enviar reporte al administrador')
+
+    def test_el_reporte_de_ayer_no_esta_en_curso(self):
+        ayer = self.hoy - datetime.timedelta(days=1)
+        crear_cita(self.recepcion, tipo_estudio=self.estudio, fecha=ayer)
+        ReporteDiario.objects.create(fecha=ayer, convenio=Cita.CONVENIO_PRIVADO)
+
+        respuesta = self.client.get(self._url(fecha=ayer))
+
+        self.assertFalse(respuesta.context['en_curso'])
+        self.assertNotContains(respuesta, 'Reporte del día en curso')
+        self.assertNotContains(respuesta, self._url('firma_reporte_diario', fecha=ayer))
+
+    def test_el_financiero_no_ve_la_firma_de_un_reporte_sin_enviar(self):
+        ReporteDiario.asegurar_del_dia(self.hoy)
+        self.client.force_login(crear_usuario('fin_en_curso', rol=Usuario.ROL_ADMINISTRADOR_FINANCIERO))
+
+        self.assertEqual(self.client.get(self._url('firma_reporte_diario')).status_code, 404)
