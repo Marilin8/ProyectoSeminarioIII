@@ -5,7 +5,7 @@
 
 {% block extra_css %}
     <style>
-        .horario { background: var(--info-light); border: 1px solid #bfdbfe; border-radius: var(--radius); padding: 0.6rem 0.75rem; font-size: 0.82rem; color: var(--primary-dark); margin-top: 1rem; }
+        .horario { background: var(--primary-soft); border: 1px solid var(--cian-200, #a6e6f3); border-radius: var(--radius); padding: 0.6rem 0.75rem; font-size: 0.82rem; color: var(--primary-dark); margin-top: 1rem; }
         .horario a { color: var(--primary); margin-left: 0.5rem; font-weight: 500; }
         .aviso-paciente { display: none; margin-top: 0.75rem; padding: 0.6rem 0.75rem; border-radius: var(--radius); font-size: 0.82rem; background: var(--success-light); color: #166534; border: 1px solid #bbf7d0; }
         .aviso-paciente a { color: inherit; font-weight: bold; margin-left: 0.5rem; }
@@ -46,7 +46,7 @@
                 Paciente ya registrado — se cargaron sus datos. Podés corregir el teléfono y el correo si cambiaron.
                 <a href="#" id="btn-buscar-otro">No es este paciente</a>
             </div>
-            <div class="aviso-paciente" id="aviso-paciente-no-encontrado" style="background:var(--info-light);color:#1e3a8a;border:1px solid #bfdbfe;">
+            <div class="aviso-paciente" id="aviso-paciente-no-encontrado" style="background:var(--primary-soft);color:var(--primary-dark, #0b5d74);border:1px solid var(--cian-200, #a6e6f3);">
                 No hay ningún paciente registrado con ese DPI — completá los datos para registrarlo.
             </div>
 
