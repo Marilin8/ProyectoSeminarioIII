@@ -6,6 +6,9 @@
 {% block page_title %}Panel de estadísticas{% endblock %}
 
 {% block topbar_actions %}
+    <a href="{% url 'estado_clinica' %}" class="btn btn-outline">
+        <svg><use href="#i-activity"/></svg> Estado de la Clínica
+    </a>
     <a href="{% url 'menu_principal' %}" class="btn btn-primary">
         <svg><use href="#i-grid"/></svg> Ir al menú principal
     </a>
