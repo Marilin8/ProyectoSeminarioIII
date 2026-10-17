@@ -54,11 +54,6 @@
                 <button type="button" data-dias="{{ valor }}" class="{% if valor == dias %}activo{% endif %}">{{ etiqueta }}</button>
             {% endfor %}
         </div>
-        <select id="ec-convenio" aria-label="Convenio">
-            {% for valor, etiqueta in convenios %}
-                <option value="{{ valor }}" {% if valor == convenio %}selected{% endif %}>{{ etiqueta }}</option>
-            {% endfor %}
-        </select>
         <div class="ec-actualizado">
             <span id="ec-rango"></span>
             <span>Actualizado <strong id="ec-hora">—</strong></span>
@@ -136,7 +131,8 @@
     <script>
     (function () {
         var URL_DATOS = "{% url 'estado_clinica_datos' %}";
-        var estado = { dias: {{ dias }}, convenio: "{{ convenio }}" };
+        // Siempre todos los convenios (se quitó el selector de convenio).
+        var estado = { dias: {{ dias }}, convenio: "" };
         var COLORES = {
             aprobadas: '#16a34a', en_proceso: '#2563eb', pendientes: '#d97706',
             completadas: '#0d9488', rechazadas: '#dc2626', ausentes: '#94a3b8',
@@ -295,10 +291,6 @@
                 });
                 cargar();
             });
-        });
-        document.getElementById('ec-convenio').addEventListener('change', function (e) {
-            estado.convenio = e.target.value;
-            cargar();
         });
         document.getElementById('ec-refrescar').addEventListener('click', cargar);
 
