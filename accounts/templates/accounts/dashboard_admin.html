@@ -1,0 +1,264 @@
+{% extends 'base.html' %}
+{% load l10n %}
+
+{% block title %}Estadísticas — Clínica de Imágenes{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+{% block page_title %}Panel de estadísticas{% endblock %}
+
+{% block topbar_actions %}
+    <a href="{% url 'menu_principal' %}" class="btn btn-primary">
+        <svg><use href="#i-grid"/></svg> Ir al menú principal
+    </a>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .est-cabecera { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .est-cabecera p { margin: 0; }
+    .periodos { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--card); }
+    .periodos a { padding: 0.35rem 0.8rem; font-size: 0.8rem; color: var(--text-muted); text-decoration: none; border-left: 1px solid var(--border); }
+    .periodos a:first-child { border-left: none; }
+    .periodos a.activo { background: var(--primary); color: #fff; font-weight: 600; }
+    .periodos a:not(.activo):hover { background: var(--primary-soft); color: var(--primary-dark); }
+
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0.85rem; margin-bottom: 1rem; }
+    .kpi { background: var(--card); border: 1px solid var(--border-light); border-radius: var(--radius-lg); box-shadow: var(--shadow); padding: 0.9rem 1rem; border-top: 4px solid var(--cian-500); }
+    .kpi.morado { border-top-color: var(--morado-500); }
+    .kpi-etiqueta { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+    .kpi-valor { font-size: 1.7rem; font-weight: 700; color: var(--text); line-height: 1.2; margin-top: 0.2rem; overflow-wrap: anywhere; }
+    .kpi-valor.texto { font-size: 1.05rem; padding-top: 0.35rem; }
+    .kpi-detalle { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.15rem; }
+
+    .graficas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .graficas .ancha { grid-column: 1 / -1; }
+    .grafica-nota { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; }
+    .sin-datos { text-align: center; color: var(--text-muted); font-size: 0.85rem; padding: 2.5rem 1rem; }
+
+    /* Línea: tiempo promedio */
+    .svg-linea { width: 100%; height: auto; display: block; }
+    .svg-linea .rejilla { stroke: var(--neutral-200); stroke-width: 1; }
+    .svg-linea .eje { fill: var(--text-muted); font-size: 11px; font-family: inherit; }
+    .svg-linea .linea { fill: none; stroke: var(--cian-500); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+    .svg-linea .punto { fill: var(--card); stroke: var(--cian-600); stroke-width: 2; }
+    .svg-linea .punto:hover { fill: var(--morado-500); stroke: var(--morado-500); }
+
+    /* Barras horizontales: estudios */
+    .barras-h { display: flex; flex-direction: column; gap: 0.55rem; }
+    .barra-fila { display: grid; grid-template-columns: minmax(0, 11rem) minmax(0, 1fr) 4.5rem; gap: 0.6rem; align-items: center; font-size: 0.8rem; }
+    .barra-nombre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); }
+    .barra-pista { background: var(--neutral-150); border-radius: 999px; height: 0.85rem; overflow: hidden; }
+    .barra-relleno { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--cian-400), var(--cian-600)); }
+    .barra-fila.top .barra-relleno { background: linear-gradient(90deg, var(--morado-400), var(--morado-600)); }
+    .barra-fila.top .barra-nombre { color: var(--text); font-weight: 700; }
+    .barra-fila.otros .barra-relleno { background: var(--neutral-300); }
+    .barra-valor { text-align: right; font-weight: 600; color: var(--text); white-space: nowrap; }
+    .barra-valor small { color: var(--text-muted); font-weight: 400; }
+    .barra-fila.personal { grid-template-columns: minmax(0, 11rem) minmax(0, 1fr) 6.5rem; }
+    .barra-fila.personal .barra-nombre small { display: block; font-size: 0.68rem; color: var(--text-muted); font-weight: 400; }
+    .barra-fila.personal .barra-relleno { background: linear-gradient(90deg, var(--cian-300), var(--cian-600)); }
+    .barra-fila.rapido .barra-relleno { background: linear-gradient(90deg, #4ade80, var(--success)); }
+    .barra-fila.lento .barra-relleno { background: linear-gradient(90deg, #f87171, var(--danger)); }
+    .barra-fila.rapido .barra-valor { color: var(--success); }
+    .barra-fila.lento .barra-valor { color: var(--danger-text); }
+
+    /* Dona: convenios */
+    .dona-caja { display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; justify-content: center; }
+    .dona { width: 170px; height: 170px; border-radius: 50%; position: relative; flex-shrink: 0; }
+    .dona::after { content: ''; position: absolute; inset: 28px; background: var(--card); border-radius: 50%; }
+    .dona-centro { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1; }
+    .dona-centro strong { font-size: 1.5rem; color: var(--text); line-height: 1; }
+    .dona-centro span { font-size: 0.72rem; color: var(--text-muted); }
+    .leyenda { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.45rem; font-size: 0.82rem; }
+    .leyenda li { display: flex; align-items: center; gap: 0.5rem; }
+    .muestra { width: 0.8rem; height: 0.8rem; border-radius: 3px; flex-shrink: 0; }
+
+    /* Columnas: pacientes nuevos */
+    .columnas { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0.75rem; align-items: end; height: 190px; padding-top: 1.2rem; border-bottom: 1px solid var(--border); }
+    .columna-mes { display: flex; justify-content: center; align-items: flex-end; gap: 4px; height: 100%; }
+    .col { width: min(26px, 40%); border-radius: 5px 5px 0 0; position: relative; min-height: 2px; }
+    .col.privado { background: var(--morado-500); }
+    .col.igss { background: var(--cian-500); }
+    .col span { position: absolute; top: -1.15rem; left: 50%; transform: translateX(-50%); font-size: 0.7rem; font-weight: 600; color: var(--text-soft); }
+    .meses { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0.75rem; font-size: 0.72rem; color: var(--text-muted); text-align: center; margin-top: 0.35rem; }
+    .leyenda-horizontal { display: flex; gap: 1.25rem; flex-wrap: wrap; font-size: 0.8rem; margin-top: 0.75rem; }
+    .leyenda-horizontal span { display: inline-flex; align-items: center; gap: 0.4rem; }
+
+    @media (max-width: 900px) {
+        .graficas { grid-template-columns: 1fr; }
+        .barra-fila { grid-template-columns: minmax(0, 8rem) minmax(0, 1fr) 4rem; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+{# Sin localización: las coordenadas SVG y los anchos CSS necesitan punto decimal, no coma. #}
+{% localize off %}
+<div class="est-cabecera">
+    <p class="text-muted text-sm">
+        Del {{ desde|date:"d/m/Y" }} al {{ hoy|date:"d/m/Y" }} · Bienvenido, {{ user.get_full_name|default:user.username }}
+    </p>
+    <nav class="periodos" aria-label="Periodo">
+        {% for p in periodos %}
+            <a href="?dias={{ p }}" class="{% if p == dias %}activo{% endif %}">Últimos {{ p }} días</a>
+        {% endfor %}
+    </nav>
+</div>
+
+<div class="kpis">
+    <div class="kpi">
+        <div class="kpi-etiqueta">Pacientes atendidos hoy</div>
+        <div class="kpi-valor">{{ kpi.atendidos_hoy }}</div>
+        <div class="kpi-detalle">Estudios en proceso o procesados</div>
+    </div>
+    <div class="kpi">
+        <div class="kpi-etiqueta">Tiempo promedio hoy</div>
+        <div class="kpi-valor">{% if kpi.promedio_hoy is not None %}{{ kpi.promedio_hoy }} min{% else %}—{% endif %}</div>
+        <div class="kpi-detalle">
+            {% if kpi.promedio_periodo is not None %}Promedio del periodo: {{ kpi.promedio_periodo }} min{% else %}Sin mediciones en el periodo{% endif %}
+        </div>
+    </div>
+    <div class="kpi morado">
+        <div class="kpi-etiqueta">Estudio más realizado</div>
+        <div class="kpi-valor texto">{{ estudios.top.nombre|default:"—" }}</div>
+        <div class="kpi-detalle">{% if estudios.top %}{{ estudios.top.total }} de {{ estudios.total }} estudios ({{ estudios.top.porcentaje }} %){% else %}Sin estudios en el periodo{% endif %}</div>
+    </div>
+    <div class="kpi morado">
+        <div class="kpi-etiqueta">Pacientes nuevos este mes</div>
+        <div class="kpi-valor">{{ nuevos.mes_actual.privado|add:nuevos.mes_actual.igss }}</div>
+        <div class="kpi-detalle">Privado: {{ nuevos.mes_actual.privado }} · IGSS: {{ nuevos.mes_actual.igss }}</div>
+    </div>
+</div>
+
+<div class="graficas">
+    <div class="card ancha">
+        <div class="card-header">Tiempo promedio de atención por paciente (minutos por día)</div>
+        <div class="card-body">
+            {% if tiempos.hay_datos %}
+                <svg class="svg-linea" viewBox="0 0 {{ tiempos.ancho }} {{ tiempos.alto }}" role="img"
+                     aria-label="Tiempo promedio de atención por día">
+                    {% for l in tiempos.lineas_y %}
+                        <line class="rejilla" x1="{{ tiempos.x_inicio }}" x2="{{ tiempos.x_fin }}" y1="{{ l.y }}" y2="{{ l.y }}"/>
+                        <text class="eje" x="{{ tiempos.x_inicio|add:'-6' }}" y="{{ l.y }}" text-anchor="end" dominant-baseline="middle">{{ l.valor }}</text>
+                    {% endfor %}
+                    {% for e in tiempos.etiquetas_x %}
+                        <text class="eje" x="{{ e.x }}" y="{{ tiempos.y_texto_x }}" text-anchor="middle">{{ e.texto }}</text>
+                    {% endfor %}
+                    {% for t in tiempos.tramos %}
+                        <polyline class="linea" points="{{ t }}"/>
+                    {% endfor %}
+                    {% for p in tiempos.puntos %}
+                        <circle class="punto" cx="{{ p.x }}" cy="{{ p.y }}" r="4">
+                            <title>{{ p.fecha|date:"d/m/Y" }}: {{ p.promedio }} min promedio ({{ p.pacientes }} paciente{{ p.pacientes|pluralize }})</title>
+                        </circle>
+                    {% endfor %}
+                </svg>
+                <p class="grafica-nota">
+                    Desde que recepción marca la llegada del paciente hasta que se sube la última imagen del estudio.
+                    Basado en {{ kpi.pacientes_medidos }} paciente{{ kpi.pacientes_medidos|pluralize }}. Pase el cursor sobre un punto para ver el detalle.
+                </p>
+            {% else %}
+                <div class="sin-datos">Todavía no hay pacientes con llegada marcada e imágenes subidas en este periodo.</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Técnicos: tiempo de atención por paciente</div>
+        <div class="card-body">
+            {% if personal.tecnicos %}
+                <div class="barras-h">
+                    {% for f in personal.tecnicos %}
+                        <div class="barra-fila personal {{ f.etiqueta }}" title="{{ f.nombre }}: {{ f.texto }} en promedio, {{ f.pacientes }} paciente{{ f.pacientes|pluralize }}">
+                            <span class="barra-nombre">{{ f.nombre }}<small>{{ f.pacientes }} paciente{{ f.pacientes|pluralize }}</small></span>
+                            <span class="barra-pista"><span class="barra-relleno" style="display:block;width:{{ f.ancho }}%"></span></span>
+                            <span class="barra-valor">{{ f.texto }}</span>
+                        </div>
+                    {% endfor %}
+                </div>
+                <p class="grafica-nota">Desde la llegada del paciente hasta la última imagen subida. Se atribuye al técnico que subió las imágenes. Verde: el más rápido; rojo: el que más tarda.</p>
+            {% else %}
+                <div class="sin-datos">No hay estudios con llegada marcada e imágenes en este periodo.</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Radiólogos: tiempo hasta terminar el informe</div>
+        <div class="card-body">
+            {% if personal.radiologos %}
+                <div class="barras-h">
+                    {% for f in personal.radiologos %}
+                        <div class="barra-fila personal {{ f.etiqueta }}" title="{{ f.nombre }}: {{ f.texto }} en promedio, {{ f.pacientes }} informe{{ f.pacientes|pluralize }}">
+                            <span class="barra-nombre">{{ f.nombre }}<small>{{ f.pacientes }} informe{{ f.pacientes|pluralize }}</small></span>
+                            <span class="barra-pista"><span class="barra-relleno" style="display:block;width:{{ f.ancho }}%"></span></span>
+                            <span class="barra-valor">{{ f.texto }}</span>
+                        </div>
+                    {% endfor %}
+                </div>
+                <p class="grafica-nota">Desde que las imágenes están listas hasta que se carga el último informe del estudio. Verde: el más rápido; rojo: el que más tarda.</p>
+            {% else %}
+                <div class="sin-datos">No hay informes terminados en este periodo.</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Estudios realizados por tipo</div>
+        <div class="card-body">
+            {% if estudios.barras %}
+                <div class="barras-h">
+                    {% for b in estudios.barras %}
+                        <div class="barra-fila{% if forloop.first %} top{% endif %}{% if b.otros %} otros{% endif %}" title="{{ b.nombre }}: {{ b.total }}">
+                            <span class="barra-nombre">{{ b.nombre }}</span>
+                            <span class="barra-pista"><span class="barra-relleno" style="display:block;width:{{ b.ancho }}%"></span></span>
+                            <span class="barra-valor">{{ b.total }} <small>{{ b.porcentaje }}%</small></span>
+                        </div>
+                    {% endfor %}
+                </div>
+                <p class="grafica-nota">{{ estudios.total }} estudios de {{ estudios.tipos }} tipo{{ estudios.tipos|pluralize }} distintos. En morado, el más realizado.</p>
+            {% else %}
+                <div class="sin-datos">No hay estudios realizados en este periodo.</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Estudios por convenio</div>
+        <div class="card-body">
+            <div class="dona-caja">
+                <div class="dona" style="background: conic-gradient({{ convenios.gradiente }});">
+                    <div class="dona-centro"><strong>{{ convenios.total }}</strong><span>estudios</span></div>
+                </div>
+                <ul class="leyenda">
+                    {% for s in convenios.segmentos %}
+                        <li><span class="muestra" style="background:{{ s.color }}"></span>{{ s.nombre }}: <strong>{{ s.total }}</strong> <span class="text-muted">({{ s.porcentaje }}%)</span></li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div class="card ancha">
+        <div class="card-header">Pacientes nuevos por mes: privado vs. IGSS</div>
+        <div class="card-body">
+            <div class="columnas">
+                {% for c in nuevos.columnas %}
+                    <div class="columna-mes">
+                        <div class="col privado" style="height:{{ c.alto_privado }}%" title="{{ c.mes }} · Privado: {{ c.privado }}"><span>{{ c.privado }}</span></div>
+                        <div class="col igss" style="height:{{ c.alto_igss }}%" title="{{ c.mes }} · IGSS: {{ c.igss }}"><span>{{ c.igss }}</span></div>
+                    </div>
+                {% endfor %}
+            </div>
+            <div class="meses">
+                {% for c in nuevos.columnas %}<span>{{ c.mes }}</span>{% endfor %}
+            </div>
+            <div class="leyenda-horizontal">
+                <span><span class="muestra" style="background:var(--morado-500)"></span>Privado: <strong>{{ nuevos.total_privado }}</strong></span>
+                <span><span class="muestra" style="background:var(--cian-500)"></span>IGSS (COEX + Emergencia): <strong>{{ nuevos.total_igss }}</strong></span>
+            </div>
+            <p class="grafica-nota">Un paciente cuenta como nuevo en el mes de su primera cita; el origen es el convenio de esa primera cita.</p>
+        </div>
+    </div>
+</div>
+{% endlocalize %}
+{% endblock %}

@@ -10,6 +10,7 @@ urlpatterns = [
     path('login/vincular-mfa/', views.login_vincular_mfa, name='login_vincular_mfa'),
     path('logout/', LogoutView.as_view(), name='logout'),
     path('dashboard/', views.dashboard, name='dashboard'),
+    path('menu/', views.menu_principal, name='menu_principal'),
     path('perfil/', views.mi_perfil, name='mi_perfil'),
     path('perfil/verificacion-2-pasos/', views.configurar_mfa, name='configurar_mfa'),
     path('usuarios/nuevo/', views.crear_usuario, name='crear_usuario'),

@@ -5,6 +5,11 @@
 {% block page_title %}Bienvenido, {{ user.get_full_name|default:user.username }}{% endblock %}
 
 {% block topbar_actions %}
+    {% if user.is_superuser or user|tiene_rol:'administrador' %}
+        <a href="{% url 'dashboard' %}" class="btn btn-outline">
+            <svg><use href="#i-bar-chart"/></svg> Ver estadísticas
+        </a>
+    {% endif %}
 {% endblock %}
 
 {% block extra_css %}

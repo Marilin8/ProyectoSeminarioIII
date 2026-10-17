@@ -30,6 +30,7 @@ import qrcode
 
 from clinica.validators import avisar_si_correo_no_existe
 
+from . import estadisticas
 from .correos import (
     correo_no_recibe,
     enmascarar_correo,
@@ -328,6 +329,17 @@ def _clave_manual(device):
 
 @login_required
 def dashboard(request):
+    """Primera página tras iniciar sesión. El administrador ve el panel de
+    estadísticas (con un botón al menú de pantallas); el resto de los roles
+    va directo a su menú."""
+    if es_administrador(request.user):
+        contexto = estadisticas.calcular(request.GET.get('dias'))
+        return render(request, 'accounts/dashboard_admin.html', contexto)
+    return menu_principal(request)
+
+
+@login_required
+def menu_principal(request):
     return render(request, 'accounts/dashboard.html', {'pantallas': pantallas_de(request.user)})
 
 
