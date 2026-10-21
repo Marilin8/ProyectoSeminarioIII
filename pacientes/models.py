@@ -1258,7 +1258,7 @@ class ReporteDiario(models.Model):
         return (
             Cita.objects.filter(convenio=self.convenio, fecha=self.fecha, sucursal_id=self.sucursal_id)
             .exclude(estado__in=(Cita.ESTADO_PENDIENTE, Cita.ESTADO_RECHAZADA))
-            .select_related('paciente', 'tipo_estudio', 'radiologo', 'cobro')
+            .select_related('paciente', 'tipo_estudio', 'radiologo', 'cobro', 'medico_tratante', 'orden_trabajo')
             .prefetch_related('tipo_estudio__precios')
             .order_by('hora')
         )

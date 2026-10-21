@@ -133,14 +133,22 @@
                                     <td>{{ fila.paciente }}</td>
                                     <td>{{ fila.edad|default:'—' }}</td>
                                     <td>{{ fila.estudio }}</td>
-                                    <td>{{ fila.tecnico|default:'—' }}</td>
+                                    <td>
+                                        {% if fila.tecnico %}{{ fila.tecnico }}
+                                        {% elif fila.tecnico_pendiente %}<span class="text-muted text-xs" title="Se llena cuando el técnico sube las imágenes del estudio">Pendiente</span>
+                                        {% else %}—{% endif %}
+                                    </td>
                                     <td>
                                         {% if editable %}
-                                            <input
-                                                class="medico-referente" type="text"
-                                                name="medico_referente_{{ fila.cita_id }}"
-                                                value="{{ fila.medico_referente }}"
-                                            >
+                                            <select class="medico-referente" name="medico_tratante_{{ fila.cita_id }}" aria-label="Médico tratante">
+                                                <option value="">— Sin médico —</option>
+                                                {% for medico in medicos_tratantes %}
+                                                    <option value="{{ medico.id }}" {% if medico.id == fila.medico_tratante_id %}selected{% endif %}>{{ medico.nombre }}</option>
+                                                {% endfor %}
+                                            </select>
+                                            {% if not fila.medico_tratante_id and fila.medico_referente %}
+                                                <div class="text-muted text-xs">Antes: {{ fila.medico_referente }}</div>
+                                            {% endif %}
                                         {% else %}
                                             {{ fila.medico_referente|default:'—' }}
                                         {% endif %}

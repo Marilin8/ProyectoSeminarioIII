@@ -4980,7 +4980,7 @@ def _filas_reporte(reporte):
     filas = []
     es_privado = reporte.convenio == Cita.CONVENIO_PRIVADO
     for indice, cita in enumerate(reporte.citas(), start=1):
-        tecnico = cita.tecnico_asignado
+        tecnicos = _tecnicos_que_atendieron(cita)
         fila = {
             'no': indice,
             'cita_id': cita.id,
@@ -4988,8 +4988,14 @@ def _filas_reporte(reporte):
             'paciente': f'{cita.paciente.nombre} {cita.paciente.apellido}',
             'edad': cita.paciente.edad_en(cita.fecha),
             'estudio': cita.tipo_estudio.nombre,
-            'tecnico': (tecnico.get_full_name() or tecnico.username) if tecnico else '',
-            'medico_referente': cita.medico_referente,
+            # Técnico(s) que subieron las imágenes del estudio: si hay varios técnicos
+            # en turno, así se sabe quién lo atendió.
+            'tecnico': ', '.join(tecnicos),
+            'tecnico_pendiente': not tecnicos and cita.estado != Cita.ESTADO_AUSENTE,
+            # El médico referente es el médico tratante de la cita; el texto libre
+            # de antes (medico_referente) solo se muestra si no tiene uno elegido.
+            'medico_referente': cita.medico_tratante.nombre if cita.medico_tratante_id else cita.medico_referente,
+            'medico_tratante_id': cita.medico_tratante_id,
             'emerg': 'X' if cita.convenio == Cita.CONVENIO_EMERGENCIA_IGSS else '',
             'radiologo': (
                 (cita.radiologo.get_full_name() or cita.radiologo.username) if cita.radiologo else ''
@@ -5008,6 +5014,31 @@ def _filas_reporte(reporte):
             })
         filas.append(fila)
     return filas
+
+
+def _tecnicos_que_atendieron(cita):
+    """Nombres de los técnicos que subieron imágenes del estudio, en el orden en que
+    lo hicieron (sin repetir). Vacío si todavía no tiene imágenes."""
+    orden = getattr(cita, 'orden_trabajo', None)
+    if orden is None:
+        return []
+    nombres = []
+    for imagen in orden.imagenes.select_related('subida_por').order_by('subida_en'):
+        usuario = imagen.subida_por
+        nombre = (usuario.get_full_name() or usuario.username) if usuario else ''
+        if nombre and nombre not in nombres:
+            nombres.append(nombre)
+    return nombres
+
+
+def _medicos_tratantes_para_reporte(reporte, filas):
+    """Médicos para elegir en la columna "Médico referente": los del lado del convenio
+    (Privado o IGSS) más los que ya tengan las citas del reporte."""
+    lado = MedicoTratante.TIPO_PRIVADO if reporte.convenio == Cita.CONVENIO_PRIVADO else MedicoTratante.TIPO_IGSS
+    ya_elegidos = {f['medico_tratante_id'] for f in filas if f['medico_tratante_id']}
+    return MedicoTratante.objects.filter(
+        Q(id__in=MedicoTratante.disponibles_para(lado).values('id')) | Q(id__in=ya_elegidos),
+    ).order_by('nombre')
 
 
 def _pacientes_con_datos_pendientes(reporte):
@@ -5348,11 +5379,14 @@ def ver_reporte_diario(request, convenio, fecha):
             messages.error(request, 'Este reporte ya no se puede editar.')
             return redirect(request.path)
         con_placas_invalidas = []
+        validos = {m.id: m for m in _medicos_tratantes_para_reporte(reporte, _filas_reporte(reporte))}
         for cita in reporte.citas():
-            valor = request.POST.get(f'medico_referente_{cita.id}', '').strip()
-            if valor != cita.medico_referente:
-                cita.medico_referente = valor
-                cita.save(update_fields=['medico_referente'])
+            valor = request.POST.get(f'medico_tratante_{cita.id}')
+            if valor is not None:
+                medico = validos.get(int(valor)) if valor.isdigit() else None
+                if (medico.id if medico else None) != cita.medico_tratante_id:
+                    cita.medico_tratante = medico
+                    cita.save(update_fields=['medico_tratante'])
             if reporte.convenio == Cita.CONVENIO_PRIVADO:
                 cambios = []
                 for campo in CAMPOS_PLACAS:
@@ -5380,6 +5414,7 @@ def ver_reporte_diario(request, convenio, fecha):
 
     pacientes_pendientes = _pacientes_con_datos_pendientes(reporte)
     filas = _filas_reporte(reporte)
+    medicos_tratantes = _medicos_tratantes_para_reporte(reporte, filas) if editable else []
     es_privado = convenio == Cita.CONVENIO_PRIVADO
     return render(request, 'pacientes/reporte_diario.html', {
         'reporte': reporte,
@@ -5394,6 +5429,7 @@ def ver_reporte_diario(request, convenio, fecha):
         'solo_lectura': solo_lectura,
         'lista_url_name': f'lista_reportes_diarios_{convenio}',
         'pacientes_pendientes': pacientes_pendientes,
+        'medicos_tratantes': medicos_tratantes,
         'en_curso': reporte.en_curso,
         'firma': reporte.firma() if reporte.en_curso else '',
         'segundos_actualizacion': SEGUNDOS_ACTUALIZACION_REPORTE,
