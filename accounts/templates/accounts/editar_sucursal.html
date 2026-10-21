@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if sucursal %}Editar {{ sucursal.nombre }}{% else %}Nueva sucursal{% endif %} — Clínica de Imágenes{% endblock %}
+{% block page_title %}{% if sucursal %}Editar sucursal: {{ sucursal.nombre }}{% else %}Nueva sucursal{% endif %}{% endblock %}
+
+{% block topbar_actions %}
+    <a href="{% url 'lista_sucursales' %}" class="btn btn-outline">
+        <svg><use href="#i-arrow-left"/></svg> Volver a sucursales
+    </a>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .lista-usuarios ul, .lista-usuarios > div { list-style: none; padding: 0; margin: 0.4rem 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.35rem 1rem; }
+    .lista-usuarios label { display: flex; align-items: center; gap: 0.45rem; margin: 0; font-weight: 400; }
+</style>
+{% endblock %}
+
+{% block content %}
+<form method="post" class="card" style="max-width: 900px;">
+    {% csrf_token %}
+    <div class="card-body">
+        {{ form.non_field_errors }}
+        <div class="form-row">
+            <div>
+                <label for="{{ form.nombre.id_for_label }}">Nombre</label>
+                {{ form.nombre }}
+                {{ form.nombre.errors }}
+            </div>
+            <div>
+                <label for="{{ form.telefono.id_for_label }}">Teléfono</label>
+                {{ form.telefono }}
+                {{ form.telefono.errors }}
+            </div>
+        </div>
+        <label for="{{ form.direccion.id_for_label }}">Dirección</label>
+        {{ form.direccion }}
+        {{ form.direccion.errors }}
+
+        <label style="display:flex;align-items:center;gap:0.45rem;">{{ form.activa }} Activa</label>
+        <p class="form-help">{{ form.activa.help_text }}</p>
+
+        <div class="section-title mt-3">{{ form.usuarios.label }}</div>
+        <p class="form-help">{{ form.usuarios.help_text }}</p>
+        <div class="lista-usuarios">{{ form.usuarios }}</div>
+        {{ form.usuarios.errors }}
+
+        <div class="flex gap-1 mt-3">
+            <button type="submit" class="btn btn-primary"><svg><use href="#i-save"/></svg> Guardar</button>
+            <a href="{% url 'lista_sucursales' %}" class="btn btn-outline">Cancelar</a>
+        </div>
+    </div>
+</form>
+{% endblock %}

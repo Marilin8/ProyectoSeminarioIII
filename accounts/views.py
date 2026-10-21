@@ -30,7 +30,7 @@ import qrcode
 
 from clinica.validators import avisar_si_correo_no_existe
 
-from . import estadisticas, finanzas
+from . import estadisticas, finanzas, sucursales
 from .correos import (
     correo_no_recibe,
     enmascarar_correo,
@@ -44,13 +44,14 @@ from .forms import (
     LoginForm,
     PerfilForm,
     RegistrarPagoForm,
+    SucursalForm,
 )
 from . import limitador, respaldo_automatico
 from . import nube as servicio_nube
 from . import respaldos as servicio_respaldos
 from . import tareas_respaldo, trabajos
 from .models import (
-    Bitacora, ConexionGoogleDrive, HistorialComision, PagoSalario, RespaldoEnNube, Usuario,
+    Bitacora, ConexionGoogleDrive, HistorialComision, PagoSalario, RespaldoEnNube, Sucursal, Usuario,
     _ip_real_del_visitante,
 )
 from .pantallas import buscar_pantalla, pantallas_de
@@ -364,6 +365,46 @@ def panel_financiero(request):
 
 
 @login_required
+@user_passes_test(es_administrador)
+def lista_sucursales(request):
+    lista = Sucursal.objects.annotate(
+        cantidad_usuarios=Count('usuarios', filter=Q(usuarios__is_active=True), distinct=True),
+    )
+    return render(request, 'accounts/lista_sucursales.html', {'sucursales': lista})
+
+
+@login_required
+@user_passes_test(es_administrador)
+def editar_sucursal(request, sucursal_id=None):
+    sucursal = get_object_or_404(Sucursal, id=sucursal_id) if sucursal_id else None
+    form = SucursalForm(request.POST or None, instance=sucursal)
+    if request.method == 'POST' and form.is_valid():
+        guardada = form.save()
+        Bitacora.registrar(
+            request=request, usuario=request.user, accion=Bitacora.ACCION_GESTIONAR_SUCURSAL,
+            descripcion=(
+                f'{"Editó" if sucursal else "Creó"} la sucursal "{guardada.nombre}" '
+                f'({guardada.usuarios.filter(is_active=True).count()} usuarios asignados).'
+            ),
+        )
+        messages.success(request, f'Sucursal "{guardada.nombre}" guardada.')
+        return redirect('lista_sucursales')
+    return render(request, 'accounts/editar_sucursal.html', {'form': form, 'sucursal': sucursal})
+
+
+@require_POST
+@login_required
+def cambiar_sucursal(request):
+    """Selector de la barra lateral: cambia la sucursal activa del usuario (o "todas",
+    solo para el administrador). Ver accounts.sucursales."""
+    sucursales.elegir(request, request.POST.get('sucursal', ''))
+    destino = request.POST.get('siguiente') or ''
+    if not url_has_allowed_host_and_scheme(destino, allowed_hosts={request.get_host()}):
+        destino = reverse('dashboard')
+    return redirect(destino)
+
+
+@login_required
 def menu_principal(request):
     return render(request, 'accounts/dashboard.html', {'pantallas': pantallas_de(request.user)})
 
@@ -447,6 +488,7 @@ def crear_usuario(request):
             nuevo_usuario = form.save(commit=False)
             nuevo_usuario.is_active = False
             nuevo_usuario.save()
+            form.save_m2m()  # sucursales
             form._guardar_roles_adicionales()
             token = nuevo_usuario.generar_token_confirmacion_correo()
 

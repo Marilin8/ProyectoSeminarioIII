@@ -30,6 +30,24 @@
                 <span class="sidebar-user-nombre">{{ user.get_full_name|default:user.username }}</span>
                 <span class="sidebar-user-rol">{{ user.get_rol_display }}</span>
             </div>
+            {% if sucursal_selector %}
+                <form method="post" action="{% url 'cambiar_sucursal' %}" class="sidebar-sucursal">
+                    {% csrf_token %}
+                    <input type="hidden" name="siguiente" value="{{ request.get_full_path }}">
+                    <label for="selector-sucursal"><svg width="12" height="12"><use href="#i-map-pin"/></svg> Sucursal</label>
+                    <select id="selector-sucursal" name="sucursal" onchange="this.form.submit()">
+                        {% if sucursal_ve_todas %}<option value="todas" {% if not sucursal_activa %}selected{% endif %}>Todas las sucursales</option>{% endif %}
+                        {% for s in sucursales_disponibles %}
+                            <option value="{{ s.id }}" {% if sucursal_activa and s.id == sucursal_activa.id %}selected{% endif %}>{{ s.nombre }}</option>
+                        {% endfor %}
+                    </select>
+                    <noscript><button type="submit" class="btn btn-sm btn-outline">Cambiar</button></noscript>
+                </form>
+            {% elif sucursal_activa %}
+                <div class="sidebar-sucursal">
+                    <span class="sidebar-sucursal-fija"><svg width="12" height="12"><use href="#i-map-pin"/></svg> {{ sucursal_activa.nombre }}</span>
+                </div>
+            {% endif %}
         {% endif %}
         <nav>
             {% if user.is_authenticated %}

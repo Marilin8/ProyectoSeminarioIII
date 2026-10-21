@@ -8,6 +8,36 @@ from django.db import models
 from django.utils import timezone
 
 
+class Sucursal(models.Model):
+    """Sede de la clínica. Cada usuario trabaja en una o varias sucursales y cada cita
+    y turno pertenece a una. Los datos que existían antes de las sucursales quedaron
+    en la "Sucursal principal" (es_principal=True, ver migración 0038)."""
+
+    nombre = models.CharField(max_length=100, unique=True)
+    direccion = models.CharField(max_length=255, blank=True, verbose_name='dirección')
+    telefono = models.CharField(max_length=30, blank=True, verbose_name='teléfono')
+    activa = models.BooleanField(
+        default=True, help_text='Una sucursal inactiva no aparece para elegir, pero conserva sus datos.',
+    )
+    es_principal = models.BooleanField(default=False, editable=False)
+    creada_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'sucursales'
+        verbose_name = 'sucursal'
+        verbose_name_plural = 'sucursales'
+        ordering = ['-es_principal', 'nombre']
+
+    def __str__(self):
+        return self.nombre
+
+
+def sucursal_principal_id():
+    """Default de Cita.sucursal / Ticket.sucursal mientras las pantallas de
+    operación todavía no asignan la sucursal activa del usuario."""
+    return Sucursal.objects.filter(es_principal=True).values_list('id', flat=True).first()
+
+
 class Usuario(AbstractUser):
     ROL_ADMINISTRADOR = 'administrador'
     ROL_ADMINISTRADOR_FINANCIERO = 'administrador_financiero'
@@ -119,6 +149,10 @@ class Usuario(AbstractUser):
         max_digits=5, decimal_places=2, default=0, verbose_name='% comisión emergencia IGSS',
     )
 
+    sucursales = models.ManyToManyField(
+        Sucursal, blank=True, related_name='usuarios', db_table='usuarios_sucursales',
+        help_text='Sucursales donde trabaja. Si son varias, elige la activa desde la barra lateral.',
+    )
     groups = models.ManyToManyField(
         Group,
         verbose_name='grupos',
@@ -259,6 +293,7 @@ class Bitacora(models.Model):
     ACCION_SUBIR_RESPALDO = 'subir_respaldo'
     ACCION_RESTAURAR_RESPALDO = 'restaurar_respaldo'
     ACCION_CONFIGURAR_GOOGLE_DRIVE = 'configurar_google_drive'
+    ACCION_GESTIONAR_SUCURSAL = 'gestionar_sucursal'
 
     ACCION_CHOICES = [
         (ACCION_LOGIN_EXITOSO, 'Inicio de sesión'),
@@ -307,6 +342,7 @@ class Bitacora(models.Model):
         (ACCION_SUBIR_RESPALDO, 'Subió un respaldo a Google Drive'),
         (ACCION_RESTAURAR_RESPALDO, 'Restauró el sistema desde un respaldo'),
         (ACCION_CONFIGURAR_GOOGLE_DRIVE, 'Conectó o desconectó Google Drive'),
+        (ACCION_GESTIONAR_SUCURSAL, 'Creación o edición de sucursal'),
     ]
 
     usuario = models.ForeignKey(

@@ -88,6 +88,7 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'accounts.menu_lateral.menu_lateral',
+                'accounts.sucursales.contexto',
             ],
         },
     },

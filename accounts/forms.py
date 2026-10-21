@@ -9,7 +9,7 @@ from django_otp.plugins.otp_totp.models import TOTPDevice
 from clinica.validators import validar_correo_existente, validar_dominio_correo
 from pacientes.models import TipoEstudio
 
-from .models import RolAdicional, Usuario
+from .models import RolAdicional, Sucursal, Usuario
 
 
 def _campo_fecha_ingreso(inicial=None):
@@ -160,6 +160,23 @@ def _guardar_roles_adicionales(usuario, roles_seleccionados):
         ])
 
 
+def _campo_sucursales():
+    return forms.ModelMultipleChoiceField(
+        queryset=Sucursal.objects.all(),
+        widget=forms.CheckboxSelectMultiple,
+        label='Sucursales',
+        required=False,
+        help_text='Dónde trabaja. Si marca varias, elige la activa desde la barra lateral. '
+                  'Sin marcar ninguna, queda en la sucursal principal.',
+    )
+
+
+def _sucursales_o_principal(elegidas):
+    if elegidas:
+        return elegidas
+    return list(Sucursal.objects.filter(es_principal=True))
+
+
 class CrearUsuarioForm(UserCreationForm):
     email = _campo_email()
     puede_operar_caja = forms.BooleanField(
@@ -168,6 +185,7 @@ class CrearUsuarioForm(UserCreationForm):
     )
     roles_adicionales = _campo_roles_adicionales()
     fecha_ingreso = _campo_fecha_ingreso(inicial=timezone.localdate)
+    sucursales = _campo_sucursales()
 
     class Meta(UserCreationForm.Meta):
         model = Usuario
@@ -175,11 +193,22 @@ class CrearUsuarioForm(UserCreationForm):
             'username', 'first_name', 'last_name', 'email', 'rol', 'salario_base',
             'puede_operar_caja', 'mfa_requerido', 'sala',
             'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
+            'sucursales',
         )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Con una sola sucursal, ya viene marcada.
+        sucursales = list(Sucursal.objects.filter(activa=True)[:2])
+        if len(sucursales) == 1:
+            self.fields['sucursales'].initial = sucursales
 
     def clean(self):
         cleaned = super().clean()
         return _validar_porcentajes(self, cleaned)
+
+    def clean_sucursales(self):
+        return _sucursales_o_principal(self.cleaned_data.get('sucursales'))
 
     def clean_fecha_ingreso(self):
         return _validar_fecha_ingreso_no_futura(self.cleaned_data.get('fecha_ingreso'))
@@ -283,6 +312,7 @@ class EditarUsuarioForm(forms.ModelForm):
     )
     roles_adicionales = _campo_roles_adicionales()
     fecha_ingreso = _campo_fecha_ingreso()
+    sucursales = _campo_sucursales()
 
     class Meta:
         model = Usuario
@@ -290,7 +320,7 @@ class EditarUsuarioForm(forms.ModelForm):
             'first_name', 'last_name', 'email', 'rol', 'salario_base',
             'puede_operar_caja', 'mfa_requerido', 'sala',
             'porcentaje_coex', 'porcentaje_privado', 'porcentaje_emergencia_igss',
-            'is_active',
+            'is_active', 'sucursales',
         )
 
     def __init__(self, *args, **kwargs):
@@ -305,6 +335,9 @@ class EditarUsuarioForm(forms.ModelForm):
     def clean(self):
         cleaned = super().clean()
         return _validar_porcentajes(self, cleaned)
+
+    def clean_sucursales(self):
+        return _sucursales_o_principal(self.cleaned_data.get('sucursales'))
 
     def clean_fecha_ingreso(self):
         return _validar_fecha_ingreso_no_futura(self.cleaned_data.get('fecha_ingreso'))
@@ -325,6 +358,7 @@ class EditarUsuarioForm(forms.ModelForm):
 
         if commit:
             usuario.save()
+            self._save_m2m()  # sucursales
             guardar_estudios()
             _guardar_roles_adicionales(usuario, self.cleaned_data.get('roles_adicionales'))
             if not usuario.mfa_requerido:
@@ -399,3 +433,40 @@ class RegistrarPagoForm(forms.Form):
                 'registrar el pago, marcá la casilla de confirmación.'
             )
         return cleaned
+
+
+class SucursalForm(forms.ModelForm):
+    """Alta/edición de una sucursal, y qué usuarios trabajan en ella."""
+
+    usuarios = forms.ModelMultipleChoiceField(
+        queryset=Usuario.objects.filter(is_active=True).order_by('first_name', 'last_name', 'username'),
+        widget=forms.CheckboxSelectMultiple,
+        required=False,
+        label='Usuarios que trabajan en esta sucursal',
+        help_text='Un usuario puede estar en varias sucursales.',
+    )
+
+    class Meta:
+        model = Sucursal
+        fields = ('nombre', 'direccion', 'telefono', 'activa')
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            self.fields['usuarios'].initial = self.instance.usuarios.all()
+            if self.instance.es_principal:
+                self.fields['activa'].disabled = True
+                self.fields['activa'].help_text = 'La sucursal principal no se puede desactivar.'
+
+    def save(self, commit=True):
+        sucursal = super().save(commit=commit)
+        if commit:
+            # Solo se tocan los usuarios activos que se muestran; los inactivos conservan
+            # lo que tenían.
+            elegidos = set(self.cleaned_data['usuarios'])
+            for usuario in self.fields['usuarios'].queryset:
+                if usuario in elegidos:
+                    usuario.sucursales.add(sucursal)
+                else:
+                    usuario.sucursales.remove(sucursal)
+        return sucursal

@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+
+{% block title %}Sucursales — Clínica de Imágenes{% endblock %}
+{% block page_title %}Sucursales{% endblock %}
+
+{% block topbar_actions %}
+    <a href="{% url 'crear_sucursal' %}" class="btn btn-primary">
+        <svg><use href="#i-plus"/></svg> Nueva sucursal
+    </a>
+{% endblock %}
+
+{% block content %}
+    <p class="text-muted text-sm mb-2">
+        Cada usuario trabaja en una o varias sucursales. Quien tiene varias elige en cuál está
+        trabajando desde la barra lateral; el administrador también puede ver todas juntas.
+    </p>
+    <div class="card">
+        <div class="card-body" style="padding:0;overflow-x:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Sucursal</th>
+                        <th>Dirección</th>
+                        <th>Teléfono</th>
+                        <th>Usuarios</th>
+                        <th>Estado</th>
+                        <th style="text-align:right;">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in sucursales %}
+                        <tr>
+                            <td>
+                                <strong>{{ s.nombre }}</strong>
+                                {% if s.es_principal %}<span class="badge badge-primary">Principal</span>{% endif %}
+                            </td>
+                            <td>{{ s.direccion|default:"—" }}</td>
+                            <td>{{ s.telefono|default:"—" }}</td>
+                            <td>{{ s.cantidad_usuarios }}</td>
+                            <td>
+                                {% if s.activa %}<span class="badge badge-success">Activa</span>{% else %}<span class="badge badge-muted">Inactiva</span>{% endif %}
+                            </td>
+                            <td style="text-align:right;">
+                                <a href="{% url 'editar_sucursal' s.id %}" class="btn btn-outline btn-sm">
+                                    <svg><use href="#i-edit"/></svg> Editar
+                                </a>
+                            </td>
+                        </tr>
+                    {% empty %}
+                        <tr><td colspan="6" class="text-muted text-center">Todavía no hay sucursales.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+{% endblock %}

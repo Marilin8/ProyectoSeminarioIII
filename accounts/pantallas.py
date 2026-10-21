@@ -11,6 +11,7 @@ PANTALLAS_POR_ROL = {
     Usuario.ROL_ADMINISTRADOR: [
         {'nombre': 'Estado de la Clínica', 'url_name': 'estado_clinica'},
         {'nombre': 'Crear usuario', 'url_name': 'crear_usuario'},
+        {'nombre': 'Sucursales', 'url_name': 'lista_sucursales'},
         {
             'nombre': 'Usuarios activos',
             'clave': 'usuarios_activos',

@@ -7,6 +7,8 @@ from django.conf import settings
 from django.db import models, transaction
 from django.utils import timezone
 
+from accounts.models import sucursal_principal_id
+
 MINUTOS_TOLERANCIA_LLEGADA = 15
 
 # A partir de esta hora, las citas de convenio privado y de emergencia IGSS
@@ -736,6 +738,10 @@ class Cita(models.Model):
     ]
 
     paciente = models.ForeignKey(Paciente, on_delete=models.PROTECT, related_name='citas')
+    sucursal = models.ForeignKey(
+        'accounts.Sucursal', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='citas', default=sucursal_principal_id,
+    )
     tipo_estudio = models.ForeignKey(TipoEstudio, on_delete=models.PROTECT, related_name='citas')
     radiologo = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
@@ -1493,6 +1499,10 @@ class Ticket(models.Model):
     ]
 
     paciente = models.ForeignKey(Paciente, on_delete=models.PROTECT, related_name='tickets')
+    sucursal = models.ForeignKey(
+        'accounts.Sucursal', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='tickets', default=sucursal_principal_id,
+    )
     cita = models.ForeignKey(
         'Cita', on_delete=models.SET_NULL, null=True, blank=True, related_name='ticket_origen',
         help_text='Cita/orden de trabajo generada al procesar este ticket (si ya se procesó).',

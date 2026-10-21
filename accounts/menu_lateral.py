@@ -13,6 +13,7 @@ from .pantallas import pantallas_de
 ICONOS = {
     'estado_clinica': 'i-activity',
     'crear_usuario': 'i-user',
+    'lista_sucursales': 'i-map-pin',
     'usuarios_activos': 'i-users',
     'lista_estudios': 'i-file-medical',
     'lista_modalidades': 'i-layers',
