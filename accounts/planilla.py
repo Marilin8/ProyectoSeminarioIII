@@ -47,7 +47,7 @@ def lineas_comision(desde, hasta):
         Cita.objects.filter(
             estado=Cita.ESTADO_PROCESADA, fecha__gte=desde, fecha__lt=hasta,
         )
-        .select_related('paciente', 'tipo_estudio', 'radiologo')
+        .select_related('paciente', 'tipo_estudio', 'radiologo', 'sucursal')
         .prefetch_related(
             'tipo_estudio__precios',
             'orden_trabajo__imagenes__subida_por',
@@ -87,6 +87,7 @@ def lineas_comision(desde, hasta):
                 'modalidad': cita.tipo_estudio.get_modalidad_display(),
                 'convenio': cita.get_convenio_display(),
                 'convenio_codigo': cita.convenio,
+                'sucursal': cita.sucursal.nombre if cita.sucursal_id else '',
                 'habil': habil,
                 'precio': precio,
                 'pct': pct,
@@ -212,9 +213,18 @@ def detalle_empleado(desde, hasta, usuario):
     pendientes = [l for l in lineas if not l['pagada']]
     total_pendiente = sum((l['comision'] for l in pendientes), Decimal('0.00'))
     total_pagado = sum((l['comision'] for l in lineas if l['pagada']), Decimal('0.00'))
+    por_sucursal = {}
+    for linea in lineas:
+        fila = por_sucursal.setdefault(
+            linea['sucursal'] or 'Sin sucursal',
+            {'nombre': linea['sucursal'] or 'Sin sucursal', 'cantidad': 0, 'total': Decimal('0.00')},
+        )
+        fila['cantidad'] += 1
+        fila['total'] += linea['comision']
     return {
         'lineas': lineas,
         'resumen': _resumen_agrupado(pendientes),
         'total_pendiente': total_pendiente,
         'total_pagado': total_pagado,
+        'por_sucursal': list(por_sucursal.values()),
     }

@@ -133,6 +133,7 @@
 </form>
 
 <p class="fin-rango-texto">
+    <span class="badge badge-primary" title="Se cambia desde la barra lateral">{% if filtros.sucursal %}{{ filtros.sucursal.nombre }}{% else %}Todas las sucursales{% endif %}</span>
     Del {{ filtros.desde|date:"d/m/Y" }} al {{ filtros.hasta|date:"d/m/Y" }} ({{ kpi.dias }} día{{ kpi.dias|pluralize }}).
     Producción = valor de los estudios realizados (en proceso o procesados), con la tarifa vigente en la fecha de cada cita.
 </p>
@@ -166,7 +167,7 @@
     <div class="kpi morado">
         <div class="kpi-etiqueta">Comisiones a médicos</div>
         <div class="kpi-valor">{{ kpi.comisiones_pagadas|quetzales }}</div>
-        <div class="kpi-detalle">Pagadas en el período · referido {{ kpi.referido|quetzales }}</div>
+        <div class="kpi-detalle">Pagadas en el período{% if filtros.sucursal %} (todas las sucursales){% endif %} · referido {{ kpi.referido|quetzales }}</div>
     </div>
 </div>
 
@@ -194,6 +195,16 @@
             {% endif %}
         </div>
     </div>
+
+    {% if sucursales_ranking %}
+    <div class="card ancha">
+        <div class="card-header">Producción por sucursal</div>
+        <div class="card-body">
+            {% include 'accounts/includes/barras_financieras.html' with filas=sucursales_ranking unidad='estudio' vacio='Sin datos.' %}
+            <p class="nota">Para ver el detalle de una sola sucursal, elíjala en la barra lateral.</p>
+        </div>
+    </div>
+    {% endif %}
 
     <div class="card">
         <div class="card-header">Producción por convenio</div>

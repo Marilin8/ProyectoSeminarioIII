@@ -1,0 +1,17 @@
+{% load finanzas %}{% comment %}
+Desglose por sucursal (filas: [{nombre, cantidad, total}]). Solo se muestra si hay más de una.
+{% endcomment %}{% if filas|length > 1 %}
+    <div class="card mb-2">
+        <div class="card-header">{{ titulo|default:"Por sucursal" }}</div>
+        <div class="card-body" style="padding:0;overflow-x:auto;">
+            <table>
+                <thead><tr><th>Sucursal</th><th>{{ unidad|default:"Estudios" }}</th><th style="text-align:right;">Total</th></tr></thead>
+                <tbody>
+                    {% for f in filas %}
+                        <tr><td>{{ f.nombre }}</td><td>{{ f.cantidad }}</td><td style="text-align:right;">{{ f.total|quetzales }}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+{% endif %}

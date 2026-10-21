@@ -20,7 +20,7 @@ def citas_referidas(medico, desde, hasta):
             medico_tratante=medico, convenio=Cita.CONVENIO_PRIVADO,
             estado=Cita.ESTADO_PROCESADA, fecha__gte=desde, fecha__lte=hasta,
         )
-        .select_related('paciente', 'tipo_estudio')
+        .select_related('paciente', 'tipo_estudio', 'sucursal')
         .order_by('fecha', 'hora')
     )
 
@@ -73,3 +73,16 @@ def parsear_porcentaje(texto):
 def calcular_comision(total, porcentaje):
     """Comisión = total referido x porcentaje / 100, redondeada al centavo."""
     return (total * porcentaje / Decimal('100')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+def desglose_por_sucursal(citas, monto=lambda c: c.precio):
+    """[{nombre, cantidad, total}] de una lista de citas, por sucursal (para mostrar
+    de dónde salen las comisiones cuando hay más de una sucursal)."""
+    from collections import OrderedDict
+    from decimal import Decimal
+    filas = OrderedDict()
+    for cita in citas:
+        nombre = cita.sucursal.nombre if cita.sucursal_id else 'Sin sucursal'
+        fila = filas.setdefault(nombre, {'nombre': nombre, 'cantidad': 0, 'total': Decimal('0.00')})
+        fila['cantidad'] += 1
+        fila['total'] += monto(cita)
+    return list(filas.values())

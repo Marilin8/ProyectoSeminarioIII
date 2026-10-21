@@ -15,6 +15,7 @@ from django.http import JsonResponse
 from django.shortcuts import render
 from django.utils import timezone
 
+from accounts import sucursales
 from accounts.views import es_administrador
 
 from .models import Cita, InformeEstudio, OrdenTrabajo, Ticket
@@ -66,9 +67,13 @@ def _rango_datetimes(inicio, fin):
     return desde, hasta
 
 
-def _citas_por_estado(citas, convenio, hoy):
+def _filtro_sucursal(consulta, sucursal, campo='sucursal'):
+    return consulta.filter(**{campo: sucursal}) if sucursal is not None else consulta
+
+
+def _citas_por_estado(citas, convenio, hoy, sucursal=None):
     conteo = Counter(citas.values_list('estado', flat=True))
-    futuras = Cita.objects.filter(
+    futuras = _filtro_sucursal(Cita.objects, sucursal).filter(
         fecha__gt=hoy, estado__in=(Cita.ESTADO_AGENDADA, Cita.ESTADO_EN_ESPERA),
     )
     if convenio:
@@ -143,10 +148,10 @@ def _frecuencia_estudios(citas_procesadas, dias):
     }
 
 
-def _respuesta_radiologos(desde, hasta):
+def _respuesta_radiologos(desde, hasta, sucursal=None):
     """Cuánto tarda cada radiólogo en responder (aceptar o rechazar) una
     solicitud de COEX: desde que recepción la crea hasta que la revisa."""
-    solicitudes = Cita.objects.filter(
+    solicitudes = _filtro_sucursal(Cita.objects, sucursal).filter(
         convenio=Cita.CONVENIO_COEX, revisada_en__isnull=False, revisada_por__isnull=False,
         creada_en__gte=desde, creada_en__lt=hasta,
     ).select_related('revisada_por')
@@ -172,10 +177,10 @@ def _respuesta_radiologos(desde, hasta):
     }
 
 
-def _espera_por_urgencia(desde, hasta, convenio):
+def _espera_por_urgencia(desde, hasta, convenio, sucursal=None):
     """Tiempo que espera cada paciente en la fila (turno creado -> atendido),
     según la urgencia (prioridad) del turno."""
-    tickets = Ticket.objects.filter(
+    tickets = _filtro_sucursal(Ticket.objects, sucursal).filter(
         estado=Ticket.ESTADO_ATENDIDO, atendido_en__isnull=False,
         creado_en__gte=desde, creado_en__lt=hasta,
     )
@@ -195,12 +200,13 @@ def _espera_por_urgencia(desde, hasta, convenio):
     }
 
 
-def calcular_estado_clinica(dias=DIAS_POR_DEFECTO, convenio=''):
+def calcular_estado_clinica(dias=DIAS_POR_DEFECTO, convenio='', sucursal=None):
+    """`sucursal`: la elegida en la barra lateral (None = todas)."""
     hoy = timezone.localdate()
     inicio = hoy - datetime.timedelta(days=dias - 1)
     desde, hasta = _rango_datetimes(inicio, hoy)
 
-    citas = Cita.objects.filter(fecha__gte=inicio, fecha__lte=hoy)
+    citas = _filtro_sucursal(Cita.objects, sucursal).filter(fecha__gte=inicio, fecha__lte=hoy)
     if convenio:
         citas = citas.filter(convenio=convenio)
     procesadas = citas.filter(estado=Cita.ESTADO_PROCESADA)
@@ -209,12 +215,13 @@ def calcular_estado_clinica(dias=DIAS_POR_DEFECTO, convenio=''):
         'periodo': {
             'dias': dias, 'desde': inicio.isoformat(), 'hasta': hoy.isoformat(),
             'actualizado': timezone.localtime().strftime('%H:%M:%S'),
+            'sucursal': sucursal.nombre if sucursal else 'Todas las sucursales',
         },
-        'citas': _citas_por_estado(citas, convenio, hoy),
+        'citas': _citas_por_estado(citas, convenio, hoy, sucursal),
         'tiempo_por_cita': _tiempo_por_cita(procesadas),
         'frecuencia': _frecuencia_estudios(procesadas, dias),
-        'radiologos': _respuesta_radiologos(desde, hasta),
-        'espera': _espera_por_urgencia(desde, hasta, convenio),
+        'radiologos': _respuesta_radiologos(desde, hasta, sucursal),
+        'espera': _espera_por_urgencia(desde, hasta, convenio, sucursal),
     }
 
 
@@ -226,6 +233,7 @@ def estado_clinica(request):
         'convenios': CONVENIOS,
         'dias': _dias_validos(request.GET.get('dias')),
         'convenio': _convenio_valido(request.GET.get('convenio', '')),
+        'sucursal': sucursales.sucursal_activa(request),
     })
 
 
@@ -236,4 +244,5 @@ def estado_clinica_datos(request):
     return JsonResponse(calcular_estado_clinica(
         dias=_dias_validos(request.GET.get('dias')),
         convenio=_convenio_valido(request.GET.get('convenio', '')),
+        sucursal=sucursales.sucursal_activa(request),
     ))

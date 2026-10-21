@@ -101,7 +101,9 @@
 {% localize off %}
 <div class="est-cabecera">
     <p class="text-muted text-sm">
-        Del {{ desde|date:"d/m/Y" }} al {{ hoy|date:"d/m/Y" }} · Bienvenido, {{ user.get_full_name|default:user.username }}
+        Del {{ desde|date:"d/m/Y" }} al {{ hoy|date:"d/m/Y" }} ·
+        <span class="badge badge-primary" title="Se cambia desde la barra lateral">{% if sucursal %}{{ sucursal.nombre }}{% else %}Todas las sucursales{% endif %}</span>
+        · Bienvenido, {{ user.get_full_name|default:user.username }}
     </p>
     <nav class="periodos" aria-label="Periodo">
         {% for p in periodos %}
@@ -243,6 +245,24 @@
             </div>
         </div>
     </div>
+
+    {% if por_sucursal %}
+    <div class="card ancha">
+        <div class="card-header">Estudios realizados por sucursal</div>
+        <div class="card-body">
+            <div class="barras-h">
+                {% for f in por_sucursal %}
+                    <div class="barra-fila{% if forloop.first %} top{% endif %}" title="{{ f.nombre }}: {{ f.total }}">
+                        <span class="barra-nombre">{{ f.nombre }}</span>
+                        <span class="barra-pista"><span class="barra-relleno" style="display:block;width:{{ f.ancho }}%"></span></span>
+                        <span class="barra-valor">{{ f.total }}</span>
+                    </div>
+                {% endfor %}
+            </div>
+            <p class="grafica-nota">Para ver las gráficas de una sola sucursal, elíjala en la barra lateral.</p>
+        </div>
+    </div>
+    {% endif %}
 
     <div class="card ancha">
         <div class="card-header">Pacientes nuevos por mes: privado vs. IGSS</div>

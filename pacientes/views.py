@@ -2131,7 +2131,7 @@ def reporte_comision_medico_tratante(request, medico_id):
     puede elegir semana, quincena, mes o un rango libre (mismo selector que
     la Planilla de empleados, ver accounts.periodos)."""
     from .comisiones_medico_tratante import (
-        calcular_comision, citas_pendientes_de_pago, parsear_porcentaje, resumen,
+        calcular_comision, citas_pendientes_de_pago, desglose_por_sucursal, parsear_porcentaje, resumen,
     )
 
     medico = get_object_or_404(MedicoTratante, id=medico_id)
@@ -2204,6 +2204,7 @@ def reporte_comision_medico_tratante(request, medico_id):
         'otros_parametros': [(k, v) for k, v in request.GET.items() if k != 'porcentaje'],
         'form': form,
         'pagos_anteriores': pagos_anteriores,
+        'por_sucursal': desglose_por_sucursal(datos['citas']),
     })
 
 
@@ -5306,7 +5307,7 @@ def informe_anual(request):
         anio = hoy.year
 
     citas = (
-        Cita.objects.filter(fecha__year=anio)
+        sucursales.filtrar(Cita.objects.filter(fecha__year=anio), request)
         .exclude(estado__in=(Cita.ESTADO_PENDIENTE, Cita.ESTADO_RECHAZADA))
         .select_related('tipo_estudio')
         .prefetch_related(
@@ -5347,7 +5348,7 @@ def informe_anual(request):
     promedio_por_cita = (total_anual / cantidad_anual) if cantidad_anual else Decimal('0.00')
 
     primer_anio_con_citas = (
-        Cita.objects.exclude(estado__in=(Cita.ESTADO_PENDIENTE, Cita.ESTADO_RECHAZADA))
+        sucursales.filtrar(Cita.objects, request).exclude(estado__in=(Cita.ESTADO_PENDIENTE, Cita.ESTADO_RECHAZADA))
         .order_by('fecha').values_list('fecha', flat=True).first()
     )
     anio_mas_viejo = primer_anio_con_citas.year if primer_anio_con_citas else hoy.year
@@ -5365,6 +5366,7 @@ def informe_anual(request):
         'total_anual': total_anual,
         'cantidad_anual': cantidad_anual,
         'promedio_por_cita': promedio_por_cita,
+        'sucursal': sucursales.sucursal_activa(request),
     })
 
 

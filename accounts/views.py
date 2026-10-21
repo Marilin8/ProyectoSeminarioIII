@@ -334,7 +334,7 @@ def dashboard(request):
     estadísticas (con un botón al menú de pantallas); el resto de los roles
     va directo a su menú."""
     if es_administrador(request.user):
-        contexto = estadisticas.calcular(request.GET.get('dias'))
+        contexto = estadisticas.calcular(request.GET.get('dias'), sucursal=sucursales.sucursal_activa(request))
         return render(request, 'accounts/dashboard_admin.html', contexto)
     return menu_principal(request)
 
@@ -345,7 +345,7 @@ def panel_financiero(request):
     """Apartado financiero del panel del administrador: producción por convenio,
     estudio, radiólogo y médico tratante, cobrado / pendiente, etc. (ver
     accounts/finanzas.py). Con ?formato=csv descarga el detalle de las citas."""
-    filtros = finanzas.leer_filtros(request.GET)
+    filtros = finanzas.leer_filtros(request.GET, sucursal=sucursales.sucursal_activa(request))
     datos = finanzas.calcular(filtros)
     if request.GET.get('formato') == 'csv':
         respuesta = HttpResponse(content_type='text/csv; charset=utf-8')

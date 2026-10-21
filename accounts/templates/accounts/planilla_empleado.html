@@ -69,6 +69,7 @@
         </div>
     </div>
 
+    {% include 'includes/desglose_sucursal.html' with filas=por_sucursal titulo='Comisiones del período por sucursal' unidad='Líneas' %}
     {% if resumen %}
         <div class="seccion-titulo">Resumen de lo pendiente</div>
         <div class="card">

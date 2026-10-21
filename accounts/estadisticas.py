@@ -49,6 +49,11 @@ ANCHO, ALTO = 640, 220
 MARGEN_IZQ, MARGEN_DER, MARGEN_SUP, MARGEN_INF = 40, 12, 12, 28
 
 
+def _citas(sucursal):
+    """Citas de la sucursal elegida (None = todas las sucursales)."""
+    return Cita.objects.filter(sucursal=sucursal) if sucursal is not None else Cita.objects.all()
+
+
 def periodo_valido(valor):
     try:
         dias = int(valor)
@@ -57,10 +62,10 @@ def periodo_valido(valor):
     return dias if dias in PERIODOS else PERIODO_POR_DEFECTO
 
 
-def _minutos_de_atencion(desde, hasta):
+def _minutos_de_atencion(desde, hasta, sucursal=None):
     """{fecha: [minutos de cada paciente atendido ese día]}"""
     filas = (
-        Cita.objects
+        _citas(sucursal)
         .filter(fecha__range=(desde, hasta), hora_llegada__isnull=False,
                 orden_trabajo__imagenes__isnull=False)
         .annotate(fin=Max('orden_trabajo__imagenes__subida_en'))
@@ -127,9 +132,9 @@ def _grafica_tiempos(por_dia, desde, dias):
     }
 
 
-def _estudios_realizados(desde, hasta):
+def _estudios_realizados(desde, hasta, sucursal=None):
     filas = list(
-        Cita.objects
+        _citas(sucursal)
         .filter(fecha__range=(desde, hasta), estado__in=ESTADOS_REALIZADOS)
         .values('tipo_estudio__nombre')
         .annotate(total=Count('id'))
@@ -153,9 +158,9 @@ def _estudios_realizados(desde, hasta):
     return {'barras': barras, 'total': total, 'tipos': len(filas), 'top': barras[0] if barras else None}
 
 
-def _por_convenio(desde, hasta):
+def _por_convenio(desde, hasta, sucursal=None):
     conteo = dict(
-        Cita.objects
+        _citas(sucursal)
         .filter(fecha__range=(desde, hasta), estado__in=ESTADOS_REALIZADOS)
         .values_list('convenio')
         .annotate(total=Count('id'))
@@ -185,8 +190,9 @@ def _inicio_de_mes(fecha, meses_atras=0):
     return datetime.date(año, mes, 1)
 
 
-def _pacientes_nuevos(hoy):
-    """Pacientes nuevos por mes (últimos MESES_PACIENTES_NUEVOS), privado vs. IGSS."""
+def _pacientes_nuevos(hoy, sucursal=None):
+    """Pacientes nuevos por mes (últimos MESES_PACIENTES_NUEVOS), privado vs. IGSS.
+    Con sucursal, cuenta los pacientes cuya primera cita fue en esa sucursal."""
     desde = _inicio_de_mes(hoy, MESES_PACIENTES_NUEVOS - 1)
     meses = [_inicio_de_mes(hoy, k) for k in range(MESES_PACIENTES_NUEVOS - 1, -1, -1)]
     conteo = {mes: {'privado': 0, 'igss': 0} for mes in meses}
@@ -196,13 +202,13 @@ def _pacientes_nuevos(hoy):
     filas = (
         Cita.objects.exclude(estado=Cita.ESTADO_RECHAZADA)
         .order_by('paciente_id', 'fecha', 'hora', 'id')
-        .values_list('paciente_id', 'fecha', 'convenio')
+        .values_list('paciente_id', 'fecha', 'convenio', 'sucursal_id')
     )
-    for paciente_id, fecha, convenio in filas.iterator():
+    for paciente_id, fecha, convenio, sucursal_id in filas.iterator():
         if paciente_id in vistos:
             continue
         vistos.add(paciente_id)
-        if fecha < desde or fecha > hoy:
+        if fecha < desde or fecha > hoy or (sucursal is not None and sucursal_id != sucursal.id):
             continue
         grupo = 'igss' if convenio in CONVENIOS_IGSS else 'privado'
         conteo[_inicio_de_mes(fecha)][grupo] += 1
@@ -260,7 +266,7 @@ def _ranking(minutos_por_persona):
     return filas
 
 
-def _tiempos_por_personal(desde, hasta):
+def _tiempos_por_personal(desde, hasta, sucursal=None):
     """Quién atendió y cuánto tardó, en el periodo:
 
     - Técnico: el que subió la primera imagen del estudio (el mismo criterio
@@ -272,6 +278,7 @@ def _tiempos_por_personal(desde, hasta):
     imagenes = (
         ImagenEstudio.objects
         .filter(orden__cita__fecha__range=(desde, hasta))
+        .filter(**({'orden__cita__sucursal': sucursal} if sucursal is not None else {}))
         .order_by('subida_en', 'id')
         .values_list('orden_id', 'orden__cita__hora_llegada', 'subida_en', 'subida_por_id')
     )
@@ -291,6 +298,7 @@ def _tiempos_por_personal(desde, hasta):
     informes = (
         InformeEstudio.objects
         .filter(orden__cita__fecha__range=(desde, hasta), creado_en__isnull=False)
+        .filter(**({'orden__cita__sucursal': sucursal} if sucursal is not None else {}))
         .order_by('creado_en', 'id')
         .values_list('orden_id', 'creado_en', 'creado_por_id', 'orden__cita__radiologo_id')
     )
@@ -310,15 +318,37 @@ def _tiempos_por_personal(desde, hasta):
     return {'tecnicos': _ranking(tecnicos), 'radiologos': _ranking(radiologos)}
 
 
-def calcular(dias=PERIODO_POR_DEFECTO, hoy=None):
+def _por_sucursal(desde, hasta):
+    """Comparativo entre sucursales (solo cuando se ven todas juntas)."""
+    from .models import Sucursal
+    conteo = dict(
+        Cita.objects
+        .filter(fecha__range=(desde, hasta), estado__in=ESTADOS_REALIZADOS)
+        .values_list('sucursal_id')
+        .annotate(total=Count('id'))
+    )
+    sucursales = list(Sucursal.objects.all())
+    if len(sucursales) < 2:
+        return []
+    tope = max(conteo.values(), default=0) or 1
+    filas = [{
+        'nombre': s.nombre,
+        'total': conteo.get(s.id, 0),
+        'ancho': round(100 * conteo.get(s.id, 0) / tope, 1),
+    } for s in sucursales]
+    return sorted(filas, key=lambda f: -f['total'])
+
+
+def calcular(dias=PERIODO_POR_DEFECTO, hoy=None, sucursal=None):
+    """Estadísticas del panel. `sucursal`: la elegida en la barra lateral (None = todas)."""
     hoy = hoy or timezone.localdate()
     dias = periodo_valido(dias)
     desde = hoy - datetime.timedelta(days=dias - 1)
 
-    minutos = _minutos_de_atencion(desde, hoy)
+    minutos = _minutos_de_atencion(desde, hoy, sucursal)
     todos = [m for valores in minutos.values() for m in valores]
     de_hoy = minutos.get(hoy, [])
-    estudios = _estudios_realizados(desde, hoy)
+    estudios = _estudios_realizados(desde, hoy, sucursal)
 
     return {
         'dias': dias,
@@ -326,14 +356,16 @@ def calcular(dias=PERIODO_POR_DEFECTO, hoy=None):
         'desde': desde,
         'hoy': hoy,
         'kpi': {
-            'atendidos_hoy': Cita.objects.filter(fecha=hoy, estado__in=ESTADOS_REALIZADOS).count(),
+            'atendidos_hoy': _citas(sucursal).filter(fecha=hoy, estado__in=ESTADOS_REALIZADOS).count(),
             'promedio_hoy': round(sum(de_hoy) / len(de_hoy)) if de_hoy else None,
             'promedio_periodo': round(sum(todos) / len(todos)) if todos else None,
             'pacientes_medidos': len(todos),
         },
         'tiempos': _grafica_tiempos(minutos, desde, dias),
-        'personal': _tiempos_por_personal(desde, hoy),
+        'personal': _tiempos_por_personal(desde, hoy, sucursal),
         'estudios': estudios,
-        'convenios': _por_convenio(desde, hoy),
-        'nuevos': _pacientes_nuevos(hoy),
+        'convenios': _por_convenio(desde, hoy, sucursal),
+        'nuevos': _pacientes_nuevos(hoy, sucursal),
+        'sucursal': sucursal,
+        'por_sucursal': _por_sucursal(desde, hoy) if sucursal is None else [],
     }

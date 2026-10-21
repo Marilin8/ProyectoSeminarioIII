@@ -55,6 +55,7 @@
             {% endfor %}
         </div>
         <div class="ec-actualizado">
+            <span class="badge badge-primary" title="Se cambia desde la barra lateral">{% if sucursal %}{{ sucursal.nombre }}{% else %}Todas las sucursales{% endif %}</span>
             <span id="ec-rango"></span>
             <span>Actualizado <strong id="ec-hora">—</strong></span>
             <label><input type="checkbox" id="ec-auto" checked> Auto-actualizar (60 s)</label>

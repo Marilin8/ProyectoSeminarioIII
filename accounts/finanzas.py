@@ -90,8 +90,9 @@ def _entero(texto):
         return None
 
 
-def leer_filtros(datos, hoy=None):
-    """Filtros del formulario (request.GET), ya validados."""
+def leer_filtros(datos, hoy=None, sucursal=None):
+    """Filtros del formulario (request.GET), ya validados. `sucursal` es la elegida
+    en la barra lateral (None = todas las sucursales)."""
     periodo, desde, hasta = rango_del_periodo(
         datos.get('periodo'), datos.get('desde'), datos.get('hasta'), hoy=hoy,
     )
@@ -103,6 +104,7 @@ def leer_filtros(datos, hoy=None):
         'estudio': _entero(datos.get('estudio')),
         'radiologo': _entero(datos.get('radiologo')),
         'medico': _entero(datos.get('medico')),
+        'sucursal': sucursal,
     }
 
 
@@ -119,6 +121,8 @@ def citas_del_periodo(filtros):
         ))
         .order_by('fecha', 'hora', 'id')
     )
+    if filtros.get('sucursal') is not None:
+        citas = citas.filter(sucursal=filtros['sucursal'])
     if filtros['convenio']:
         citas = citas.filter(convenio=filtros['convenio'])
     if filtros['estudio']:
@@ -232,6 +236,8 @@ def calcular(filtros):
     por_medico = defaultdict(lambda: {'cantidad': 0, 'monto': CERO})
     por_forma = defaultdict(lambda: {'cantidad': 0, 'monto': CERO})
     por_horario = defaultdict(lambda: {'cantidad': 0, 'monto': CERO})
+    por_sucursal = defaultdict(lambda: {'cantidad': 0, 'monto': CERO})
+    nombres_sucursal = {}
     por_dia = defaultdict(lambda: defaultdict(lambda: CERO))
     privado_cobrado = privado_pendiente = igss = CERO
     nombres_estudio, nombres_radiologo, nombres_medico = {}, {}, {}
@@ -252,6 +258,9 @@ def calcular(filtros):
         habil = 'Hábil' if es_horario_habil(cita.convenio, cita.hora) else 'Inhábil (después de las 18:00)'
         por_horario[habil]['cantidad'] += 1
         por_horario[habil]['monto'] += precio
+        por_sucursal[cita.sucursal_id]['cantidad'] += 1
+        por_sucursal[cita.sucursal_id]['monto'] += precio
+        nombres_sucursal[cita.sucursal_id] = cita.sucursal.nombre if cita.sucursal_id else 'Sin sucursal'
         por_dia[cita.fecha][cita.convenio] += precio
 
         if cita.convenio == Cita.CONVENIO_PRIVADO:
@@ -312,6 +321,11 @@ def calcular(filtros):
         'medicos': _ranking(por_medico, referido, lambda k: nombres_medico.get(k, '—')),
         'formas_pago': _ranking(por_forma, privado_cobrado, lambda k: k),
         'horarios': _ranking(por_horario, total, lambda k: k),
+        # Comparativo solo cuando se ven todas las sucursales juntas.
+        'sucursales_ranking': (
+            _ranking(por_sucursal, total, lambda k: nombres_sucursal.get(k, '—'))
+            if filtros.get('sucursal') is None and len(por_sucursal) > 1 else []
+        ),
     }
 
 
@@ -328,7 +342,7 @@ def opciones_de_filtro():
     }
 
 
-COLUMNAS_CSV = ['Fecha', 'Hora', 'Paciente', 'Convenio', 'Estudio', 'Radiólogo', 'Médico tratante',
+COLUMNAS_CSV = ['Fecha', 'Hora', 'Sucursal', 'Paciente', 'Convenio', 'Estudio', 'Radiólogo', 'Médico tratante',
                 'Horario', 'Estado del cobro', 'Forma de pago', 'Monto (Q)']
 
 
@@ -344,7 +358,8 @@ def escribir_csv(salida, citas):
         else:
             estado_cobro, forma = 'Pendiente', ''
         escritor.writerow([
-            cita.fecha.strftime('%d/%m/%Y'), cita.hora.strftime('%H:%M'), str(cita.paciente),
+            cita.fecha.strftime('%d/%m/%Y'), cita.hora.strftime('%H:%M'),
+            cita.sucursal.nombre if cita.sucursal_id else '', str(cita.paciente),
             cita.get_convenio_display(), cita.tipo_estudio.nombre,
             (cita.radiologo.get_full_name() or cita.radiologo.username) if cita.radiologo_id else '',
             cita.medico_tratante.nombre if cita.medico_tratante_id else '',
