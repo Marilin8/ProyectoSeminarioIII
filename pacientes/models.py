@@ -334,8 +334,13 @@ class TipoEstudio(models.Model):
     def __str__(self):
         return self.nombre
 
-    def precio_para(self, convenio, horario_habil=True, fecha=None):
+    def precio_para(self, convenio, horario_habil=True, fecha=None, sucursal=None):
         """Precio de este estudio para un convenio y tipo de horario.
+
+        Precios por sucursal: si `sucursal` tiene un precio propio para esa
+        celda (PrecioEstudio con sucursal), se usa ese; si no, el precio
+        general (PrecioEstudio sin sucursal). Con `fecha`, en los dos casos
+        se respeta lo que estaba vigente ese día (ver _precio_de_sucursal).
 
         Si se pasa `fecha`, devuelve el precio que estaba vigente ESE día
         según HistorialPrecioEstudio, no el precio actual -- así un reporte
@@ -346,6 +351,50 @@ class TipoEstudio(models.Model):
 
         Si no hay tarifa inhábil cargada, cae a la hábil; si no hay
         ninguna, devuelve 0."""
+        if sucursal is not None:
+            propio = self._precio_de_sucursal(convenio, horario_habil, fecha, sucursal)
+            if propio is None and not horario_habil and not self._tiene_general(convenio, False):
+                # Sin tarifa inhábil (ni propia ni general): cae a la hábil, como siempre.
+                propio = self._precio_de_sucursal(convenio, True, fecha, sucursal)
+            if propio is not None:
+                return propio
+        return self._precio_general(convenio, horario_habil, fecha)
+
+    def _tiene_general(self, convenio, horario_habil):
+        return any(
+            p.sucursal_id is None and p.convenio == convenio and p.horario_habil == horario_habil
+            for p in self.precios.all()
+        )
+
+    def _sucursales_con_historial(self):
+        """Ids de sucursales que alguna vez tuvieron precio propio en este estudio
+        (una consulta por instancia): las demás nunca necesitan mirar el historial."""
+        if not hasattr(self, '_cache_sucursales_historial'):
+            self._cache_sucursales_historial = set(
+                self.historial_precios.filter(sucursal__isnull=False).values_list('sucursal_id', flat=True)
+            )
+        return self._cache_sucursales_historial
+
+    def _precio_de_sucursal(self, convenio, horario_habil, fecha, sucursal):
+        """Precio propio de `sucursal` para la celda, o None si (en `fecha`, o hoy)
+        usaba el precio general. En el historial, valor_anterior=None significa "antes
+        no tenía precio propio" y valor_nuevo=None "volvió al precio general"."""
+        if fecha is not None and sucursal.id in self._sucursales_con_historial():
+            limite = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.max))
+            siguiente = (
+                self.historial_precios
+                .filter(sucursal=sucursal, convenio=convenio, horario_habil=horario_habil, creado_en__gt=limite)
+                .order_by('creado_en')
+                .first()
+            )
+            if siguiente is not None:
+                return siguiente.valor_anterior
+        for p in self.precios.all():
+            if p.sucursal_id == sucursal.id and p.convenio == convenio and p.horario_habil == horario_habil:
+                return p.precio
+        return None
+
+    def _precio_general(self, convenio, horario_habil=True, fecha=None):
         if fecha is not None:
             precio_historico = self.historial_precio_vigente_en(convenio, horario_habil, fecha)
             if precio_historico is None and not horario_habil:
@@ -353,7 +402,7 @@ class TipoEstudio(models.Model):
             if precio_historico is not None:
                 return precio_historico
 
-        precios = {(p.convenio, p.horario_habil): p.precio for p in self.precios.all()}
+        precios = {(p.convenio, p.horario_habil): p.precio for p in self.precios.all() if p.sucursal_id is None}
         return (
             precios.get((convenio, horario_habil))
             or precios.get((convenio, True))
@@ -371,7 +420,7 @@ class TipoEstudio(models.Model):
         limite = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.max))
         siguiente_cambio = (
             self.historial_precios
-            .filter(convenio=convenio, horario_habil=horario_habil, creado_en__gt=limite)
+            .filter(convenio=convenio, horario_habil=horario_habil, creado_en__gt=limite, sucursal__isnull=True)
             .order_by('creado_en')
             .first()
         )
@@ -398,12 +447,17 @@ class PrecioEstudio(models.Model):
     convenio = models.CharField(max_length=20, choices=CONVENIO_CHOICES)
     horario_habil = models.BooleanField(default=True, verbose_name='horario', choices=HORARIO_CHOICES)
     precio = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    # Sin sucursal = precio general (vale para todas). Con sucursal = precio propio
+    # de esa sucursal, que reemplaza al general solo ahí.
+    sucursal = models.ForeignKey(
+        'accounts.Sucursal', on_delete=models.CASCADE, null=True, blank=True, related_name='precios_estudio',
+    )
 
     class Meta:
         db_table = 'precios_estudio'
         verbose_name = 'precio de estudio'
         verbose_name_plural = 'precios de estudio'
-        unique_together = ('tipo_estudio', 'convenio', 'horario_habil')
+        unique_together = ('tipo_estudio', 'convenio', 'horario_habil', 'sucursal')
         ordering = ['tipo_estudio', 'convenio', '-horario_habil']
 
     def __str__(self):
@@ -427,8 +481,13 @@ class HistorialPrecioEstudio(models.Model):
     )
     convenio = models.CharField(max_length=20, choices=CONVENIO_CHOICES)
     horario_habil = models.BooleanField(default=True, choices=PrecioEstudio.HORARIO_CHOICES)
-    valor_anterior = models.DecimalField(max_digits=8, decimal_places=2, default=0)
-    valor_nuevo = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    # Sin sucursal = cambio del precio general. Con sucursal = cambio del precio propio
+    # de esa sucursal; ahí None significa "usaba / vuelve a usar el precio general".
+    sucursal = models.ForeignKey(
+        'accounts.Sucursal', on_delete=models.CASCADE, null=True, blank=True, related_name='historial_precios',
+    )
+    valor_anterior = models.DecimalField(max_digits=8, decimal_places=2, default=0, null=True, blank=True)
+    valor_nuevo = models.DecimalField(max_digits=8, decimal_places=2, default=0, null=True, blank=True)
     modificado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
         related_name='cambios_precio_estudio_realizados',
@@ -532,7 +591,9 @@ class CambioEstudioProgramado(models.Model):
             )
         if estudio.duracion_minutos != self.duracion_minutos:
             diferencias.append(f'Duración: {estudio.duracion_minutos} → {self.duracion_minutos} min')
-        precios_actuales = {(p.convenio, p.horario_habil): p.precio for p in estudio.precios.all()}
+        precios_actuales = {
+            (p.convenio, p.horario_habil): p.precio for p in estudio.precios.all() if p.sucursal_id is None
+        }
         for campo, convenio, habil, etiqueta in PRECIOS_ESTUDIO:
             nuevo = getattr(self, campo)
             actual = precios_actuales.get((convenio, habil), Decimal('0.00'))
@@ -571,7 +632,7 @@ class CambioEstudioProgramado(models.Model):
             for campo, convenio, horario_habil, _ in PRECIOS_ESTUDIO:
                 precio_nuevo = getattr(cambio, campo)
                 precio, creado = PrecioEstudio.objects.get_or_create(
-                    tipo_estudio=estudio, convenio=convenio, horario_habil=horario_habil,
+                    tipo_estudio=estudio, convenio=convenio, horario_habil=horario_habil, sucursal=None,
                     defaults={'precio': precio_nuevo},
                 )
                 if not creado and precio.precio != precio_nuevo:
@@ -668,9 +729,24 @@ class Combo(models.Model):
             (CONVENIO_EMERGENCIA_IGSS, False),
         ):
             PrecioEstudio.objects.update_or_create(
-                tipo_estudio=tipo_estudio, convenio=convenio, horario_habil=horario_habil,
+                tipo_estudio=tipo_estudio, convenio=convenio, horario_habil=horario_habil, sucursal=None,
                 defaults={'precio': self.total_para(convenio, horario_habil)},
             )
+            # Si alguna sucursal tiene precios propios en los estudios del combo, el
+            # combo también tiene su precio propio ahí.
+            for sucursal in self._sucursales_con_precio_propio():
+                propio = self.total_para(convenio, horario_habil, sucursal=sucursal)
+                general = self.total_para(convenio, horario_habil)
+                if propio != general:
+                    PrecioEstudio.objects.update_or_create(
+                        tipo_estudio=tipo_estudio, convenio=convenio, horario_habil=horario_habil,
+                        sucursal=sucursal, defaults={'precio': propio},
+                    )
+                else:
+                    PrecioEstudio.objects.filter(
+                        tipo_estudio=tipo_estudio, convenio=convenio, horario_habil=horario_habil,
+                        sucursal=sucursal,
+                    ).delete()
 
         # El radiólogo que atienda el combo tiene que poder hacer TODOS sus
         # estudios: se asignan al espejo los que están asignados a la vez a
@@ -686,18 +762,22 @@ class Combo(models.Model):
     def __str__(self):
         return self.nombre
 
-    def total_bruto_para(self, convenio, horario_habil=True):
+    def _sucursales_con_precio_propio(self):
+        from accounts.models import Sucursal
+        return Sucursal.objects.filter(precios_estudio__tipo_estudio__in=self.estudios.all()).distinct()
+
+    def total_bruto_para(self, convenio, horario_habil=True, sucursal=None):
         """Suma de los precios de los estudios del combo para un convenio y
         tipo de horario, sin aplicar descuento."""
         return sum(
-            (estudio.precio_para(convenio, horario_habil) for estudio in self.estudios.all()),
+            (estudio.precio_para(convenio, horario_habil, sucursal=sucursal) for estudio in self.estudios.all()),
             start=Decimal('0.00'),
         )
 
-    def total_para(self, convenio, horario_habil=True):
+    def total_para(self, convenio, horario_habil=True, sucursal=None):
         """Precio final del combo para un convenio y horario: la suma de sus
         estudios menos el descuento (si aplica y es válido)."""
-        bruto = self.total_bruto_para(convenio, horario_habil)
+        bruto = self.total_bruto_para(convenio, horario_habil, sucursal=sucursal)
         pct = Decimal('0') if not self.aplica_descuento else (self.porcentaje_descuento or Decimal('0'))
         if pct <= 0 or pct > 100:
             return bruto
@@ -891,7 +971,9 @@ class Cita(models.Model):
         del estudio): así un reporte o boleta de una cita vieja no cambia
         si después se actualiza la tarifa. Ver
         TipoEstudio.precio_para/HistorialPrecioEstudio."""
-        return self.tipo_estudio.precio_para(self.convenio, self.horario_habil, fecha=self.fecha)
+        return self.tipo_estudio.precio_para(
+            self.convenio, self.horario_habil, fecha=self.fecha, sucursal=self.sucursal,
+        )
 
     @property
     def estudios_extra_cobrados(self):
@@ -949,7 +1031,7 @@ class EstudioExtra(models.Model):
     @property
     def precio(self):
         return self.tipo_estudio.precio_para(
-            self.cita.convenio, self.cita.horario_habil, fecha=self.cita.fecha,
+            self.cita.convenio, self.cita.horario_habil, fecha=self.cita.fecha, sucursal=self.cita.sucursal,
         )
 
 

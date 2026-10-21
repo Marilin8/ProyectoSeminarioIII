@@ -1,0 +1,82 @@
+{% extends 'base.html' %}
+
+{% block title %}Precios por sucursal — {{ estudio.nombre }}{% endblock %}
+{% block page_title %}Precios por sucursal: {{ estudio.nombre }}{% endblock %}
+
+{% block topbar_actions %}
+    <a href="{% url 'editar_estudio' estudio.id %}" class="btn btn-outline">
+        <svg><use href="#i-edit"/></svg> Precio general del estudio
+    </a>
+    <a href="{% url 'lista_estudios' %}" class="btn btn-outline">
+        <svg><use href="#i-arrow-left"/></svg> Volver a estudios
+    </a>
+{% endblock %}
+
+{% block content %}
+    <form method="get" class="flex gap-1 flex-wrap mb-2" style="align-items:flex-end;">
+        <div>
+            <label for="elegir-sucursal" style="margin:0 0 0.2rem;">Sucursal</label>
+            <select id="elegir-sucursal" name="sucursal" onchange="this.form.submit()" style="width:auto;min-width:14rem;">
+                {% for s in sucursales_opciones %}
+                    <option value="{{ s.id }}" {% if s.id == sucursal.id %}selected{% endif %}>{{ s.nombre }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <noscript><button type="submit" class="btn btn-outline">Ver</button></noscript>
+    </form>
+
+    <p class="text-muted text-sm mb-2">
+        Escriba un precio solo donde <strong>{{ sucursal.nombre }}</strong> cobra distinto. Lo que deje vacío
+        usa el <strong>precio general</strong> del estudio (se muestra en gris). Los combos que incluyen este
+        estudio se recalculan solos.
+    </p>
+
+    <form method="post" class="card" style="max-width: 720px;">
+        {% csrf_token %}
+        <input type="hidden" name="sucursal" value="{{ sucursal.id }}">
+        <div class="card-body" style="padding:0;">
+            {{ form.non_field_errors }}
+            <table>
+                <thead>
+                    <tr><th>Convenio · horario</th><th>Precio general</th><th>Precio en {{ sucursal.nombre }}</th></tr>
+                </thead>
+                <tbody>
+                    {% for campo, convenio, habil, etiqueta, general in form.celdas %}
+                        {% for f in form %}{% if f.name == campo %}
+                            <tr>
+                                <td>{{ etiqueta }}</td>
+                                <td class="text-muted">Q{{ general }}</td>
+                                <td>{{ f }}{{ f.errors }}</td>
+                            </tr>
+                        {% endif %}{% endfor %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="card-body flex gap-1">
+            <button type="submit" class="btn btn-primary"><svg><use href="#i-save"/></svg> Guardar precios de {{ sucursal.nombre }}</button>
+        </div>
+    </form>
+
+    {% if historial %}
+        <div class="card mt-3" style="max-width: 720px;">
+            <div class="card-header">Últimos cambios en {{ sucursal.nombre }}</div>
+            <div class="card-body" style="padding:0;overflow-x:auto;">
+                <table>
+                    <thead><tr><th>Fecha</th><th>Convenio · horario</th><th>Antes</th><th>Después</th><th>Por</th></tr></thead>
+                    <tbody>
+                        {% for r in historial %}
+                            <tr>
+                                <td>{{ r.creado_en|date:'d/m/y H:i' }}</td>
+                                <td>{{ r.get_convenio_display }} · {% if r.horario_habil %}hábil{% else %}inhábil{% endif %}</td>
+                                <td>{% if r.valor_anterior is None %}General{% else %}Q{{ r.valor_anterior }}{% endif %}</td>
+                                <td class="text-bold">{% if r.valor_nuevo is None %}General{% else %}Q{{ r.valor_nuevo }}{% endif %}</td>
+                                <td>{{ r.modificado_por.username }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endif %}
+{% endblock %}

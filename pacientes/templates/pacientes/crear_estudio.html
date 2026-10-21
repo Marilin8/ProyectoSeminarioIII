@@ -175,7 +175,8 @@
     {% if editando and historial_precios %}
         <div class="card" style="max-width:640px;margin-top:1.25rem;">
             <div class="card-header">
-                Últimos cambios de precio
+                Últimos cambios del precio general
+                <a href="{% url 'precios_sucursal_estudio' editando.id %}" class="btn-texto" style="float:right;font-weight:500;margin-left:1rem;">Precios por sucursal</a>
                 <a href="{% url 'historial_precios_estudio' %}?q={{ editando.nombre|urlencode }}"
                    class="btn-texto" style="float:right;font-weight:500;">Ver historial completo</a>
             </div>

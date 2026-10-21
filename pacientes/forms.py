@@ -80,13 +80,13 @@ class TipoEstudioSelect(forms.Select):
         return option
 
 
-def _detalles_tipo_estudio(queryset, convenio):
+def _detalles_tipo_estudio(queryset, convenio, sucursal=None):
     """Diccionario {pk: (precio_hábil, precio_inhábil, duración, modalidad)}
-    para alimentar TipoEstudioSelect."""
+    para alimentar TipoEstudioSelect (con los precios de la sucursal, si se da)."""
     return {
         str(te.pk): (
-            te.precio_para(convenio, True),
-            te.precio_para(convenio, False),
+            te.precio_para(convenio, True, sucursal=sucursal),
+            te.precio_para(convenio, False, sucursal=sucursal),
             te.duracion_minutos,
             te.modalidad,
         )
@@ -346,7 +346,7 @@ class AgendarCitaForm(forms.Form):
         self.fields['tipo_estudio'].queryset.prefetch_related('precios', 'radiologos')
         )
         self.fields['tipo_estudio'].widget.detalles = _detalles_tipo_estudio(
-            self.fields['tipo_estudio'].queryset, convenio,
+            self.fields['tipo_estudio'].queryset, convenio, sucursal=self.sucursal,
         )
         self.convenio = convenio
         if convenio in CONVENIOS_QUE_REQUIEREN_CARNET_IGSS:
@@ -490,7 +490,7 @@ class AgendarCitaPrivadoForm(forms.Form):
         queryset = self.fields['tipo_estudio'].queryset.prefetch_related('precios')
         self.fields['tipo_estudio'].queryset = queryset
         self.fields['tipo_estudio'].widget.detalles = _detalles_tipo_estudio(
-            queryset, Cita.CONVENIO_PRIVADO,
+            queryset, Cita.CONVENIO_PRIVADO, sucursal=self.sucursal,
         )
 
     def clean_dpi(self):
@@ -898,7 +898,7 @@ class CrearTipoEstudioForm(forms.ModelForm):
         if self.instance and self.instance.pk:
             actuales = {
                 (p.convenio, p.horario_habil): p.precio
-                for p in self.instance.precios.all()
+                for p in self.instance.precios.all() if p.sucursal_id is None
             }
 
         for campo, convenio, habil, etiqueta in PRECIOS_ESTUDIO:
@@ -923,7 +923,7 @@ class CrearTipoEstudioForm(forms.ModelForm):
             from .models import PrecioEstudio
             for campo, convenio, habil, _ in PRECIOS_ESTUDIO:
                 PrecioEstudio.objects.update_or_create(
-                    tipo_estudio=tipo_estudio, convenio=convenio, horario_habil=habil,
+                    tipo_estudio=tipo_estudio, convenio=convenio, horario_habil=habil, sucursal=None,
                     defaults={'precio': self.cleaned_data[campo]},
                 )
 
@@ -1232,3 +1232,27 @@ class AdjuntarInformeForm(forms.Form):
                 'Escribe el informe de al menos un estudio, adjunta un archivo, o ambos.'
             )
         return cleaned
+
+
+class PreciosSucursalForm(forms.Form):
+    """Precios propios de una sucursal para un estudio: una celda por convenio/horario.
+    Vacía = esa sucursal usa el precio general."""
+
+    def __init__(self, *args, estudio, sucursal, **kwargs):
+        super().__init__(*args, **kwargs)
+        from .models import PRECIOS_ESTUDIO
+        self.estudio = estudio
+        self.sucursal = sucursal
+        propios = {
+            (p.convenio, p.horario_habil): p.precio
+            for p in estudio.precios.all() if p.sucursal_id == sucursal.id
+        }
+        self.celdas = []
+        for campo, convenio, habil, etiqueta in PRECIOS_ESTUDIO:
+            general = estudio.precio_para(convenio, habil)
+            self.fields[campo] = forms.DecimalField(
+                label=etiqueta, required=False, min_value=0, max_digits=8, decimal_places=2,
+                initial=propios.get((convenio, habil)),
+                widget=forms.NumberInput(attrs={'step': '0.01', 'placeholder': f'General: Q{general}'}),
+            )
+            self.celdas.append((campo, convenio, habil, etiqueta, general))

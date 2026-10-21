@@ -110,7 +110,7 @@ def citas_del_periodo(filtros):
     citas = (
         Cita.objects
         .filter(fecha__range=(filtros['desde'], filtros['hasta']), estado__in=ESTADOS_REALIZADOS)
-        .select_related('paciente', 'tipo_estudio', 'radiologo', 'medico_tratante', 'cobro')
+        .select_related('paciente', 'tipo_estudio', 'radiologo', 'medico_tratante', 'cobro', 'sucursal')
         .prefetch_related('tipo_estudio__precios', Prefetch(
             'estudios_extra',
             queryset=EstudioExtra.objects.filter(procesar_ahora=True)
@@ -131,22 +131,22 @@ def citas_del_periodo(filtros):
 
 
 class _Precios:
-    """Cita.precio con memoria por (estudio, convenio, horario hábil, fecha)."""
+    """Cita.precio con memoria por (estudio, convenio, horario hábil, fecha, sucursal)."""
 
     def __init__(self):
         self._memoria = {}
 
-    def _de(self, estudio, convenio, habil, fecha):
-        clave = (estudio.id, convenio, habil, fecha)
+    def _de(self, estudio, convenio, habil, fecha, sucursal):
+        clave = (estudio.id, convenio, habil, fecha, sucursal.id if sucursal else None)
         if clave not in self._memoria:
-            self._memoria[clave] = estudio.precio_para(convenio, habil, fecha=fecha) or CERO
+            self._memoria[clave] = estudio.precio_para(convenio, habil, fecha=fecha, sucursal=sucursal) or CERO
         return self._memoria[clave]
 
     def de_cita(self, cita):
         habil = es_horario_habil(cita.convenio, cita.hora)
-        total = self._de(cita.tipo_estudio, cita.convenio, habil, cita.fecha)
+        total = self._de(cita.tipo_estudio, cita.convenio, habil, cita.fecha, cita.sucursal)
         for extra in cita.extras_cobrados:
-            total += self._de(extra.tipo_estudio, cita.convenio, habil, cita.fecha)
+            total += self._de(extra.tipo_estudio, cita.convenio, habil, cita.fecha, cita.sucursal)
         return total
 
 

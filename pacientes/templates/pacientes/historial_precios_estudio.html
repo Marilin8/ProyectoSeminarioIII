@@ -47,9 +47,10 @@
                                     <span class="badge badge-info">
                                         {{ r.get_convenio_display }} · {% if r.horario_habil %}hábil{% else %}inhábil{% endif %}
                                     </span>
+                                    {% if r.sucursal %}<span class="badge badge-muted">{{ r.sucursal.nombre }}</span>{% else %}<span class="badge badge-muted">General</span>{% endif %}
                                 </td>
-                                <td>Q{{ r.valor_anterior }}</td>
-                                <td class="text-bold">Q{{ r.valor_nuevo }}</td>
+                                <td>{% if r.valor_anterior is None %}Precio general{% else %}Q{{ r.valor_anterior }}{% endif %}</td>
+                                <td class="text-bold">{% if r.valor_nuevo is None %}Precio general{% else %}Q{{ r.valor_nuevo }}{% endif %}</td>
                                 <td>{{ r.modificado_por.get_full_name|default:r.modificado_por.username }}</td>
                             </tr>
                         {% endfor %}

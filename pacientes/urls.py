@@ -10,6 +10,11 @@ urlpatterns = [
     path('estudios/', views.lista_estudios, name='lista_estudios'),
     path('estudios/<int:estudio_id>/editar/', views.editar_estudio, name='editar_estudio'),
     path(
+        'estudios/<int:estudio_id>/precios-sucursal/',
+        views.precios_sucursal_estudio,
+        name='precios_sucursal_estudio',
+    ),
+    path(
         'estudios/<int:estudio_id>/programar-cambio/',
         views.programar_cambio_estudio,
         name='programar_cambio_estudio',

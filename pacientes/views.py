@@ -66,6 +66,7 @@ from .forms import (
     RegistrarTicketForm,
     SolicitarModificacionEstudioForm,
     SubirConstanciaFirmadaForm,
+    PreciosSucursalForm,
 )
 from .horarios import (
     DIAS_SEMANA,
@@ -96,6 +97,7 @@ from .models import (
     OrdenTrabajo,
     Paciente,
     PagoComisionMedicoTratante,
+    PrecioEstudio,
     PagoComisionMedicoTratanteLinea,
     ReporteDiario,
     Ticket,
@@ -2340,7 +2342,7 @@ def editar_estudio(request, estudio_id):
         # actualizada (ver CrearTipoEstudioForm.save), así que después no
         # hay forma de saber qué valor tenía cada celda.
         precios_antes = {
-            (p.convenio, p.horario_habil): p.precio for p in tipo_estudio.precios.all()
+            (p.convenio, p.horario_habil): p.precio for p in tipo_estudio.precios.all() if p.sucursal_id is None
         }
         form = CrearTipoEstudioForm(request.POST, instance=tipo_estudio)
         if form.is_valid():
@@ -2362,7 +2364,8 @@ def editar_estudio(request, estudio_id):
     return render(request, 'pacientes/crear_estudio.html', {
         'form': form,
         'editando': tipo_estudio,
-        'historial_precios': tipo_estudio.historial_precios.select_related('modificado_por')[:10],
+        'historial_precios': tipo_estudio.historial_precios.filter(sucursal__isnull=True)
+        .select_related('modificado_por')[:10],
         'cambios_programados': tipo_estudio.cambios_programados.filter(
             estado=CambioEstudioProgramado.ESTADO_PENDIENTE,
         ).select_related('creado_por'),
@@ -2448,7 +2451,9 @@ def _auditar_cambios_precio(request, tipo_estudio, precios_antes):
     matriz de precios que cambió (mismo patrón que
     accounts.views._auditar_cambios_comision, para precios de estudio)."""
     cambiados = []
-    precios_ahora = {(p.convenio, p.horario_habil): p.precio for p in tipo_estudio.precios.all()}
+    precios_ahora = {
+        (p.convenio, p.horario_habil): p.precio for p in tipo_estudio.precios.all() if p.sucursal_id is None
+    }
     for (convenio, habil), ahora in precios_ahora.items():
         antes = precios_antes.get((convenio, habil), Decimal('0.00'))
         if antes != ahora:
@@ -2473,12 +2478,93 @@ def _auditar_cambios_precio(request, tipo_estudio, precios_antes):
 
 @login_required
 @user_passes_test(es_administrador)
+def precios_sucursal_estudio(request, estudio_id):
+    """Precios propios de una sucursal para un estudio. Lo que se deja vacío usa el
+    precio general. Cada cambio queda en HistorialPrecioEstudio (con la sucursal), así
+    los reportes y boletas de fechas pasadas siguen mostrando el precio de ese día."""
+    from accounts.models import Sucursal
+    estudio = get_object_or_404(TipoEstudio.objects.prefetch_related('precios'), id=estudio_id)
+    opciones = list(Sucursal.objects.filter(activa=True))
+    elegida_id = request.POST.get('sucursal') or request.GET.get('sucursal')
+    sucursal = next((s for s in opciones if str(s.id) == str(elegida_id)), None)
+    if sucursal is None:
+        sucursal = sucursales.sucursal_activa(request) or (opciones[0] if opciones else None)
+    if sucursal is None:
+        messages.error(request, 'Primero cree una sucursal.')
+        return redirect('lista_sucursales')
+
+    form = PreciosSucursalForm(request.POST or None, estudio=estudio, sucursal=sucursal)
+    if request.method == 'POST' and form.is_valid():
+        cambios = _guardar_precios_sucursal(request, estudio, sucursal, form)
+        if cambios:
+            nombres = dict(Cita.CONVENIO_CHOICES)
+            Bitacora.registrar(
+                request=request, usuario=request.user, accion=Bitacora.ACCION_EDITAR_PRECIO_ESTUDIO,
+                descripcion=(
+                    f'Cambió precios de "{estudio.nombre}" en la sucursal {sucursal.nombre}: '
+                    + ', '.join(
+                        f'{nombres.get(c, c)} {"hábil" if h else "inhábil"}: '
+                        f'{"general" if a is None else f"Q{a}"} → {"general" if n is None else f"Q{n}"}'
+                        for c, h, a, n in cambios
+                    )
+                ),
+            )
+            for combo in estudio.combos.all():
+                combo.sincronizar_tipo_estudio()
+            messages.success(request, f'Precios de "{estudio.nombre}" en {sucursal.nombre} guardados.')
+        else:
+            messages.info(request, 'No hubo cambios.')
+        return redirect(f"{reverse('precios_sucursal_estudio', args=[estudio.id])}?sucursal={sucursal.id}")
+
+    return render(request, 'pacientes/precios_sucursal_estudio.html', {
+        'estudio': estudio,
+        'sucursal': sucursal,
+        'sucursales_opciones': opciones,
+        'form': form,
+        'historial': estudio.historial_precios.filter(sucursal=sucursal).select_related('modificado_por')[:15],
+    })
+
+
+def _guardar_precios_sucursal(request, estudio, sucursal, form):
+    """Crea, cambia o quita los precios propios de la sucursal y deja el rastro.
+    Devuelve [(convenio, hábil, antes, después)] con None = precio general."""
+    cambios = []
+    with transaction.atomic():
+        actuales = {
+            (p.convenio, p.horario_habil): p
+            for p in PrecioEstudio.objects.select_for_update().filter(tipo_estudio=estudio, sucursal=sucursal)
+        }
+        for campo, convenio, habil, _etiqueta, _general in form.celdas:
+            nuevo = form.cleaned_data.get(campo)
+            fila = actuales.get((convenio, habil))
+            antes = fila.precio if fila else None
+            if nuevo == antes:
+                continue
+            if nuevo is None:
+                fila.delete()
+            elif fila is None:
+                PrecioEstudio.objects.create(
+                    tipo_estudio=estudio, convenio=convenio, horario_habil=habil, sucursal=sucursal, precio=nuevo,
+                )
+            else:
+                fila.precio = nuevo
+                fila.save(update_fields=['precio'])
+            HistorialPrecioEstudio.objects.create(
+                tipo_estudio=estudio, convenio=convenio, horario_habil=habil, sucursal=sucursal,
+                valor_anterior=antes, valor_nuevo=nuevo, modificado_por=request.user,
+            )
+            cambios.append((convenio, habil, antes, nuevo))
+    return cambios
+
+
+@login_required
+@user_passes_test(es_administrador)
 def historial_precios_estudio(request):
     """Auditoría de los cambios de precio de estudios: fecha, de cuánto a
     cuánto, y qué administrador lo hizo. Filtro por nombre del estudio."""
     busqueda = (request.GET.get('q') or '').strip()
     registros = (
-        HistorialPrecioEstudio.objects.select_related('tipo_estudio', 'modificado_por')
+        HistorialPrecioEstudio.objects.select_related('tipo_estudio', 'modificado_por', 'sucursal')
         .order_by('-creado_en')
     )
     if busqueda:

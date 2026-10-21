@@ -68,6 +68,10 @@
                                 <td><a class="btn btn-ghost btn-sm" href="{% url 'editar_estudio' estudio_id=estudio.id %}">
                                     <svg width="14" height="14"><use href="#i-edit"/></svg>
                                     Editar
+                                </a>
+                                <a class="btn btn-ghost btn-sm" href="{% url 'precios_sucursal_estudio' estudio.id %}" title="Precios propios de cada sucursal">
+                                    <svg width="14" height="14"><use href="#i-map-pin"/></svg>
+                                    Por sucursal
                                 </a></td>
                             </tr>
                         {% endfor %}

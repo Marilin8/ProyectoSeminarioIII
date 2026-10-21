@@ -117,6 +117,7 @@ class Command(BaseCommand):
                     tipo_estudio=estudio,
                     convenio=convenio,
                     horario_habil=True,
+                    sucursal=None,
                     defaults={'precio': Decimal(precio)},
                 )
                 if convenio != Cita.CONVENIO_COEX:
@@ -124,6 +125,7 @@ class Command(BaseCommand):
                         tipo_estudio=estudio,
                         convenio=convenio,
                         horario_habil=False,
+                        sucursal=None,
                         defaults={'precio': Decimal(precio + 35)},
                     )
             estudios.append(estudio)
