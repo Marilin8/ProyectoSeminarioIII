@@ -77,3 +77,25 @@ class ColumnasReporteDiarioTests(TestCase):
 
         fila = next(f for f in filas if f['cita_id'] == cita.id)
         self.assertEqual(fila['medico_referente'], 'Dr. Antiguo')
+
+
+class OrdenEstudiosRealizadosTests(TestCase):
+    """"Estudios realizados": primero el último paciente al que se le hizo un estudio."""
+
+    def test_el_ultimo_paciente_atendido_aparece_primero(self):
+        recep = crear_usuario('recep_orden_hist', rol=Usuario.ROL_RECEPCIONISTA)
+        hoy = timezone.localdate()
+        antiguo = crear_paciente(dpi='8181818181801', nombre='Aaron')
+        reciente = crear_paciente(dpi='8181818181802', nombre='Zoe')
+        de_hoy_temprano = crear_paciente(dpi='8181818181803', nombre='Beto')
+        crear_cita(recep, paciente=antiguo, fecha=hoy - datetime.timedelta(days=3), estado=Cita.ESTADO_PROCESADA)
+        crear_cita(recep, paciente=reciente, fecha=hoy, hora=datetime.time(15, 0), estado=Cita.ESTADO_EN_PROCESO)
+        crear_cita(recep, paciente=de_hoy_temprano, fecha=hoy, hora=datetime.time(8, 0), estado=Cita.ESTADO_PROCESADA)
+        # Un estudio viejo de Zoe no la baja: cuenta el más reciente.
+        crear_cita(recep, paciente=reciente, fecha=hoy - datetime.timedelta(days=10), estado=Cita.ESTADO_PROCESADA)
+        self.client.force_login(recep)
+
+        pacientes = self.client.get(reverse('historial_pacientes')).context['pacientes']
+
+        self.assertEqual([p.nombre for p in pacientes], ['Zoe', 'Beto', 'Aaron'])
+

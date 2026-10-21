@@ -628,13 +628,25 @@ def historial_pacientes(request):
                 convenios_choices.get(convenio, convenio)
             )
 
+    # Último estudio de cada paciente (entre los que pasan los filtros), para mostrar
+    # primero a quien se le hizo un estudio más recientemente.
+    ultimo_estudio = {}
+    for paciente_id, fecha, hora in citas_procesadas.order_by().values_list('paciente_id', 'fecha', 'hora'):
+        momento = (fecha, hora)
+        if paciente_id not in ultimo_estudio or momento > ultimo_estudio[paciente_id]:
+            ultimo_estudio[paciente_id] = momento
+
     for paciente in pacientes:
         paciente.datos_pendientes = paciente.campos_pendientes()
         paciente.convenios_estudios = sorted(convenios_por_paciente.get(paciente.id, []))
+        paciente.ultimo_estudio = ultimo_estudio.get(paciente.id)
 
-    # Los que tienen datos pendientes primero, para que salten a la vista;
-    # el resto en orden alfabético, como antes.
-    pacientes.sort(key=lambda p: (not p.datos_pendientes, p.nombre, p.apellido))
+    # El último paciente atendido primero (los datos pendientes siguen marcados en
+    # cada tarjeta); a igual fecha y hora, por nombre.
+    pacientes.sort(key=lambda p: (p.nombre, p.apellido))
+    pacientes.sort(
+        key=lambda p: p.ultimo_estudio or (datetime.date.min, datetime.time.min), reverse=True,
+    )
 
     contexto = {
         'pacientes': pacientes,
