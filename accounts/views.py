@@ -15,7 +15,7 @@ from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.paginator import Paginator
 from django.db.models import Count, Prefetch, Q
-from django.http import FileResponse, Http404, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -30,7 +30,7 @@ import qrcode
 
 from clinica.validators import avisar_si_correo_no_existe
 
-from . import estadisticas
+from . import estadisticas, finanzas
 from .correos import (
     correo_no_recibe,
     enmascarar_correo,
@@ -336,6 +336,31 @@ def dashboard(request):
         contexto = estadisticas.calcular(request.GET.get('dias'))
         return render(request, 'accounts/dashboard_admin.html', contexto)
     return menu_principal(request)
+
+
+@login_required
+@user_passes_test(es_administrador)
+def panel_financiero(request):
+    """Apartado financiero del panel del administrador: producción por convenio,
+    estudio, radiólogo y médico tratante, cobrado / pendiente, etc. (ver
+    accounts/finanzas.py). Con ?formato=csv descarga el detalle de las citas."""
+    filtros = finanzas.leer_filtros(request.GET)
+    datos = finanzas.calcular(filtros)
+    if request.GET.get('formato') == 'csv':
+        respuesta = HttpResponse(content_type='text/csv; charset=utf-8')
+        respuesta['Content-Disposition'] = (
+            f'attachment; filename="finanzas_{filtros["desde"]:%Y%m%d}_{filtros["hasta"]:%Y%m%d}.csv"'
+        )
+        respuesta.write('﻿')  # BOM: Excel abre bien las tildes
+        finanzas.escribir_csv(respuesta, datos['citas'])
+        return respuesta
+    consulta = request.GET.copy()
+    consulta['formato'] = 'csv'
+    return render(request, 'accounts/panel_financiero.html', {
+        **datos, **finanzas.opciones_de_filtro(),
+        'filtros': filtros,
+        'url_csv': f'?{consulta.urlencode()}',
+    })
 
 
 @login_required

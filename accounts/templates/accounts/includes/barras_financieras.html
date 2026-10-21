@@ -1,0 +1,19 @@
+{% load finanzas %}{% comment %}
+Barras horizontales del panel financiero. Parámetros: filas (ver finanzas._ranking),
+filtro (nombre del parámetro GET para filtrar al hacer clic, opcional), unidad, vacio.
+{% endcomment %}{% if filas %}
+    <div class="barras-h">
+        {% for f in filas %}
+            <div class="barra-fila{% if forloop.first %} top{% endif %}{% if f.otros %} otros{% endif %}" title="{{ f.nombre }}: {{ f.monto|quetzales }} ({{ f.cantidad }})">
+                <span class="barra-nombre">
+                    {% if filtro and f.id and not f.otros %}<a href="?{{ request.GET.urlencode }}&amp;{{ filtro }}={{ f.id }}" title="Filtrar por {{ f.nombre }}">{{ f.nombre }}</a>{% else %}{{ f.nombre }}{% endif %}
+                    <small>{{ f.cantidad }} {{ unidad }}{{ f.cantidad|pluralize }}</small>
+                </span>
+                <span class="barra-pista"><span class="barra-relleno" style="width:{{ f.ancho }}%"></span></span>
+                <span class="barra-valor">{{ f.monto|quetzales }}<small>{{ f.porcentaje }}%</small></span>
+            </div>
+        {% endfor %}
+    </div>
+{% else %}
+    <div class="sin-datos">{{ vacio }}</div>
+{% endif %}

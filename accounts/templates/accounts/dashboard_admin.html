@@ -6,6 +6,9 @@
 {% block page_title %}Panel de estadísticas{% endblock %}
 
 {% block topbar_actions %}
+    <a href="{% url 'panel_financiero' %}" class="btn btn-outline">
+        <svg><use href="#i-file-text"/></svg> Finanzas
+    </a>
     <a href="{% url 'estado_clinica' %}" class="btn btn-outline">
         <svg><use href="#i-activity"/></svg> Estado de la Clínica
     </a>

@@ -1,0 +1,264 @@
+{% extends 'base.html' %}
+{% load l10n finanzas %}
+
+{% block title %}Finanzas — Clínica de Imágenes{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+{% block page_title %}Panel financiero{% endblock %}
+
+{% block topbar_actions %}
+    <a href="{% url 'dashboard' %}" class="btn btn-outline">
+        <svg><use href="#i-bar-chart"/></svg> Estadísticas
+    </a>
+    <a href="{% url 'menu_principal' %}" class="btn btn-primary">
+        <svg><use href="#i-grid"/></svg> Ir al menú principal
+    </a>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .fin-filtros { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; margin-bottom: 1rem; }
+    .fin-filtros > div { display: flex; flex-direction: column; min-width: 0; }
+    .fin-filtros label { margin: 0 0 0.2rem; font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+    .fin-filtros select, .fin-filtros input[type="date"] { width: auto; min-width: 9rem; max-width: 15rem; padding: 0.4rem 0.55rem; font-size: 0.82rem; }
+    .fin-filtros .rango { display: none; gap: 0.4rem; }
+    .fin-filtros .rango.visible { display: flex; }
+    .fin-filtros > .fin-acciones { flex-direction: row; flex-wrap: wrap; gap: 0.5rem; margin-left: auto; }
+    .fin-filtros > .rango { flex-direction: row; }
+    .fin-rango-texto { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 1rem; }
+
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0.85rem; margin-bottom: 1rem; }
+    .kpi { background: var(--card); border: 1px solid var(--border-light); border-radius: var(--radius-lg); box-shadow: var(--shadow); padding: 0.9rem 1rem; border-top: 4px solid var(--cian-500); }
+    .kpi.morado { border-top-color: var(--morado-500); }
+    .kpi.verde { border-top-color: var(--success); }
+    .kpi.ambar { border-top-color: var(--warning); }
+    .kpi-etiqueta { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+    .kpi-valor { font-size: 1.5rem; font-weight: 700; color: var(--text); line-height: 1.25; margin-top: 0.2rem; overflow-wrap: anywhere; }
+    .kpi-detalle { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.15rem; }
+
+    .graficas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .graficas .ancha { grid-column: 1 / -1; }
+    .nota { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.6rem; }
+    .sin-datos { text-align: center; color: var(--text-muted); font-size: 0.85rem; padding: 2rem 1rem; }
+
+    .barras-h { display: flex; flex-direction: column; gap: 0.55rem; }
+    .barra-fila { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) 7.5rem; gap: 0.6rem; align-items: center; font-size: 0.8rem; }
+    .barra-nombre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); }
+    .barra-nombre small { display: block; font-size: 0.68rem; color: var(--text-muted); }
+    .barra-nombre a { color: inherit; text-decoration: none; }
+    .barra-nombre a:hover { color: var(--primary); text-decoration: underline; }
+    .barra-pista { background: var(--neutral-150); border-radius: 999px; height: 0.85rem; overflow: hidden; }
+    .barra-relleno { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--cian-400), var(--cian-600)); }
+    .barra-fila.top .barra-relleno { background: linear-gradient(90deg, var(--morado-400), var(--morado-600)); }
+    .barra-fila.top .barra-nombre { color: var(--text); font-weight: 700; }
+    .barra-fila.otros .barra-relleno { background: var(--neutral-300); }
+    .barra-valor { text-align: right; font-weight: 600; color: var(--text); white-space: nowrap; }
+    .barra-valor small { display: block; color: var(--text-muted); font-weight: 400; font-size: 0.68rem; }
+
+    .columnas { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; align-items: end; height: 200px; border-bottom: 1px solid var(--border); padding-top: 0.5rem; }
+    .columna { height: 100%; display: flex; flex-direction: column; justify-content: flex-end; }
+    .columna .pila { display: flex; flex-direction: column-reverse; border-radius: 4px 4px 0 0; overflow: hidden; min-height: 0; }
+    .columna .pila span { display: block; width: 100%; }
+    .etiquetas-x { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; font-size: 0.65rem; color: var(--text-muted); text-align: center; margin-top: 0.3rem; }
+    .etiquetas-x span { overflow: hidden; white-space: nowrap; text-overflow: clip; }
+    .leyenda-h { display: flex; gap: 1rem; flex-wrap: wrap; font-size: 0.78rem; margin-top: 0.6rem; }
+    .leyenda-h span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .muestra { width: 0.75rem; height: 0.75rem; border-radius: 3px; flex-shrink: 0; display: inline-block; }
+
+    .dona-caja { display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap; justify-content: center; }
+    .dona { width: 160px; height: 160px; border-radius: 50%; position: relative; flex-shrink: 0; }
+    .dona::after { content: ''; position: absolute; inset: 26px; background: var(--card); border-radius: 50%; }
+    .dona-centro { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1; text-align: center; }
+    .dona-centro strong { font-size: 0.95rem; color: var(--text); }
+    .dona-centro span { font-size: 0.7rem; color: var(--text-muted); }
+    .leyenda { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.45rem; font-size: 0.8rem; }
+    .leyenda li { display: flex; align-items: center; gap: 0.5rem; }
+
+    @media (max-width: 900px) {
+        .graficas { grid-template-columns: 1fr; }
+        .barra-fila { grid-template-columns: minmax(0, 8rem) minmax(0, 1fr) 6.5rem; }
+        .fin-acciones { margin-left: 0; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+{# Sin localización: anchos y alturas CSS necesitan punto decimal, no coma. #}
+{% localize off %}
+<form method="get" class="fin-filtros" id="fin-filtros">
+    <div>
+        <label for="f-periodo">Período</label>
+        <select name="periodo" id="f-periodo">
+            {% for clave, nombre in periodos %}<option value="{{ clave }}" {% if clave == filtros.periodo %}selected{% endif %}>{{ nombre }}</option>{% endfor %}
+        </select>
+    </div>
+    <div class="rango {% if filtros.periodo == 'rango' %}visible{% endif %}" id="f-rango">
+        <div><label for="f-desde">Desde</label><input type="date" name="desde" id="f-desde" value="{{ filtros.desde|date:'Y-m-d' }}"></div>
+        <div><label for="f-hasta">Hasta</label><input type="date" name="hasta" id="f-hasta" value="{{ filtros.hasta|date:'Y-m-d' }}"></div>
+    </div>
+    <div>
+        <label for="f-convenio">Convenio</label>
+        <select name="convenio" id="f-convenio">
+            <option value="">Todos</option>
+            <option value="coex" {% if filtros.convenio == 'coex' %}selected{% endif %}>COEX</option>
+            <option value="privado" {% if filtros.convenio == 'privado' %}selected{% endif %}>Privado</option>
+            <option value="emergencia_igss" {% if filtros.convenio == 'emergencia_igss' %}selected{% endif %}>Emergencia IGSS</option>
+        </select>
+    </div>
+    <div>
+        <label for="f-estudio">Estudio</label>
+        <select name="estudio" id="f-estudio">
+            <option value="">Todos</option>
+            {% for id, nombre in estudios_opciones %}<option value="{{ id }}" {% if id == filtros.estudio %}selected{% endif %}>{{ nombre }}</option>{% endfor %}
+        </select>
+    </div>
+    <div>
+        <label for="f-radiologo">Radiólogo</label>
+        <select name="radiologo" id="f-radiologo">
+            <option value="">Todos</option>
+            {% for id, nombre in radiologos_opciones %}<option value="{{ id }}" {% if id == filtros.radiologo %}selected{% endif %}>{{ nombre }}</option>{% endfor %}
+        </select>
+    </div>
+    <div>
+        <label for="f-medico">Médico tratante</label>
+        <select name="medico" id="f-medico">
+            <option value="">Todos</option>
+            {% for id, nombre in medicos_opciones %}<option value="{{ id }}" {% if id == filtros.medico %}selected{% endif %}>{{ nombre }}</option>{% endfor %}
+        </select>
+    </div>
+    <div class="fin-acciones">
+        <button type="submit" class="btn btn-primary">Aplicar</button>
+        <a href="{% url 'panel_financiero' %}" class="btn btn-outline">Limpiar</a>
+        <a href="{{ url_csv }}" class="btn btn-outline"><svg><use href="#i-download"/></svg> CSV</a>
+    </div>
+</form>
+
+<p class="fin-rango-texto">
+    Del {{ filtros.desde|date:"d/m/Y" }} al {{ filtros.hasta|date:"d/m/Y" }} ({{ kpi.dias }} día{{ kpi.dias|pluralize }}).
+    Producción = valor de los estudios realizados (en proceso o procesados), con la tarifa vigente en la fecha de cada cita.
+</p>
+
+<div class="kpis">
+    <div class="kpi">
+        <div class="kpi-etiqueta">Producción total</div>
+        <div class="kpi-valor">{{ kpi.produccion|quetzales }}</div>
+        <div class="kpi-detalle">{{ kpi.estudios }} estudio{{ kpi.estudios|pluralize }} · promedio diario {{ promedio_diario|quetzales }}</div>
+    </div>
+    <div class="kpi">
+        <div class="kpi-etiqueta">Ticket promedio</div>
+        <div class="kpi-valor">{{ kpi.promedio|quetzales }}</div>
+        <div class="kpi-detalle">Por estudio realizado</div>
+    </div>
+    <div class="kpi verde">
+        <div class="kpi-etiqueta">Privado cobrado</div>
+        <div class="kpi-valor">{{ kpi.privado_cobrado|quetzales }}</div>
+        <div class="kpi-detalle">Cobrado en Caja</div>
+    </div>
+    <div class="kpi ambar">
+        <div class="kpi-etiqueta">Privado por cobrar</div>
+        <div class="kpi-valor">{{ kpi.privado_pendiente|quetzales }}</div>
+        <div class="kpi-detalle">Realizado sin cobro registrado</div>
+    </div>
+    <div class="kpi">
+        <div class="kpi-etiqueta">A facturar al IGSS</div>
+        <div class="kpi-valor">{{ kpi.igss|quetzales }}</div>
+        <div class="kpi-detalle">COEX + Emergencia IGSS</div>
+    </div>
+    <div class="kpi morado">
+        <div class="kpi-etiqueta">Comisiones a médicos</div>
+        <div class="kpi-valor">{{ kpi.comisiones_pagadas|quetzales }}</div>
+        <div class="kpi-detalle">Pagadas en el período · referido {{ kpi.referido|quetzales }}</div>
+    </div>
+</div>
+
+<div class="graficas">
+    <div class="card ancha">
+        <div class="card-header">Producción por {{ serie.agrupado }}</div>
+        <div class="card-body">
+            {% if kpi.estudios %}
+                <div class="columnas">
+                    {% for c in serie.columnas %}
+                        <div class="columna" title="{{ c.etiqueta }}: {{ c.total|quetzales }}">
+                            <div class="pila" style="height:{{ c.alto }}%">
+                                {% for s in c.segmentos %}<span style="height:{{ s.alto }}%;background:{{ s.color }}" title="{{ c.etiqueta }} · {{ s.nombre }}: {{ s.monto|quetzales }}"></span>{% endfor %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+                <div class="etiquetas-x">{% for c in serie.columnas %}<span>{{ c.etiqueta }}</span>{% endfor %}</div>
+                <div class="leyenda-h">
+                    {% for c in convenios %}<span><span class="muestra" style="background:{{ c.color }}"></span>{{ c.nombre }}</span>{% endfor %}
+                </div>
+                <p class="nota">Pase el cursor sobre una columna para ver el monto.</p>
+            {% else %}
+                <div class="sin-datos">No hay estudios realizados con estos filtros.</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Producción por convenio</div>
+        <div class="card-body">
+            <div class="dona-caja">
+                <div class="dona" style="background: conic-gradient({{ gradiente }});">
+                    <div class="dona-centro"><strong>{{ kpi.produccion|quetzales }}</strong><span>total</span></div>
+                </div>
+                <ul class="leyenda">
+                    {% for c in convenios %}
+                        <li><span class="muestra" style="background:{{ c.color }}"></span>{{ c.nombre }}: <strong>{{ c.monto|quetzales }}</strong> <span class="text-muted">({{ c.porcentaje }}% · {{ c.cantidad }})</span></li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Estudios que más producen</div>
+        <div class="card-body">
+            {% include 'accounts/includes/barras_financieras.html' with filas=estudios filtro='estudio' unidad='estudio' vacio='No hay estudios en el período.' %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Radiólogos: estudios atendidos y producción</div>
+        <div class="card-body">
+            {% include 'accounts/includes/barras_financieras.html' with filas=radiologos filtro='radiologo' unidad='estudio' vacio='No hay estudios con radiólogo asignado.' %}
+            {% if sin_radiologo %}<p class="nota">{{ sin_radiologo.cantidad }} estudio{{ sin_radiologo.cantidad|pluralize }} sin radiólogo asignado ({{ sin_radiologo.monto|quetzales }}).</p>{% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Médicos tratantes que más refieren</div>
+        <div class="card-body">
+            {% include 'accounts/includes/barras_financieras.html' with filas=medicos filtro='medico' unidad='referido' vacio='No hay citas referidas por médicos tratantes.' %}
+            <p class="nota">Monto de los estudios referidos (base para la comisión). El porcentaje es sobre el total referido.</p>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Privado cobrado por forma de pago</div>
+        <div class="card-body">
+            {% include 'accounts/includes/barras_financieras.html' with filas=formas_pago unidad='cobro' vacio='No hay cobros de Privado en el período.' %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Horario hábil vs. inhábil</div>
+        <div class="card-body">
+            {% include 'accounts/includes/barras_financieras.html' with filas=horarios unidad='estudio' vacio='Sin datos.' %}
+            <p class="nota">Privado y Emergencia IGSS después de las 18:00 se cobran con tarifa inhábil.</p>
+        </div>
+    </div>
+</div>
+{% endlocalize %}
+
+<script>
+    (function () {
+        var periodo = document.getElementById('f-periodo');
+        var rango = document.getElementById('f-rango');
+        periodo.addEventListener('change', function () {
+            rango.classList.toggle('visible', periodo.value === 'rango');
+            if (periodo.value !== 'rango') { document.getElementById('fin-filtros').submit(); }
+        });
+    })();
+</script>
+{% endblock %}
