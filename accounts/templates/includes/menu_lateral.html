@@ -1,0 +1,97 @@
+{% comment %}
+Menú desplegable de la barra lateral (ver accounts/menu_lateral.py). Las opciones con
+submenú abren una columna a la derecha de la barra: al pasar el mouse (en computadoras)
+o al hacer clic. Se cierra con Escape, con clic afuera o al salir de la barra.
+{% endcomment %}
+{% if menu_lateral %}
+    <div class="menu-lateral-titulo">Menú</div>
+    {% for n in menu_lateral %}
+        {% if n.hijos %}
+            <button type="button" class="menu-item{% if n.activo %} active{% endif %}" data-abre="{{ n.id }}"
+                    aria-expanded="false" aria-controls="{{ n.id }}">
+                <svg width="16" height="16"><use href="#{{ n.icono }}"/></svg>
+                <span class="menu-item-texto">{{ n.nombre }}</span>
+                <svg class="menu-chevron" width="14" height="14"><use href="#i-chevron-right"/></svg>
+            </button>
+        {% else %}
+            <a href="{{ n.url }}" class="menu-item{% if n.activo %} active{% endif %}">
+                <svg width="16" height="16"><use href="#{{ n.icono }}"/></svg>
+                <span class="menu-item-texto">{{ n.nombre }}</span>
+            </a>
+        {% endif %}
+    {% endfor %}
+
+    {% for n in menu_lateral %}
+        {% if n.hijos %}
+            <div class="menu-columna" id="{{ n.id }}" role="menu" aria-label="{{ n.nombre }}" hidden>
+                <div class="menu-columna-titulo">
+                    <span>{{ n.nombre }}</span>
+                    <button type="button" class="menu-columna-cerrar" data-cerrar-menu aria-label="Cerrar">
+                        <svg width="16" height="16"><use href="#i-x"/></svg>
+                    </button>
+                </div>
+                {% for h in n.hijos %}
+                    <a href="{{ h.url }}" role="menuitem" class="{% if h.activo %}active{% endif %}">{{ h.nombre }}</a>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endfor %}
+
+    <script>
+    (function () {
+        var barra = document.querySelector('.sidebar');
+        if (!barra) { return; }
+        var abierta = null;
+        var temporizador = null;
+        var conMouse = window.matchMedia && window.matchMedia('(hover: hover)').matches;
+
+        function boton(id) { return barra.querySelector('[data-abre="' + id + '"]'); }
+        function cerrar() {
+            if (!abierta) { return; }
+            abierta.hidden = true;
+            var b = boton(abierta.id);
+            if (b) { b.classList.remove('abierto'); b.setAttribute('aria-expanded', 'false'); }
+            abierta = null;
+        }
+        function abrir(id) {
+            var columna = document.getElementById(id);
+            if (!columna || abierta === columna) { return; }
+            cerrar();
+            columna.hidden = false;
+            var b = boton(id);
+            b.classList.add('abierto');
+            b.setAttribute('aria-expanded', 'true');
+            abierta = columna;
+        }
+        function luego(accion, ms) { clearTimeout(temporizador); temporizador = setTimeout(accion, ms); }
+
+        barra.querySelectorAll('[data-abre]').forEach(function (b) {
+            var id = b.getAttribute('data-abre');
+            b.addEventListener('click', function () {
+                clearTimeout(temporizador);
+                if (abierta && abierta.id === id) { cerrar(); } else { abrir(id); }
+            });
+            if (conMouse) {
+                b.addEventListener('mouseenter', function () { luego(function () { abrir(id); }, 120); });
+            }
+        });
+        if (conMouse) {
+            // Pasar a una opción sin submenú cierra la columna abierta.
+            barra.querySelectorAll('nav a.menu-item').forEach(function (a) {
+                a.addEventListener('mouseenter', function () { luego(cerrar, 200); });
+            });
+            barra.addEventListener('mouseleave', function () { luego(cerrar, 350); });
+            barra.addEventListener('mouseenter', function () { clearTimeout(temporizador); });
+        }
+        barra.querySelectorAll('[data-cerrar-menu]').forEach(function (b) {
+            b.addEventListener('click', cerrar);
+        });
+        document.addEventListener('click', function (e) {
+            if (abierta && !e.target.closest('.sidebar')) { cerrar(); }
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') { cerrar(); }
+        });
+    })();
+    </script>
+{% endif %}

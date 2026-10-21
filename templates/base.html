@@ -43,15 +43,9 @@
                     <svg width="16" height="16"><use href="#i-user"/></svg> Mi perfil
                 </a>
             {% endif %}
-            {% if user.is_superuser or user|tiene_rol:'administrador' %}
-                <a href="{% url 'pantalla_placeholder' clave='usuarios_activos' %}" class="{% block nav_usuarios %}{% endblock %}">
-                    <svg width="16" height="16"><use href="#i-users"/></svg> Usuarios activos
-                </a>
-                <a href="{% url 'planilla' %}" class="{% block nav_planilla %}{% endblock %}">
-                    <svg width="16" height="16"><use href="#i-file-text"/></svg> Planilla
-                </a>
-            {% endif %}
             {% block sidebar_extra %}{% endblock %}
+            {# Todas las opciones del menú, desplegables (antes: solo Usuarios activos y Planilla). #}
+            {% include 'includes/menu_lateral.html' %}
         </nav>
         <form method="post" action="{% url 'logout' %}" class="sidebar-logout">
             {% csrf_token %}
