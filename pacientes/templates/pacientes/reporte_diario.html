@@ -2,7 +2,7 @@
 
 {% block title %}Reporte {{ convenio_nombre }} {{ reporte.fecha }} - Clínica de Imágenes{% endblock %}
 {% block page_title %}
-    Reporte diario — {{ convenio_nombre }} — {{ reporte.fecha }}
+    Reporte diario — {{ convenio_nombre }} — {{ reporte.fecha }}{% if reporte.sucursal %} — {{ reporte.sucursal.nombre }}{% endif %}
     <span class="estado estado-{{ reporte.estado }}">{{ reporte.get_estado_display }}</span>
 {% endblock %}
 
@@ -85,11 +85,11 @@
 
     {% if solo_lectura and reporte.estado == 'enviado' %}
         <div class="acciones-reporte">
-            <a class="btn btn-outline" href="{% url 'descargar_reporte_pdf' reporte.convenio reporte.fecha|date:'Y-m-d' %}">
+            <a class="btn btn-outline" href="{% url 'descargar_reporte_pdf' reporte.convenio reporte.fecha|date:'Y-m-d' %}?sucursal={{ reporte.sucursal_id }}">
                 <svg><use href="#i-download"/></svg>
                 Descargar PDF
             </a>
-            <a class="btn btn-outline" href="{% url 'descargar_reporte_xlsx' reporte.convenio reporte.fecha|date:'Y-m-d' %}">
+            <a class="btn btn-outline" href="{% url 'descargar_reporte_xlsx' reporte.convenio reporte.fecha|date:'Y-m-d' %}?sucursal={{ reporte.sucursal_id }}">
                 <svg><use href="#i-download"/></svg>
                 Descargar Excel
             </a>
@@ -205,7 +205,7 @@
         </form>
 
         {% if editable and not pacientes_pendientes and not en_curso %}
-            <form method="post" action="{% url 'enviar_reporte_diario' reporte.convenio reporte.fecha|date:'Y-m-d' %}">
+            <form method="post" action="{% url 'enviar_reporte_diario' reporte.convenio reporte.fecha|date:'Y-m-d' %}?sucursal={{ reporte.sucursal_id }}">
                 {% csrf_token %}
                 <div class="acciones-reporte">
                     <button type="submit" class="btn btn-success">
@@ -224,7 +224,7 @@
         (function () {
             // Reporte del día: si cambian las citas, recargar. Si el usuario está
             // editando algo sin guardar, no se recarga (se perdería): solo se avisa.
-            var url = "{% url 'firma_reporte_diario' reporte.convenio reporte.fecha|date:'Y-m-d' %}";
+            var url = "{% url 'firma_reporte_diario' reporte.convenio reporte.fecha|date:'Y-m-d' %}?sucursal={{ reporte.sucursal_id }}";
             var firma = "{{ firma }}";
             var editando = false;
             document.querySelectorAll('form input, form select, form textarea').forEach(function (campo) {

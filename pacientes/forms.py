@@ -5,6 +5,7 @@ from decimal import Decimal
 from django import forms
 from django.utils import timezone
 
+from accounts import sucursales
 from accounts.models import Usuario
 from clinica.validators import validar_correo_existente, validar_dominio_correo
 
@@ -120,12 +121,17 @@ def resolver_radiologo_para_estudio(form, cleaned):
     if not tipo_estudio:
         return cleaned
 
-    radiologos = list(tipo_estudio.radiologos.filter(is_active=True))
+    radiologos = tipo_estudio.radiologos.filter(is_active=True)
+    # Solo los radiólogos que trabajan en la sucursal donde se agenda.
+    sucursal = getattr(form, 'sucursal', None)
+    if sucursal is not None:
+        radiologos = sucursales.de_usuarios(radiologos, sucursal)
+    radiologos = list(radiologos)
     if not radiologos:
         form.add_error(
             'tipo_estudio',
-            f'"{tipo_estudio}" no tiene radiólogos asignados. Asigná al menos uno '
-            'desde "Usuarios activos → Radiólogos" antes de agendar este estudio.',
+            f'"{tipo_estudio}" no tiene radiólogos asignados en esta sucursal. Asigná al menos '
+            'uno desde "Usuarios activos → Radiólogos" (y su sucursal) antes de agendar este estudio.',
         )
     elif radiologo is None:
         if len(radiologos) == 1:
@@ -320,8 +326,11 @@ class AgendarCitaForm(forms.Form):
         required=False,
     )
 
-    def __init__(self, *args, convenio=None, **kwargs):
+    def __init__(self, *args, convenio=None, sucursal=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.sucursal = sucursal
+        if sucursal is not None:
+            self.fields['radiologo'].queryset = sucursales.de_usuarios(_radiologos_disponibles(), sucursal)
         self.fields['modalidad'].choices = [
             ('', 'Todas las modalidades')
         ] + [
@@ -463,8 +472,11 @@ class AgendarCitaPrivadoForm(forms.Form):
         widget=forms.Textarea(attrs={'rows': 3}),
     )
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, sucursal=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.sucursal = sucursal
+        if sucursal is not None:
+            self.fields['radiologo'].queryset = sucursales.de_usuarios(_radiologos_disponibles(), sucursal)
         self.fields['modalidad'].choices = [
             ('', 'Todas las modalidades')
         ] + [

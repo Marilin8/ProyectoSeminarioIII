@@ -43,7 +43,7 @@
 {% endblock %}
 
 {% block topbar_actions %}
-    <a class="btn btn-outline btn-sm" href="{% url 'pantalla_sala_espera' %}" target="_blank" rel="noopener">
+    <a class="btn btn-outline btn-sm" href="{% url 'pantalla_sala_espera' %}{% if sucursal_activa %}?sucursal={{ sucursal_activa.id }}{% endif %}" target="_blank" rel="noopener">
         <svg width="14" height="14"><use href="#i-external-link"/></svg>
         Abrir sala de espera (TV)
     </a>

@@ -1201,6 +1201,10 @@ class ReporteDiario(models.Model):
 
     fecha = models.DateField()
     convenio = models.CharField(max_length=20, choices=Cita.CONVENIO_CHOICES)
+    sucursal = models.ForeignKey(
+        'accounts.Sucursal', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='reportes_diarios', default=sucursal_principal_id,
+    )
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default=ESTADO_BORRADOR)
     enviado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
@@ -1212,11 +1216,16 @@ class ReporteDiario(models.Model):
         db_table = 'reportes_diarios'
         verbose_name = 'reporte diario'
         verbose_name_plural = 'reportes diarios'
-        unique_together = ('fecha', 'convenio')
+        unique_together = ('fecha', 'convenio', 'sucursal')
         ordering = ['-fecha']
 
     def __str__(self):
         return f'Reporte {self.get_convenio_display()} - {self.fecha}'
+
+    @classmethod
+    def de_cita(cls, cita):
+        """El reporte (creado si hace falta) en el que entra `cita`."""
+        return cls.objects.get_or_create(fecha=cita.fecha, convenio=cita.convenio, sucursal=cita.sucursal)
 
     @classmethod
     def asegurar_del_dia(cls, fecha=None):
@@ -1225,9 +1234,11 @@ class ReporteDiario(models.Model):
         existe desde las 00:00 y se va llenando a medida que se confirman
         citas. Lo llama el programador en segundo plano cada minuto (ver
         accounts/programador.py) y la lista de reportes como respaldo."""
+        from accounts.models import Sucursal
         fecha = fecha or timezone.localdate()
-        for convenio, _nombre in Cita.CONVENIO_CHOICES:
-            cls.objects.get_or_create(fecha=fecha, convenio=convenio)
+        for sucursal in Sucursal.objects.filter(activa=True):
+            for convenio, _nombre in Cita.CONVENIO_CHOICES:
+                cls.objects.get_or_create(fecha=fecha, convenio=convenio, sucursal=sucursal)
 
     @property
     def en_curso(self):
@@ -1245,7 +1256,7 @@ class ReporteDiario(models.Model):
 
     def citas(self):
         return (
-            Cita.objects.filter(convenio=self.convenio, fecha=self.fecha)
+            Cita.objects.filter(convenio=self.convenio, fecha=self.fecha, sucursal_id=self.sucursal_id)
             .exclude(estado__in=(Cita.ESTADO_PENDIENTE, Cita.ESTADO_RECHAZADA))
             .select_related('paciente', 'tipo_estudio', 'radiologo', 'cobro')
             .prefetch_related('tipo_estudio__precios')
@@ -1557,11 +1568,11 @@ class Ticket(models.Model):
 
         fecha = timezone.localdate()
         with transaction.atomic():
-            # DailySequence garantiza un solo contador por fecha, compartido
-            # entre los tres servicios, incluso si dos recepcionistas
+            # DailySequence garantiza un solo contador por fecha y sucursal,
+            # compartido entre los tres servicios, incluso si dos recepcionistas
             # registran un ticket al mismo tiempo.
             secuencia, _ = DailySequence.objects.select_for_update().get_or_create(
-                servicio=self.SECUENCIA_TURNOS, fecha=fecha,
+                servicio=self.clave_secuencia(), fecha=fecha,
             )
             secuencia.ultimo += 1
             secuencia.save(update_fields=['ultimo'])
@@ -1569,6 +1580,13 @@ class Ticket(models.Model):
             self.turno = f'{self.numero:03d}'
             self.orden = self.numero
             super().save(*args, **kwargs)
+
+    def clave_secuencia(self):
+        """Cada sucursal numera sus turnos por separado. La principal conserva la
+        clave de siempre, para no reiniciar el contador del día al migrar."""
+        if self.sucursal_id is None or (self.sucursal and self.sucursal.es_principal):
+            return self.SECUENCIA_TURNOS
+        return f'{self.SECUENCIA_TURNOS}-{self.sucursal_id}'
 
     def mover(self, posiciones):
         """Mueve este ticket `posiciones` lugares dentro de la fila de espera
@@ -1585,7 +1603,7 @@ class Ticket(models.Model):
             cola = list(
                 Ticket.del_dia(hoy)
                 .select_for_update()
-                .filter(estado=self.ESTADO_EN_ESPERA)
+                .filter(estado=self.ESTADO_EN_ESPERA, sucursal_id=self.sucursal_id)
                 .order_by('-prioridad', 'orden')
             )
             if self not in cola:

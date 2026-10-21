@@ -17,13 +17,14 @@
                 <div class="card-body" style="display: flex; justify-content: space-between; align-items: center;">
                     <div>
                         <span class="text-bold">{{ reporte.fecha }}</span>
+                        {% if not sucursal_activa and reporte.sucursal %}<span class="badge badge-muted">{{ reporte.sucursal.nombre }}</span>{% endif %}
                         {% if reporte.en_curso %}
                             <span class="estado estado-en_proceso" title="Se va llenando con las citas que se confirman; se envía al terminar el día.">Hoy · en curso</span>
                         {% else %}
                             <span class="estado estado-{{ reporte.estado }}">{{ reporte.get_estado_display }}</span>
                         {% endif %}
                     </div>
-                    <a class="btn btn-primary btn-sm" href="{% url 'ver_reporte_diario' convenio reporte.fecha|date:'Y-m-d' %}">
+                    <a class="btn btn-primary btn-sm" href="{% url 'ver_reporte_diario' convenio reporte.fecha|date:'Y-m-d' %}?sucursal={{ reporte.sucursal_id }}">
                         <svg width="14" height="14"><use href="#i-file-text"/></svg>
                         Ver reporte
                     </a>

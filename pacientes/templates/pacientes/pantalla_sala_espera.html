@@ -189,7 +189,7 @@
 
         async function actualizarSalaEspera() {
             try {
-                const r = await fetch('{% url "estado_sala_espera" %}', { cache: 'no-store' });
+                const r = await fetch('{% url "estado_sala_espera" %}{% if sucursal %}?sucursal={{ sucursal.id }}{% endif %}', { cache: 'no-store' });
                 const data = await r.json();
                 pintarActual(data.actual);
                 pintarProximos(data.proximos);
