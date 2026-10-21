@@ -43,6 +43,11 @@ class Command(BaseCommand):
             )
         except respaldos.ErrorRespaldo as error:
             raise CommandError(str(error))
+        if seguridad is None:
+            self.stdout.write(self.style.SUCCESS(
+                f'Paquete de imágenes restaurado: {archivos} archivos. La base de datos no se modificó.'
+            ))
+            return
         self.stdout.write(self.style.SUCCESS(
             f'Restauración completa. El estado anterior quedó en el respaldo {seguridad}.'
             + (f' Archivos restaurados: {archivos}.' if archivos else '')

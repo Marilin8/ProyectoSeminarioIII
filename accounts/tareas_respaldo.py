@@ -77,6 +77,13 @@ def restaurar(ruta_subida, restaurar_archivos, usuario_id, ip, nombre_original, 
         finally:
             if borrar_origen:
                 shutil.rmtree(Path(ruta_subida).parent, ignore_errors=True)
+        if seguridad is None:  # paquete incremental de imágenes: la base de datos no se tocó
+            _bitacora(
+                usuario_id, ip, Bitacora.ACCION_RESTAURAR_RESPALDO,
+                f'Restauró {archivos} imágenes e informes desde el paquete {nombre_original}.',
+            )
+            return [('success', f'Se restauraron {archivos} imágenes e informes desde {nombre_original}. '
+                                'La base de datos no se modificó.')]
         _bitacora(
             usuario_id, ip, Bitacora.ACCION_RESTAURAR_RESPALDO,
             f'Restauró el sistema desde {nombre_original}. Estado anterior guardado en {seguridad}.',

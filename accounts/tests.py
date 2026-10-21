@@ -2549,7 +2549,7 @@ class CrearCopiaAutomaticaTests(RespaldoAutomaticoBase):
         self.assertTrue(RespaldoEnNube.objects.filter(nombre='respaldo_20260801_000000.zip').exists())
         self.assertIn('Se borró la más antigua', resumen['texto'])
         self.assertTrue(Bitacora.objects.filter(
-            accion=Bitacora.ACCION_CREAR_RESPALDO, descripcion__contains='Copia automática creada',
+            accion=Bitacora.ACCION_CREAR_RESPALDO, descripcion__contains='Copia automática de la base de datos creada',
         ).exists())
 
     def test_sin_drive_la_copia_queda_en_el_servidor_y_se_avisa(self):
@@ -2619,12 +2619,113 @@ class CrearCopiaAutomaticaTests(RespaldoAutomaticoBase):
         (media / 'estudios').mkdir(parents=True)
         (media / 'estudios' / 'rx.jpg').write_bytes(b'imagen')
 
-        with override_settings(RESPALDOS_AUTOMATICOS_INCLUYEN_ARCHIVOS=True):
+        with override_settings(RESPALDOS_AUTOMATICOS_INCLUYEN_ARCHIVOS=True, MEDIA_ROOT=media):
             resumen = respaldo_automatico.ejecutar()
 
-        self.assertIn('_con_archivos', resumen['nombre'])
+        # La copia de la base de datos ya no lleva imágenes: van en un paquete aparte.
+        self.assertNotIn('_con_archivos', resumen['nombre'])
         with zipfile.ZipFile(self.carpeta / resumen['nombre']) as zf:
-            self.assertIn('media/estudios/rx.jpg', zf.namelist())
+            self.assertNotIn('media/estudios/rx.jpg', zf.namelist())
+        self.assertTrue(resumen['paquete'].startswith('imagenes_'))
+        with zipfile.ZipFile(self.carpeta / resumen['paquete']) as zf:
+            self.assertEqual(zf.namelist(), ['media/estudios/rx.jpg'])
+
+    def test_el_paquete_de_imagenes_solo_lleva_lo_nuevo(self):
+        import os
+        import zipfile
+        from pathlib import Path
+
+        from django.test import override_settings
+
+        from accounts import respaldo_automatico
+        media = Path(self._tmp.name) / 'media'
+        (media / 'estudios').mkdir(parents=True)
+        (media / 'estudios' / 'vieja.jpg').write_bytes(b'vieja')
+
+        with override_settings(RESPALDOS_AUTOMATICOS_INCLUYEN_ARCHIVOS=True, MEDIA_ROOT=media):
+            primero = respaldo_automatico.ejecutar()['paquete']
+            # El segundo paquete necesita otro nombre (la marca de tiempo va al segundo).
+            os.rename(self.carpeta / primero, self.carpeta / 'imagenes_20260101_000000.zip')
+            sin_cambios = respaldo_automatico.ejecutar()
+            (media / 'estudios' / 'nueva.jpg').write_bytes(b'nueva')
+            segundo = respaldo_automatico.ejecutar()
+
+        self.assertIsNone(sin_cambios['paquete'])
+        self.assertIn('No había imágenes ni informes nuevos', sin_cambios['texto'])
+        with zipfile.ZipFile(self.carpeta / segundo['paquete']) as zf:
+            self.assertEqual(zf.namelist(), ['media/estudios/nueva.jpg'])
+
+    def test_los_paquetes_de_imagenes_no_se_rotan(self):
+        from pathlib import Path
+
+        from django.test import override_settings
+
+        from accounts import respaldo_automatico
+        media = Path(self._tmp.name) / 'media'
+        media.mkdir()
+        for dia in range(1, 8):
+            self._crear_archivo(self._nombre_auto(dia))
+            self._crear_archivo(f'imagenes_202608{dia:02d}_000000.zip')
+
+        with override_settings(RESPALDOS_AUTOMATICOS_INCLUYEN_ARCHIVOS=True, MEDIA_ROOT=media):
+            respaldo_automatico.ejecutar()
+
+        self.assertEqual(len(self._auto_en_disco()), 6)
+        self.assertEqual(len(list(self.carpeta.glob('imagenes_*'))), 7)
+
+    def test_restaurar_los_paquetes_en_orden_deja_la_ultima_version(self):
+        import zipfile
+        from pathlib import Path
+
+        from django.test import override_settings
+
+        from accounts import respaldos
+        destino = Path(self._tmp.name) / 'media_restaurada'
+        for nombre, contenido in (('imagenes_20260101_000000.zip', b'v1'), ('imagenes_20260102_000000.zip', b'v2')):
+            with zipfile.ZipFile(self.carpeta / nombre, 'w') as zf:
+                zf.writestr('media/estudios/rx.jpg', contenido)
+        with zipfile.ZipFile(self.carpeta / 'imagenes_20260101_000000.zip', 'a') as zf:
+            zf.writestr('media/informes/a.pdf', b'pdf')
+
+        with override_settings(MEDIA_ROOT=destino):
+            total = respaldos.restaurar_paquetes_de_imagenes(sorted(self.carpeta.glob('imagenes_*')))
+
+        self.assertEqual(total, 3)
+        self.assertEqual((destino / 'estudios' / 'rx.jpg').read_bytes(), b'v2')
+        self.assertEqual((destino / 'informes' / 'a.pdf').read_bytes(), b'pdf')
+
+    def test_cargar_un_paquete_de_imagenes_no_toca_la_base_de_datos(self):
+        import zipfile
+        from pathlib import Path
+        from unittest import mock
+
+        from django.test import override_settings
+
+        from accounts import respaldos
+        destino = Path(self._tmp.name) / 'media_restaurada'
+        paquete = self.carpeta / 'imagenes_20260101_000000.zip'
+        with zipfile.ZipFile(paquete, 'w') as zf:
+            zf.writestr('media/estudios/rx.jpg', b'x')
+
+        with override_settings(MEDIA_ROOT=destino), \
+                mock.patch('accounts.respaldos._vaciar_base_de_datos') as vaciar:
+            seguridad, archivos = respaldos.restaurar(paquete)
+
+        self.assertIsNone(seguridad)
+        self.assertEqual(archivos, 1)
+        vaciar.assert_not_called()
+        self.assertTrue((destino / 'estudios' / 'rx.jpg').exists())
+
+    def test_un_paquete_con_rutas_peligrosas_se_rechaza(self):
+        import zipfile
+
+        from accounts import respaldos
+        paquete = self.carpeta / 'imagenes_20260101_000000.zip'
+        with zipfile.ZipFile(paquete, 'w') as zf:
+            zf.writestr('media/../../fuera.txt', b'x')
+
+        with self.assertRaises(respaldos.ErrorRespaldo):
+            respaldos.restaurar(paquete)
 
     def test_el_comando_crea_una_copia_automatica(self):
         from io import StringIO

@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 import re
 import shutil
@@ -13,7 +14,13 @@ from django.db import connection
 from . import cifrado
 
 PREFIJO_AUTOMATICO = 'auto_'
-NOMBRE_VALIDO = re.compile(r'^(respaldo|auto)_\d{8}_\d{6}(_con_archivos)?\.zip(\.cif)?$')
+# Paquetes incrementales de imágenes: solo los archivos de media/ nuevos o
+# cambiados desde el paquete anterior. No entran en la rotación (borrar uno
+# perdería esas imágenes): juntos, en orden, forman la copia de media/.
+PREFIJO_IMAGENES = 'imagenes_'
+NOMBRE_VALIDO = re.compile(r'^(respaldo|auto|imagenes)_\d{8}_\d{6}(_con_archivos)?\.zip(\.cif)?$')
+# Qué archivos de media/ ya están en algún paquete: {ruta relativa: [tamaño, mtime_ns]}.
+NOMBRE_INVENTARIO = 'inventario_imagenes.json'
 LARGO_MINIMO_CLAVE = 16
 TIMEOUT_DUMP_SEGUNDOS = 600
 
@@ -156,6 +163,85 @@ def crear_respaldo(incluir_archivos=False, progreso=None, prefijo='respaldo_'):
     return nombre
 
 
+def _leer_inventario():
+    ruta = carpeta_respaldos() / NOMBRE_INVENTARIO
+    try:
+        return json.loads(ruta.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        # Sin inventario (primera vez, o se borró): el próximo paquete lleva
+        # todas las imágenes. Es más grande, pero nunca deja nada afuera.
+        return {}
+
+
+def _guardar_inventario(inventario):
+    ruta = carpeta_respaldos() / NOMBRE_INVENTARIO
+    temporal = ruta.with_name(ruta.name + '.parcial')
+    temporal.write_text(json.dumps(inventario), encoding='utf-8')
+    temporal.replace(ruta)
+
+
+def _archivos_de_media():
+    """{ruta relativa con '/': [tamaño, mtime_ns]} de todo media/."""
+    media = Path(settings.MEDIA_ROOT)
+    if not media.exists():
+        return {}
+    archivos = {}
+    for archivo in media.rglob('*'):
+        if archivo.is_file():
+            info = archivo.stat()
+            archivos[archivo.relative_to(media).as_posix()] = [info.st_size, info.st_mtime_ns]
+    return archivos
+
+
+def crear_paquete_imagenes(progreso=None):
+    """Copia incremental de media/ (imágenes, informes, comprobantes): un
+    .zip(.cif) con solo los archivos nuevos o modificados desde el paquete
+    anterior. La primera vez (sin inventario) lleva todo. Devuelve el nombre
+    del paquete, o None si no había nada nuevo."""
+    def avisar(porcentaje, etapa):
+        if progreso:
+            progreso(porcentaje, etapa)
+
+    actuales = _archivos_de_media()
+    anteriores = _leer_inventario()
+    nuevos = sorted(ruta for ruta, firma in actuales.items() if anteriores.get(ruta) != firma)
+    if not nuevos:
+        return None
+
+    clave = clave_de_cifrado()
+    base = f'{PREFIJO_IMAGENES}{datetime.datetime.now():%Y%m%d_%H%M%S}.zip'
+    nombre = base + ('.cif' if clave else '')
+    carpeta = carpeta_respaldos()
+    final = carpeta / nombre
+    parcial = carpeta / (nombre + '.parcial')
+    media = Path(settings.MEDIA_ROOT)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_plano = Path(tmp) / base
+            with zipfile.ZipFile(zip_plano, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for numero, relativa in enumerate(nuevos, 1):
+                    try:
+                        zf.write(media / relativa, f'media/{relativa}')
+                    except FileNotFoundError:
+                        actuales.pop(relativa, None)  # se borró mientras se armaba el paquete
+                    avisar(70 * numero / len(nuevos), f'Comprimiendo imágenes nuevas ({numero} de {len(nuevos)})…')
+            if clave:
+                cifrado.cifrar_archivo(
+                    zip_plano, parcial, clave,
+                    progreso=lambda fraccion: avisar(70 + 28 * fraccion, 'Cifrando imágenes nuevas…'),
+                )
+            else:
+                shutil.copyfile(zip_plano, parcial)
+        parcial.replace(final)
+    except Exception:
+        parcial.unlink(missing_ok=True)
+        raise
+    # Recién con el paquete guardado se marcan como respaldadas.
+    _guardar_inventario(actuales)
+    avisar(100, 'Listo')
+    return nombre
+
+
 def listar_respaldos():
     carpeta = carpeta_respaldos()
     from .models import RespaldoEnNube
@@ -171,6 +257,7 @@ def listar_respaldos():
                 'con_archivos': '_con_archivos' in ruta.name,
                 'cifrado': ruta.name.endswith('.cif'),
                 'automatico': ruta.name.startswith(PREFIJO_AUTOMATICO),
+                'imagenes': ruta.name.startswith(PREFIJO_IMAGENES),
                 'en_nube': ruta.name in en_nube,
             })
     return sorted(respaldos, key=lambda r: r['fecha'], reverse=True)
@@ -234,6 +321,36 @@ def _extraer_y_validar(zip_path, tmp):
         if b'CREATE TABLE' not in archivo.read(8 * 1024 * 1024):
             raise ErrorRespaldo('El archivo no parece un respaldo de la base de datos de este sistema.')
     return sql, hay_media
+
+
+def _es_paquete_de_imagenes(zip_path):
+    """¿Es un paquete incremental (solo media/, sin base de datos)? Valida las rutas."""
+    with zipfile.ZipFile(zip_path) as zf:
+        nombres = zf.namelist()
+    if not nombres or 'base_de_datos.sql' in nombres:
+        return False
+    for nombre in nombres:
+        partes = Path(nombre).parts
+        if nombre.startswith(('/', '\\')) or '..' in partes or ':' in nombre or partes[0] != 'media':
+            raise ErrorRespaldo('El archivo no es un respaldo válido de este sistema.')
+    return True
+
+
+def restaurar_paquetes_de_imagenes(rutas, progreso=None):
+    """Aplica, en orden, paquetes incrementales de imágenes (del más antiguo al más
+    nuevo): así cada archivo queda en su última versión. Devuelve cuántos archivos
+    se escribieron."""
+    total = 0
+    rutas = list(rutas)
+    for numero, ruta in enumerate(rutas, 1):
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_path = _abrir_zip_del_respaldo(ruta, tmp)
+            if not _es_paquete_de_imagenes(zip_path):
+                raise ErrorRespaldo(f'{Path(ruta).name} no es un paquete de imágenes.')
+            total += _restaurar_archivos_media(zip_path)
+        if progreso:
+            progreso(100 * numero / len(rutas), f'Paquete {numero} de {len(rutas)}: {Path(ruta).name}')
+    return total
 
 
 def _vaciar_base_de_datos():
@@ -315,6 +432,13 @@ def restaurar(ruta_subida, *, restaurar_archivos=True, progreso=None):
     with tempfile.TemporaryDirectory() as tmp:
         avisar(3, 'Verificando el archivo…')
         zip_path = _abrir_zip_del_respaldo(ruta_subida, tmp)
+        if _es_paquete_de_imagenes(zip_path):
+            # Paquete incremental: solo agrega/reemplaza archivos de media/; la base
+            # de datos no se toca, así que no hace falta respaldo de seguridad.
+            archivos = _restaurar_archivos_media(
+                zip_path, lambda f: avisar(5 + 90 * f, 'Restaurando imágenes e informes…'),
+            )
+            return None, archivos
         sql, hay_media = _extraer_y_validar(zip_path, tmp)
 
         avisar(10, 'Guardando un respaldo de seguridad del estado actual…')

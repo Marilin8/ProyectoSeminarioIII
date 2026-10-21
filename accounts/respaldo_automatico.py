@@ -1,7 +1,14 @@
-"""Copia de seguridad automática diaria: base de datos + imágenes/informes, subida a
-Google Drive, conservando solo las últimas N (6 por defecto). Las copias que crea el
-administrador a mano (prefijo `respaldo_`) nunca entran en esta rotación: solo se tocan
-los archivos con prefijo `auto_`, tanto en el servidor como en Drive."""
+"""Copia de seguridad automática diaria, subida a Google Drive:
+
+- Base de datos completa (prefijo `auto_`): pesa poco; se conservan solo las últimas N
+  (6 por defecto) en el servidor y en Drive.
+- Imágenes e informes de forma incremental (prefijo `imagenes_`): cada día un paquete con
+  solo lo nuevo o modificado (ver respaldos.crear_paquete_imagenes). No se rotan: juntos,
+  en orden, son la copia completa de media/ (ver el comando `restaurar_imagenes`).
+
+Antes se copiaba todo media/ cada noche (6 copias completas): con 50 citas diarias eso
+llenaba el disco en meses. Las copias que crea el administrador a mano (prefijo
+`respaldo_`) nunca entran en esta rotación."""
 import datetime
 import logging
 
@@ -83,13 +90,22 @@ def aplicar_retencion(conservar=None):
     return resultado
 
 
+def nombres_paquetes_imagenes():
+    """Paquetes incrementales de imágenes en el servidor, del más antiguo al más nuevo."""
+    prefijo = servicio_respaldos.PREFIJO_IMAGENES
+    return sorted(
+        (r['nombre'] for r in servicio_respaldos.listar_respaldos() if r['imagenes']),
+        key=lambda nombre: nombre[len(prefijo):len(prefijo) + 15],
+    )
+
+
 def _subir_pendientes(excluir):
-    """Copias automáticas que quedaron solo en el servidor (una subida anterior falló) y que
-    todavía se conservan: se vuelven a intentar subir."""
+    """Copias automáticas (todavía conservadas) y paquetes de imágenes que quedaron solo en
+    el servidor porque una subida anterior falló: se vuelven a intentar subir."""
     subidas = []
-    en_drive = set(RespaldoEnNube.objects.filter(nombre__startswith=PREFIJO).values_list('nombre', flat=True))
-    for nombre in nombres_automaticos():
-        if nombre == excluir or nombre in en_drive or servicio_respaldos.ruta_respaldo(nombre) is None:
+    en_drive = set(RespaldoEnNube.objects.values_list('nombre', flat=True))
+    for nombre in nombres_automaticos() + nombres_paquetes_imagenes():
+        if nombre in excluir or nombre in en_drive or servicio_respaldos.ruta_respaldo(nombre) is None:
             continue
         nivel, _texto = subir_a_drive(nombre, None, None)
         if nivel == 'success':
@@ -98,8 +114,11 @@ def _subir_pendientes(excluir):
 
 
 def ejecutar(progreso=None, incluir_archivos=None):
-    """Crea la copia automática de ahora, la sube a Drive y rota las antiguas. Lanza
-    ErrorRespaldo si no se pudo ni crear la copia (en ese caso no se borra nada)."""
+    """Copia automática de ahora: la base de datos completa (pesa poco) y un paquete
+    incremental con solo las imágenes e informes nuevos desde la copia anterior (si hay).
+    Sube ambos a Drive y rota las copias de la base de datos antiguas; los paquetes de
+    imágenes no se rotan. Lanza ErrorRespaldo si no se pudo ni crear la copia de la base
+    de datos (en ese caso no se borra nada)."""
     def avisar(porcentaje, etapa):
         if progreso:
             progreso(porcentaje, etapa)
@@ -108,21 +127,33 @@ def ejecutar(progreso=None, incluir_archivos=None):
         incluir_archivos = settings.RESPALDOS_AUTOMATICOS_INCLUYEN_ARCHIVOS
 
     nombre = servicio_respaldos.crear_respaldo(
-        incluir_archivos=incluir_archivos, prefijo=PREFIJO,
-        progreso=lambda porcentaje, etapa: avisar(porcentaje * 0.88, etapa),
+        incluir_archivos=False, prefijo=PREFIJO,
+        progreso=lambda porcentaje, etapa: avisar(porcentaje * 0.25, etapa),
     )
+    paquete = None
+    if incluir_archivos:
+        paquete = servicio_respaldos.crear_paquete_imagenes(
+            progreso=lambda porcentaje, etapa: avisar(25 + porcentaje * 0.6, etapa),
+        )
 
-    avisar(90, 'Subiendo la copia a Google Drive…')
+    avisar(86, 'Subiendo la copia a Google Drive…')
     nivel, texto_drive = subir_a_drive(nombre, None, None)
     subida_ok = nivel == 'success'
+    if paquete and subida_ok:
+        nivel, texto_drive = subir_a_drive(paquete, None, None)
+        subida_ok = nivel == 'success'
 
     avisar(96, 'Borrando las copias automáticas más antiguas…')
     retencion = aplicar_retencion()
-    reintentadas = _subir_pendientes(excluir=nombre) if subida_ok else []
+    reintentadas = _subir_pendientes(excluir={nombre, paquete}) if subida_ok else []
 
-    partes = [f'Copia automática creada: {nombre}.']
+    partes = [f'Copia automática de la base de datos creada: {nombre}.']
+    if paquete:
+        partes.append(f'Imágenes e informes nuevos en {paquete}.')
+    elif incluir_archivos:
+        partes.append('No había imágenes ni informes nuevos.')
     if subida_ok:
-        partes.append('Subida a Google Drive.')
+        partes.append('Subido a Google Drive.')
     else:
         partes.append(f'No se pudo subir a Google Drive ({texto_drive}).')
     if reintentadas:
@@ -136,7 +167,7 @@ def ejecutar(progreso=None, incluir_archivos=None):
     Bitacora.objects.create(accion=Bitacora.ACCION_CREAR_RESPALDO, descripcion=texto[:2000])
     avisar(100, 'Listo')
     return {
-        'nombre': nombre, 'subida_ok': subida_ok, 'texto': texto,
+        'nombre': nombre, 'paquete': paquete, 'subida_ok': subida_ok, 'texto': texto,
         'eliminados': retencion['eliminados'], 'fallos': retencion['fallos'],
     }
 
@@ -158,4 +189,5 @@ def estado_para_pantalla(ahora=None):
         'proxima': datetime.datetime.combine(proxima_fecha, datetime.time.min),
         'drive_conectado': bool(conexion and conexion.conectada),
         'cantidad': len(nombres_automaticos()),
+        'paquetes_imagenes': len(nombres_paquetes_imagenes()),
     }
