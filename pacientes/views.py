@@ -4951,12 +4951,24 @@ def procesar_ticket_emergencia(request, ticket_id):
 MAX_NOTIFICACIONES_EN_CAMPANITA = 20
 
 
+def _notificaciones_de(request):
+    """Avisos del usuario de la sucursal en la que está trabajando ahora: quien está
+    en varias sucursales solo ve los de la activa. Los avisos que no son de una cita
+    (p. ej. reportes enviados) se ven siempre; el administrador con "Todas las
+    sucursales" ve todos."""
+    avisos = request.user.notificaciones.all()
+    activa = sucursales.sucursal_activa(request)
+    if activa is not None:
+        avisos = avisos.filter(Q(cita__isnull=True) | Q(cita__sucursal=activa))
+    return avisos
+
+
 @login_required
 def notificaciones_pendientes(request):
     """Endpoint que la campanita de notificaciones consulta cada cierto
     tiempo (ver includes/notificaciones.html) para saber si hay avisos
     nuevos y hacer sonar el aviso."""
-    pendientes = request.user.notificaciones.filter(leida=False)
+    pendientes = _notificaciones_de(request).filter(leida=False)
     notificaciones = list(pendientes[:MAX_NOTIFICACIONES_EN_CAMPANITA])
     return JsonResponse({
         'no_leidas': pendientes.count(),
@@ -4989,7 +5001,8 @@ def marcar_notificacion_leida(request, notificacion_id):
 @login_required
 def marcar_notificaciones_leidas(request):
     if request.method == 'POST':
-        request.user.notificaciones.filter(leida=False).exclude(
+        # Solo las que está viendo (las de su sucursal activa).
+        _notificaciones_de(request).filter(leida=False).exclude(
             tipo=Notificacion.TIPO_DATOS_PACIENTE_PENDIENTES,
         ).update(leida=True)
     return JsonResponse({'ok': True})

@@ -137,3 +137,28 @@ class SucursalesOperacionTests(TestCase):
         self.assertRedirects(respuesta, reverse('dashboard'), fetch_redirect_response=False)
         self.client.post(reverse('cambiar_sucursal'), {'sucursal': self.norte.id})
         self.assertEqual(self.client.get(reverse('calendario_privado')).status_code, 200)
+
+    def test_las_notificaciones_son_solo_de_la_sucursal_activa(self):
+        recep = crear_usuario('recep_dos_suc', rol=Usuario.ROL_RECEPCIONISTA)
+        recep.sucursales.set([self.principal, self.norte])
+        cita_central = crear_cita(recep, sucursal=self.principal, paciente=crear_paciente(dpi='7070707070708'))
+        cita_norte = crear_cita(recep, sucursal=self.norte, paciente=crear_paciente(dpi='7070707070709'))
+        Notificacion.objects.create(destinatario=recep, tipo=Notificacion.TIPO_ESTUDIO_VALIDADO, mensaje='Central', cita=cita_central)
+        Notificacion.objects.create(destinatario=recep, tipo=Notificacion.TIPO_ESTUDIO_VALIDADO, mensaje='Norte', cita=cita_norte)
+        Notificacion.objects.create(destinatario=recep, tipo=Notificacion.TIPO_REPORTE_ENVIADO, mensaje='General')
+        self.client.force_login(recep)
+
+        def mensajes():
+            datos = self.client.get(reverse('notificaciones_pendientes')).json()
+            return sorted(n['mensaje'] for n in datos['notificaciones']), datos['no_leidas']
+
+        self.client.post(reverse('cambiar_sucursal'), {'sucursal': self.principal.id})
+        self.assertEqual(mensajes(), (['Central', 'General'], 2))
+        self.client.post(reverse('cambiar_sucursal'), {'sucursal': self.norte.id})
+        self.assertEqual(mensajes(), (['General', 'Norte'], 2))
+
+        # "Marcar todas" solo marca las que está viendo: las de Central siguen pendientes.
+        self.client.post(reverse('marcar_notificaciones_leidas'))
+        self.client.post(reverse('cambiar_sucursal'), {'sucursal': self.principal.id})
+        self.assertEqual(mensajes(), (['Central'], 1))
+
