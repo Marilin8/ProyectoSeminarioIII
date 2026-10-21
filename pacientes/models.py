@@ -952,6 +952,18 @@ class Cita(models.Model):
         return imagen.subida_por if imagen else None
 
     @property
+    def cobro_bloquea_envio(self):
+        """True si no se pueden enviar los resultados porque el cobro sigue pendiente.
+        Solo aplica a Privado: COEX y Emergencia IGSS los paga el IGSS después (orden
+        de pago agrupada), así que sus resultados se envían sin esperar el pago."""
+        if self.convenio != self.CONVENIO_PRIVADO:
+            return False
+        if OrdenPago.objects.filter(detalles__cita=self, estado=OrdenPago.ESTADO_PENDIENTE).exists():
+            return True
+        cobro = getattr(self, 'cobro', None)
+        return bool(cobro and cobro.estado != Cobro.ESTADO_PAGADO)
+
+    @property
     def cuenta_en_total_reporte(self):
         """Las citas marcadas como ausente no generaron ingreso: se listan en
         el reporte diario pero no suman al total del día."""

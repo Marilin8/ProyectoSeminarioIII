@@ -3728,11 +3728,12 @@ class OrdenPagoTests(TestCase):
         self.assertTrue(Cobro.objects.get(cita=self.cita_a).pagado)
         self.assertTrue(Cobro.objects.get(cita=self.cita_b).pagado)
 
-    def test_orden_pendiente_mantiene_bloqueado_el_envio(self):
+    def test_orden_igss_pendiente_no_bloquea_el_envio(self):
+        # COEX / Emergencia IGSS: el IGSS paga después; los resultados se envían igual.
         self._crear_orden()
         from pacientes.views import _cobro_bloquea_envio
 
-        self.assertTrue(_cobro_bloquea_envio(self.cita_a))
+        self.assertFalse(_cobro_bloquea_envio(self.cita_a))
 
     def test_listado_pdf_de_la_orden(self):
         self._crear_orden()

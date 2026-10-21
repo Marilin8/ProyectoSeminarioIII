@@ -99,3 +99,37 @@ class OrdenEstudiosRealizadosTests(TestCase):
 
         self.assertEqual([p.nombre for p in pacientes], ['Zoe', 'Beto', 'Aaron'])
 
+
+class EnvioSinPagoIgssTests(TestCase):
+    """Solo Privado exige el pago antes de enviar resultados; COEX y Emergencia IGSS no."""
+
+    def setUp(self):
+        from pacientes.models import Cobro
+        self.recep = crear_usuario('recep_envio_igss', rol=Usuario.ROL_RECEPCIONISTA)
+        self.Cobro = Cobro
+
+    def _cita_con_cobro_pendiente(self, convenio, dpi):
+        cita = crear_cita(self.recep, convenio=convenio, estado=Cita.ESTADO_PROCESADA, paciente=crear_paciente(dpi=dpi))
+        OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recep)
+        self.Cobro.objects.create(cita=cita)
+        return Cita.objects.get(pk=cita.pk)
+
+    def test_privado_con_cobro_pendiente_no_se_envia(self):
+        cita = self._cita_con_cobro_pendiente(Cita.CONVENIO_PRIVADO, '8282828282801')
+        self.assertTrue(cita.cobro_bloquea_envio)
+
+    def test_coex_y_emergencia_igss_se_envian_sin_pago(self):
+        for convenio, dpi in ((Cita.CONVENIO_COEX, '8282828282802'), (Cita.CONVENIO_EMERGENCIA_IGSS, '8282828282803')):
+            cita = self._cita_con_cobro_pendiente(convenio, dpi)
+            self.assertFalse(cita.cobro_bloquea_envio, convenio)
+
+    def test_el_historial_ofrece_enviar_y_qr_en_igss_con_cobro_pendiente(self):
+        cita = self._cita_con_cobro_pendiente(Cita.CONVENIO_COEX, '8282828282804')
+        self.client.force_login(self.recep)
+
+        respuesta = self.client.get(reverse('historial_paciente', args=[cita.paciente_id]))
+
+        self.assertNotContains(respuesta, 'No se puede enviar el estudio')
+        self.assertContains(respuesta, reverse('qr_estudio', args=[cita.id]))
+        self.assertContains(respuesta, reverse('enviar_estudio', args=[cita.id]))
+

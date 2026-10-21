@@ -720,15 +720,11 @@ def _cobro_bloquea_envio(cita):
     cobrado desde Caja. Si no hay cobro (todavía no se generó orden, o la
     orden es de antes de este permiso), no bloquea — el cobro no es
     obligatorio. Portado (2026-09-04) desde la rama visual-andres de
-    TechBlood."""
-    if OrdenPago.objects.filter(
-        detalles__cita=cita,
-        estado__in=(OrdenPago.ESTADO_PENDIENTE,),
-    ).exists():
-        return True
-    return bool(
-        hasattr(cita, 'cobro') and cita.cobro and cita.cobro.estado != Cobro.ESTADO_PAGADO
-    )
+    TechBlood.
+
+    Solo Privado: COEX y Emergencia IGSS no esperan el pago (ver
+    Cita.cobro_bloquea_envio)."""
+    return cita.cobro_bloquea_envio
 
 
 def _enviar_estudio_y_registrar(request, cita, orden):
