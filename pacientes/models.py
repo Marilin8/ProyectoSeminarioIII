@@ -11,6 +11,18 @@ from accounts.models import sucursal_principal_id
 
 MINUTOS_TOLERANCIA_LLEGADA = 15
 
+# Relaciones que conviene precargar en cualquier listado que calcule
+# ``Cita.precio`` (reportes, caja, comisiones, planilla): con esto el precio
+# vigente a la fecha de cada cita se resuelve en memoria (ver
+# TipoEstudio._historial_prefetcheado) en vez de hacer ~4 consultas por cita.
+# Usar junto con ``select_related('tipo_estudio', 'sucursal')``.
+PREFETCH_PRECIO_CITA = (
+    'tipo_estudio__precios',
+    'tipo_estudio__historial_precios',
+    'estudios_extra__tipo_estudio__precios',
+    'estudios_extra__tipo_estudio__historial_precios',
+)
+
 # A partir de esta hora, las citas de convenio privado y de emergencia IGSS
 # cobran tarifa "inhábil" (ver PrecioEstudio y Cita.horario_habil). COEX
 # siempre se factura en tarifa hábil.
@@ -366,13 +378,34 @@ class TipoEstudio(models.Model):
             for p in self.precios.all()
         )
 
+    def _historial_prefetcheado(self):
+        """Lista del historial de precios si la consulta lo trajo con
+        ``prefetch_related('tipo_estudio__historial_precios')`` (o similar), o
+        None si no. Con la lista, los cálculos de precio se hacen en Python y
+        un listado de N citas no dispara N consultas al historial."""
+        cache = getattr(self, '_prefetched_objects_cache', {})
+        if 'historial_precios' in cache:
+            return list(cache['historial_precios'])
+        return None
+
+    @staticmethod
+    def _primer_cambio_despues(registros, limite):
+        """El cambio de historial más antiguo posterior a `limite` (equivale a
+        ``.filter(creado_en__gt=limite).order_by('creado_en').first()``)."""
+        posteriores = [r for r in registros if r.creado_en > limite]
+        return min(posteriores, key=lambda r: (r.creado_en, r.pk)) if posteriores else None
+
     def _sucursales_con_historial(self):
         """Ids de sucursales que alguna vez tuvieron precio propio en este estudio
         (una consulta por instancia): las demás nunca necesitan mirar el historial."""
         if not hasattr(self, '_cache_sucursales_historial'):
-            self._cache_sucursales_historial = set(
-                self.historial_precios.filter(sucursal__isnull=False).values_list('sucursal_id', flat=True)
-            )
+            historial = self._historial_prefetcheado()
+            if historial is not None:
+                self._cache_sucursales_historial = {r.sucursal_id for r in historial if r.sucursal_id is not None}
+            else:
+                self._cache_sucursales_historial = set(
+                    self.historial_precios.filter(sucursal__isnull=False).values_list('sucursal_id', flat=True)
+                )
         return self._cache_sucursales_historial
 
     def _precio_de_sucursal(self, convenio, horario_habil, fecha, sucursal):
@@ -381,12 +414,20 @@ class TipoEstudio(models.Model):
         no tenía precio propio" y valor_nuevo=None "volvió al precio general"."""
         if fecha is not None and sucursal.id in self._sucursales_con_historial():
             limite = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.max))
-            siguiente = (
-                self.historial_precios
-                .filter(sucursal=sucursal, convenio=convenio, horario_habil=horario_habil, creado_en__gt=limite)
-                .order_by('creado_en')
-                .first()
-            )
+            historial = self._historial_prefetcheado()
+            if historial is not None:
+                siguiente = self._primer_cambio_despues(
+                    [r for r in historial if r.sucursal_id == sucursal.id
+                     and r.convenio == convenio and r.horario_habil == horario_habil],
+                    limite,
+                )
+            else:
+                siguiente = (
+                    self.historial_precios
+                    .filter(sucursal=sucursal, convenio=convenio, horario_habil=horario_habil, creado_en__gt=limite)
+                    .order_by('creado_en')
+                    .first()
+                )
             if siguiente is not None:
                 return siguiente.valor_anterior
         for p in self.precios.all():
@@ -418,12 +459,20 @@ class TipoEstudio(models.Model):
         -- en ese caso el precio vigente en `fecha` es el mismo que el
         actual, porque nada cambió desde entonces."""
         limite = timezone.make_aware(datetime.datetime.combine(fecha, datetime.time.max))
-        siguiente_cambio = (
-            self.historial_precios
-            .filter(convenio=convenio, horario_habil=horario_habil, creado_en__gt=limite, sucursal__isnull=True)
-            .order_by('creado_en')
-            .first()
-        )
+        historial = self._historial_prefetcheado()
+        if historial is not None:
+            siguiente_cambio = self._primer_cambio_despues(
+                [r for r in historial if r.sucursal_id is None
+                 and r.convenio == convenio and r.horario_habil == horario_habil],
+                limite,
+            )
+        else:
+            siguiente_cambio = (
+                self.historial_precios
+                .filter(convenio=convenio, horario_habil=horario_habil, creado_en__gt=limite, sucursal__isnull=True)
+                .order_by('creado_en')
+                .first()
+            )
         return siguiente_cambio.valor_anterior if siguiente_cambio else None
 
     @property
@@ -914,7 +963,11 @@ class Cita(models.Model):
         combo = getattr(self.tipo_estudio, 'combo_origen', None)
         estudios = list(combo.estudios.all()) if combo is not None else [self.tipo_estudio]
         ids_vistos = {e.id for e in estudios}
-        for extra in self.estudios_extra.filter(procesar_ahora=True).select_related('tipo_estudio'):
+        if 'estudios_extra' in getattr(self, '_prefetched_objects_cache', {}):
+            extras = self.estudios_extra_cobrados  # ya en memoria, sin consulta
+        else:
+            extras = self.estudios_extra.filter(procesar_ahora=True).select_related('tipo_estudio')
+        for extra in extras:
             if extra.tipo_estudio_id not in ids_vistos:
                 estudios.append(extra.tipo_estudio)
                 ids_vistos.add(extra.tipo_estudio_id)
@@ -958,7 +1011,16 @@ class Cita(models.Model):
         de pago agrupada), así que sus resultados se envían sin esperar el pago."""
         if self.convenio != self.CONVENIO_PRIVADO:
             return False
-        if OrdenPago.objects.filter(detalles__cita=self, estado=OrdenPago.ESTADO_PENDIENTE).exists():
+        if 'detalles_orden_pago' in getattr(self, '_prefetched_objects_cache', {}):
+            # Precargado con prefetch_related('detalles_orden_pago__orden_pago'): sin consulta.
+            en_orden_pendiente = any(
+                d.orden_pago.estado == OrdenPago.ESTADO_PENDIENTE for d in self.detalles_orden_pago.all()
+            )
+        else:
+            en_orden_pendiente = OrdenPago.objects.filter(
+                detalles__cita=self, estado=OrdenPago.ESTADO_PENDIENTE,
+            ).exists()
+        if en_orden_pendiente:
             return True
         cobro = getattr(self, 'cobro', None)
         return bool(cobro and cobro.estado != Cobro.ESTADO_PAGADO)
@@ -991,7 +1053,13 @@ class Cita(models.Model):
     def estudios_extra_cobrados(self):
         """Los EstudioExtra que de verdad suman al precio de la cita (ver
         `precio`) -- los marcados procesar_ahora. Uno que quedó solo como
-        sugerencia no aparece acá."""
+        sugerencia no aparece acá.
+
+        Si la consulta trajo ``prefetch_related('estudios_extra')`` se filtra en
+        memoria (lista) en vez de lanzar una consulta por cita."""
+        cache = getattr(self, '_prefetched_objects_cache', {})
+        if 'estudios_extra' in cache:
+            return [e for e in cache['estudios_extra'] if e.procesar_ahora]
         return self.estudios_extra.filter(procesar_ahora=True)
 
     @property
@@ -1352,8 +1420,10 @@ class ReporteDiario(models.Model):
         return (
             Cita.objects.filter(convenio=self.convenio, fecha=self.fecha, sucursal_id=self.sucursal_id)
             .exclude(estado__in=(Cita.ESTADO_PENDIENTE, Cita.ESTADO_RECHAZADA))
-            .select_related('paciente', 'tipo_estudio', 'radiologo', 'cobro', 'medico_tratante', 'orden_trabajo')
-            .prefetch_related('tipo_estudio__precios')
+            .select_related(
+                'paciente', 'tipo_estudio', 'radiologo', 'cobro', 'medico_tratante', 'orden_trabajo', 'sucursal',
+            )
+            .prefetch_related(*PREFETCH_PRECIO_CITA)
             .order_by('hora')
         )
 
@@ -1463,9 +1533,12 @@ class OrdenTrabajo(models.Model):
         requeridos = {e.id for e in self.cita.estudios}
         if not requeridos:
             return False
-        con_imagen = set(
-            self.imagenes.exclude(tipo_estudio__isnull=True).values_list('tipo_estudio_id', flat=True)
-        )
+        if 'imagenes' in getattr(self, '_prefetched_objects_cache', {}):
+            con_imagen = {i.tipo_estudio_id for i in self.imagenes.all() if i.tipo_estudio_id is not None}
+        else:
+            con_imagen = set(
+                self.imagenes.exclude(tipo_estudio__isnull=True).values_list('tipo_estudio_id', flat=True)
+            )
         return requeridos.issubset(con_imagen)
 
     @property

@@ -90,7 +90,7 @@ def pantalla_turnos(request):
     es_hoy = fecha == hoy
 
     tickets_del_dia = sucursales.filtrar(Ticket.del_dia(fecha), request).select_related(
-        'paciente', 'cita__radiologo', 'cita__tipo_estudio',
+        'paciente', 'cita__radiologo', 'cita__tipo_estudio', 'cita__orden_trabajo',
     )
     if es_hoy:
         cola = tickets_del_dia.filter(estado=Ticket.ESTADO_EN_ESPERA).order_by('-prioridad', 'orden')

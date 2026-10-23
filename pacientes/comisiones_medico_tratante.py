@@ -9,7 +9,7 @@ que tenga (ver PagoComisionMedicoTratante)."""
 
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
-from .models import Cita
+from .models import PREFETCH_PRECIO_CITA, Cita
 
 
 def citas_referidas(medico, desde, hasta):
@@ -21,6 +21,7 @@ def citas_referidas(medico, desde, hasta):
             estado=Cita.ESTADO_PROCESADA, fecha__gte=desde, fecha__lte=hasta,
         )
         .select_related('paciente', 'tipo_estudio', 'sucursal')
+        .prefetch_related(*PREFETCH_PRECIO_CITA)
         .order_by('fecha', 'hora')
     )
 

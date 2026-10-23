@@ -15,7 +15,7 @@ hábil/inhábil).
 import datetime
 from decimal import Decimal
 
-from pacientes.models import Cita
+from pacientes.models import PREFETCH_PRECIO_CITA, Cita
 
 CENTAVO = Decimal('0.01')
 
@@ -40,7 +40,7 @@ def lineas_comision(desde, hasta):
         )
         .select_related('paciente', 'tipo_estudio', 'radiologo', 'sucursal')
         .prefetch_related(
-            'tipo_estudio__precios',
+            *PREFETCH_PRECIO_CITA,
             'orden_trabajo__imagenes__subida_por',
         )
         .order_by('fecha', 'hora')

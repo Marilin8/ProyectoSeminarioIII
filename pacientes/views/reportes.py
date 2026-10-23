@@ -18,7 +18,7 @@ from accounts import sucursales
 from accounts.models import MESES_ES, Bitacora, Usuario
 from accounts.views import es_administrador
 
-from ..models import Cita, MedicoTratante, Notificacion, ReporteDiario
+from ..models import PREFETCH_PRECIO_CITA, Cita, MedicoTratante, Notificacion, ReporteDiario
 from .permisos import (
     es_administrador_financiero,
     es_recepcionista,
@@ -114,7 +114,8 @@ def _solo_ve_reportes_enviados(user):
 def _filas_reporte(reporte):
     filas = []
     es_privado = reporte.convenio == Cita.CONVENIO_PRIVADO
-    for indice, cita in enumerate(reporte.citas(), start=1):
+    citas = reporte.citas().prefetch_related('orden_trabajo__imagenes__subida_por')
+    for indice, cita in enumerate(citas, start=1):
         tecnicos = _tecnicos_que_atendieron(cita)
         fila = {
             'no': indice,
@@ -158,7 +159,11 @@ def _tecnicos_que_atendieron(cita):
     if orden is None:
         return []
     nombres = []
-    for imagen in orden.imagenes.select_related('subida_por').order_by('subida_en'):
+    if 'imagenes' in getattr(orden, '_prefetched_objects_cache', {}):
+        imagenes = sorted(orden.imagenes.all(), key=lambda i: i.subida_en)
+    else:
+        imagenes = orden.imagenes.select_related('subida_por').order_by('subida_en')
+    for imagen in imagenes:
         usuario = imagen.subida_por
         nombre = (usuario.get_full_name() or usuario.username) if usuario else ''
         if nombre and nombre not in nombres:
@@ -357,11 +362,8 @@ def informe_anual(request):
     citas = (
         sucursales.filtrar(Cita.objects.filter(fecha__year=anio), request)
         .exclude(estado__in=(Cita.ESTADO_PENDIENTE, Cita.ESTADO_RECHAZADA))
-        .select_related('tipo_estudio')
-        .prefetch_related(
-            'tipo_estudio__precios', 'tipo_estudio__historial_precios',
-            'estudios_extra__tipo_estudio__precios', 'estudios_extra__tipo_estudio__historial_precios',
-        )
+        .select_related('tipo_estudio', 'sucursal')
+        .prefetch_related(*PREFETCH_PRECIO_CITA)
     )
 
     convenios = [c for c, _ in Cita.CONVENIO_CHOICES]

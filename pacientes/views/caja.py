@@ -19,7 +19,16 @@ from accounts import sucursales
 from accounts.models import Bitacora
 
 from ..forms import CrearOrdenPagoForm, RegistrarPagoEstudioForm, SubirConstanciaFirmadaForm
-from ..models import Cita, Cobro, Combo, OrdenPago, DetalleOrdenPago, OrdenTrabajo, TipoEstudio
+from ..models import (
+    PREFETCH_PRECIO_CITA,
+    Cita,
+    Cobro,
+    Combo,
+    DetalleOrdenPago,
+    OrdenPago,
+    OrdenTrabajo,
+    TipoEstudio,
+)
 from .citas import _volver_seguro
 from .comun import CLINICA_DIRECCION, CLINICA_NOMBRE, CLINICA_RUBRO, CLINICA_TELEFONO
 from .envio_resultados import _intentar_envio_automatico
@@ -101,8 +110,8 @@ def pagos_pendientes_igss(request):
 def pagos_pendientes(request):
     """Listado paginado de cobros, con filtros para Caja."""
     qs = sucursales.filtrar(Cobro.objects, request, 'cita__sucursal').select_related(
-        'cita__paciente', 'cita__tipo_estudio', 'cita__orden_trabajo', 'cobrado_por',
-    ).order_by('-creado_en')
+        'cita__paciente', 'cita__tipo_estudio', 'cita__orden_trabajo', 'cita__sucursal', 'cobrado_por',
+    ).prefetch_related(*(f'cita__{r}' for r in PREFETCH_PRECIO_CITA)).order_by('-creado_en')
     busqueda = (request.GET.get('q') or '').strip()
     estado = request.GET.get('estado', Cobro.ESTADO_PENDIENTE)
     convenio = request.GET.get('convenio', '')
@@ -223,7 +232,9 @@ def _citas_pendientes_para_orden(
         cobro__estado=Cobro.ESTADO_PENDIENTE,
     ).exclude(
         detalles_orden_pago__orden_pago__estado=OrdenPago.ESTADO_PENDIENTE,
-    ).select_related('paciente', 'tipo_estudio').prefetch_related('estudios_extra').order_by('fecha', 'hora', 'id')
+    ).select_related('paciente', 'tipo_estudio', 'sucursal').prefetch_related(
+        *PREFETCH_PRECIO_CITA,
+    ).order_by('fecha', 'hora', 'id')
     if desde:
         qs = qs.filter(fecha__gte=desde)
     if hasta:

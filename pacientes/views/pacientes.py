@@ -311,8 +311,13 @@ def historial_paciente(request, paciente_id):
     filtro_agrupacion = (request.GET.get('agrupacion') or '').strip()
     citas = (
         sucursales.permitidas(Cita.objects.filter(paciente=paciente, estado__in=ESTADOS_HISTORIAL), request.user)
-        .select_related('tipo_estudio', 'orden_trabajo', 'cobro')
-        .prefetch_related('detalles_orden_pago__orden_pago__combo')
+        .select_related('tipo_estudio', 'tipo_estudio__combo_origen', 'orden_trabajo', 'cobro')
+        .prefetch_related(
+            'detalles_orden_pago__orden_pago__combo',
+            'tipo_estudio__combo_origen__estudios',
+            'estudios_extra__tipo_estudio',
+            'orden_trabajo__imagenes',
+        )
         .order_by('-fecha', '-hora')
     )
     if filtro_estado_pago == 'pagado':

@@ -78,7 +78,7 @@ def ordenes_pendientes(request):
     candidatas = (
         sucursales.filtrar(OrdenTrabajo.objects.filter(cita__estado=Cita.ESTADO_EN_PROCESO), request, 'cita__sucursal')
         .select_related('cita', 'cita__tipo_estudio')
-        .prefetch_related('imagenes', 'cita__tipo_estudio__combo_origen__estudios')
+        .prefetch_related('imagenes', 'cita__tipo_estudio__combo_origen__estudios', 'cita__estudios_extra__tipo_estudio')
     )
     ids_pendientes = [o.id for o in candidatas if not o.imagenes_completas]
 
