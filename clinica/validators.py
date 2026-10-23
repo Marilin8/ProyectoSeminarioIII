@@ -1,3 +1,10 @@
+"""Validaciones compartidas de correo electrónico.
+
+La existencia del correo se verifica gratis consultando el DNS del dominio
+(registros MX, o A/AAAA como respaldo) con ``dnspython``; también se
+rechazan dominios desechables. ``avisar_si_correo_no_existe`` lo usa en los
+formularios para mostrar el aviso sin bloquear otros errores.
+"""
 import re
 
 import dns.exception

@@ -39,6 +39,10 @@ def sucursal_principal_id():
 
 
 class Usuario(AbstractUser):
+    """Usuario del sistema. ``rol`` es el rol principal; ``RolAdicional`` agrega
+    otros (ver ``tiene_rol``). Guarda los porcentajes de comisión por
+    convenio, las sucursales donde trabaja y el token de confirmación de
+    correo de cuentas nuevas."""
     ROL_ADMINISTRADOR = 'administrador'
     ROL_ADMINISTRADOR_FINANCIERO = 'administrador_financiero'
     ROL_RECEPCIONISTA = 'recepcionista'
@@ -114,12 +118,14 @@ class Usuario(AbstractUser):
     VIGENCIA_TOKEN_CONFIRMACION = datetime.timedelta(days=2)
 
     def generar_token_confirmacion_correo(self):
+        """Genera y guarda un token nuevo para el enlace de confirmación de correo."""
         self.token_confirmacion_correo = uuid.uuid4()
         self.token_confirmacion_generado_en = timezone.now()
         self.save(update_fields=['token_confirmacion_correo', 'token_confirmacion_generado_en'])
         return self.token_confirmacion_correo
 
     def token_confirmacion_vencido(self):
+        """True si no hay token o ya pasó ``VIGENCIA_TOKEN_CONFIRMACION``."""
         if not self.token_confirmacion_generado_en:
             return True
         return timezone.now() - self.token_confirmacion_generado_en > self.VIGENCIA_TOKEN_CONFIRMACION
@@ -230,6 +236,8 @@ def _ip_real_del_visitante(request):
 
 
 class Bitacora(models.Model):
+    """Bitácora de auditoría: quién hizo qué, cuándo y desde qué IP (logins,
+    usuarios, precios, citas, cobros, respaldos...)."""
     ACCION_LOGIN_EXITOSO = 'login_exitoso'
     ACCION_LOGIN_FALLIDO = 'login_fallido'
     ACCION_CREAR_USUARIO = 'crear_usuario'
@@ -350,6 +358,7 @@ class Bitacora(models.Model):
 
     @classmethod
     def registrar(cls, *, accion, descripcion='', usuario=None, username_intento='', request=None):
+        """Atajo para crear un registro; toma la IP real del visitante desde el request."""
         ip = _ip_real_del_visitante(request) if request is not None else None
         cls.objects.create(
             usuario=usuario,

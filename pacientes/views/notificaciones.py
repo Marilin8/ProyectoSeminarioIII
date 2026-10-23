@@ -49,6 +49,7 @@ def notificaciones_pendientes(request):
 
 @login_required
 def marcar_notificacion_leida(request, notificacion_id):
+    """Marca una notificación del usuario como leída (POST desde la campanita)."""
     if request.method == 'POST':
         # Los avisos de "datos de paciente pendientes" no se pueden cerrar a
         # mano: se apagan solos cuando el dato realmente se completa (ver
@@ -62,6 +63,7 @@ def marcar_notificacion_leida(request, notificacion_id):
 
 @login_required
 def marcar_notificaciones_leidas(request):
+    """Marca como leídas todas las notificaciones visibles en la sucursal activa."""
     if request.method == 'POST':
         # Solo las que está viendo (las de su sucursal activa).
         _notificaciones_de(request).filter(leida=False).exclude(

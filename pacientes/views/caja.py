@@ -251,6 +251,7 @@ def _citas_pendientes_para_orden(
 
 
 def _total_cita_para_orden(cita):
+    """Precio base de la cita más los estudios extra que sí se cobran."""
     total = cita.precio_base
     for extra in cita.estudios_extra_cobrados:
         total += extra.precio
@@ -258,6 +259,7 @@ def _total_cita_para_orden(cita):
 
 
 def _total_citas_para_orden(citas):
+    """Suma de ``_total_cita_para_orden`` para varias citas (Decimal)."""
     return sum((_total_cita_para_orden(c) for c in citas), Decimal('0.00'))
 
 
@@ -688,6 +690,8 @@ def boleta_pago_pdf(request, cobro_id):
 @login_required
 @user_passes_test(puede_ver_comprobante_pago)
 def comprobante_bancario(request, cobro_id):
+    """Muestra en el navegador la boleta bancaria (depósito/transferencia) que
+    Caja adjuntó al cobrar. Solo cobros pagados de las sucursales del usuario."""
     cobro = get_object_or_404(
         sucursales.permitidas(Cobro.objects.select_related('cita'), request.user, 'cita__sucursal'),
         id=cobro_id,
@@ -778,6 +782,7 @@ def constancia_pago_pdf(request, cobro_id):
 @login_required
 @user_passes_test(puede_ver_comprobante_pago)
 def constancia_firmada(request, cobro_id):
+    """Muestra la constancia de pago firmada que se subió para un cobro pagado."""
     cobro = get_object_or_404(
         sucursales.permitidas(Cobro.objects.select_related('cita'), request.user, 'cita__sucursal'),
         id=cobro_id,
@@ -796,6 +801,8 @@ def constancia_firmada(request, cobro_id):
 @user_passes_test(puede_ver_comprobante_pago)
 @require_POST
 def subir_constancia_firmada(request, cobro_id):
+    """Caja sube la constancia de pago firmada por el paciente (escaneada) y
+    queda registrado quién y cuándo la subió."""
     cobro = get_object_or_404(sucursales.permitidas(Cobro.objects, request.user, 'cita__sucursal'), id=cobro_id, estado=Cobro.ESTADO_PAGADO)
     form = SubirConstanciaFirmadaForm(request.POST, request.FILES)
     if not form.is_valid():

@@ -50,6 +50,9 @@ def _ac_a_token(ac):
 
 
 def _visor_orden_desde_request(request):
+    """Obtiene la orden a partir de ``studyId`` y ``ac`` (token público en
+    base64) de la URL. 404 si no coinciden o si los resultados todavía no
+    se enviaron a nadie."""
     study_id = request.GET.get('studyId')
     token = _ac_a_token(request.GET.get('ac') or '')
     if not (study_id or '').isdigit() or not token:
@@ -85,6 +88,8 @@ def _historial_clinico(paciente, orden_actual):
 
 
 def _render_visor_estudio(request, orden):
+    """Renderiza el visor: imágenes seleccionadas por la radióloga, informes,
+    sugerencias de estudio extra e historial clínico del paciente."""
     paciente = orden.cita.paciente
     imagenes = list(
         orden.imagenes.filter(seleccionada=True).exclude(archivo='').order_by('subida_en')
@@ -112,6 +117,9 @@ def _render_visor_estudio(request, orden):
 
 
 def visor_estudio(request):
+    """Visor público del paciente (enlace/QR del correo). Antes de mostrar
+    nada pide el DPI completo, con un máximo de ``VISOR_MAX_INTENTOS``
+    intentos por sesión."""
     orden = _visor_orden_desde_request(request)
     _visor_otp_limpiar_si_vencio(request)
     paciente = orden.cita.paciente
@@ -153,10 +161,12 @@ VISOR_OTP_SESION_MINUTOS = 60
 
 
 def _otp_hash(orden_id, codigo):
+    """HMAC del código OTP: en la sesión nunca se guarda el código en claro."""
     return salted_hmac('visor_otp_medico', f'{orden_id}:{codigo}').hexdigest()
 
 
 def _otp_enmascarar_correo(correo):
+    """Oculta parte del correo para mostrarlo: "ju*****@dominio.com"."""
     usuario, _, dominio = correo.partition('@')
     return f'{usuario[:2]}{"*" * max(len(usuario) - 2, 1)}@{dominio}'
 
@@ -203,6 +213,9 @@ def _visor_otp_enviar(request, orden, medico):
 
 
 def _visor_medico_con_otp(request, orden, medico, qs):
+    """Pantalla de código OTP del médico tratante: valida el código enviado por
+    correo (vence en ``VISOR_OTP_VALIDEZ_MINUTOS``, máximo de intentos) o lo
+    reenvía respetando la espera entre envíos."""
     clave_pendiente = f'visor_otp_pendiente_{orden.id}'
     correo = _otp_enmascarar_correo(medico.correo)
     contexto = {'medico': medico, 'query_string': qs, 'modo_otp': True, 'correo_enmascarado': correo}
@@ -331,6 +344,8 @@ def visor_estudio_historial(request, orden_id):
 
 
 def _visor_orden_autorizada(request, orden_id):
+    """Devuelve la orden si la sesión ya pasó el DPI/OTP para esa orden o para
+    el paciente; si no, 404. Protege las descargas de imágenes y PDFs."""
     orden = get_object_or_404(OrdenTrabajo.objects.select_related('cita'), id=orden_id)
     _visor_otp_limpiar_si_vencio(request)
     if request.session.get(f'visor_paciente_ok_{orden.cita.paciente_id}') is True:
@@ -343,6 +358,7 @@ def _visor_orden_autorizada(request, orden_id):
 
 
 def visor_imagen(request, orden_id, imagen_id):
+    """Sirve una imagen JPG seleccionada de la orden (``?descargar=1`` la baja como archivo)."""
     orden = _visor_orden_autorizada(request, orden_id)
     imagen = get_object_or_404(
         orden.imagenes.filter(seleccionada=True).exclude(archivo=''), id=imagen_id,
@@ -381,6 +397,7 @@ def visor_jpg(request, orden_id):
 
 @xframe_options_sameorigin
 def visor_informe_pdf(request, orden_id, informe_id):
+    """Sirve el PDF del informe (se puede incrustar en el visor por el mismo origen)."""
     orden = _visor_orden_autorizada(request, orden_id)
     informe = get_object_or_404(InformeEstudio, id=informe_id, orden=orden)
     if not informe.archivo:

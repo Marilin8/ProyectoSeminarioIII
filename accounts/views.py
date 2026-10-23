@@ -58,6 +58,7 @@ from .pantallas import buscar_pantalla, pantallas_de
 
 
 def es_administrador(user):
+    """Administrador general (rol principal o adicional) o superusuario."""
     return user.is_authenticated and (user.is_superuser or user.tiene_rol(Usuario.ROL_ADMINISTRADOR))
 
 
@@ -77,6 +78,7 @@ _URL_LISTA_POR_ROL = {
 
 
 def _url_lista_para(usuario):
+    """Nombre de URL del listado de usuarios al que se vuelve según el rol editado."""
     return _URL_LISTA_POR_ROL.get(usuario.rol, 'dashboard')
 
 
@@ -85,6 +87,7 @@ def _url_lista_para(usuario):
 # ---------------------------------------------------------------------------
 
 def _dispositivo_totp(user):
+    """Dispositivo TOTP (app autenticadora) ya confirmado del usuario, o None."""
     return TOTPDevice.objects.filter(user=user, confirmed=True).first()
 
 
@@ -367,6 +370,7 @@ def panel_financiero(request):
 @login_required
 @user_passes_test(es_administrador)
 def lista_sucursales(request):
+    """Listado de sucursales con la cantidad de usuarios activos asignados."""
     lista = Sucursal.objects.annotate(
         cantidad_usuarios=Count('usuarios', filter=Q(usuarios__is_active=True), distinct=True),
     )
@@ -376,6 +380,7 @@ def lista_sucursales(request):
 @login_required
 @user_passes_test(es_administrador)
 def editar_sucursal(request, sucursal_id=None):
+    """Crea (sin ``sucursal_id``) o edita una sucursal y lo registra en la bitácora."""
     sucursal = get_object_or_404(Sucursal, id=sucursal_id) if sucursal_id else None
     form = SucursalForm(request.POST or None, instance=sucursal)
     if request.method == 'POST' and form.is_valid():
@@ -406,6 +411,7 @@ def cambiar_sucursal(request):
 
 @login_required
 def menu_principal(request):
+    """Panel principal: muestra las pantallas (tiles) que corresponden a los roles del usuario."""
     return render(request, 'accounts/dashboard.html', {'pantallas': pantallas_de(request.user)})
 
 
@@ -466,6 +472,8 @@ def mi_perfil(request):
 
 @login_required
 def pantalla_placeholder(request, clave):
+    """Pantalla genérica de un tile del panel: si tiene submenú lo muestra; si
+    no, muestra "en construcción"."""
     pantalla = buscar_pantalla(pantallas_de(request.user), clave)
     if pantalla is None:
         raise Http404
@@ -477,6 +485,8 @@ def pantalla_placeholder(request, clave):
 @login_required
 @user_passes_test(es_administrador)
 def crear_usuario(request):
+    """Alta de usuario. La cuenta se crea INACTIVA y se envía un correo de
+    confirmación; se activa cuando el usuario confirma su correo."""
     if request.method == 'POST':
         form = CrearUsuarioForm(request.POST)
         if form.is_valid():
@@ -551,6 +561,8 @@ def confirmar_correo_usuario(request, token):
 @login_required
 @user_passes_test(es_administrador)
 def lista_usuarios(request, rol):
+    """Usuarios de un rol gestionable. Para radiólogos también muestra cuántos
+    y cuáles estudios tiene asignados."""
     if rol not in ROLES_GESTIONABLES:
         raise Http404
     usuarios = Usuario.objects.filter(rol=rol).order_by('-is_active', 'first_name', 'last_name', 'username')
@@ -928,6 +940,8 @@ def planilla_empleado(request, usuario_id):
 @login_required
 @user_passes_test(es_administrador)
 def editar_usuario(request, usuario_id):
+    """Edita un usuario. Guarda los porcentajes de comisión anteriores para
+    dejar en ``HistorialComision`` los que cambiaron."""
     usuario = get_object_or_404(Usuario, id=usuario_id)
     if request.method == 'POST':
         # Se leen los % de comisión ANTES de validar: form.is_valid() muta la
@@ -1050,6 +1064,7 @@ def _grupos_estudios_para(request, usuario):
 @user_passes_test(es_administrador)
 @require_POST
 def cambiar_estado_usuario(request, usuario_id):
+    """Suspende o reactiva una cuenta (no la propia ni la de un superusuario)."""
     usuario = get_object_or_404(Usuario, id=usuario_id)
     if usuario == request.user:
         messages.error(request, 'No podés cambiar el estado de tu propia cuenta.')
@@ -1072,6 +1087,8 @@ def cambiar_estado_usuario(request, usuario_id):
 @login_required
 @user_passes_test(es_administrador)
 def bitacora(request):
+    """Bitácora de acciones de un día con filtros por acción, usuario y texto.
+    Filtra con ``__range`` porque MySQL no tiene tablas de zona horaria."""
     hoy = datetime.date.today()
     fecha = parse_date(request.GET.get('fecha', '')) or hoy
     if fecha > hoy:
@@ -1143,6 +1160,7 @@ def _eliminar_pendiente(request):
 @login_required
 @user_passes_test(es_administrador)
 def respaldos(request):
+    """Pantalla de respaldos: lista local, conexión a Google Drive, trabajo en curso y respaldo automático."""
     trabajos.entregar_mensajes(request)
     return render(request, 'accounts/respaldos.html', {
         'respaldos': servicio_respaldos.listar_respaldos(),
@@ -1166,6 +1184,7 @@ def respaldo_estado(request):
 
 
 def _iniciar_trabajo(request, tipo, titulo, tarea):
+    """Arranca un trabajo en segundo plano (solo uno a la vez). Devuelve False si ya hay otro."""
     if not trabajos.iniciar(tipo, titulo, tarea):
         messages.warning(request, 'Ya hay un respaldo o una restauración en curso. Espere a que termine.')
         return False
@@ -1177,6 +1196,7 @@ def _iniciar_trabajo(request, tipo, titulo, tarea):
 @user_passes_test(es_administrador)
 @require_POST
 def crear_respaldo_view(request):
+    """Lanza en segundo plano un respaldo (opcionalmente con archivos y subida a Drive)."""
     tarea = tareas_respaldo.crear(
         request.POST.get('incluir_archivos') == 'on',
         request.POST.get('subir_drive') == 'on',
@@ -1190,6 +1210,7 @@ def crear_respaldo_view(request):
 @user_passes_test(es_administrador)
 @require_POST
 def subir_respaldo_a_drive(request, nombre):
+    """Sube a Google Drive en segundo plano un respaldo que ya existe localmente."""
     if servicio_respaldos.ruta_respaldo(nombre) is None:
         raise Http404('Respaldo no encontrado.')
     tarea = tareas_respaldo.subir(nombre, request.user.pk, _ip_real_del_visitante(request))
@@ -1281,6 +1302,8 @@ def google_drive_guardar(request):
 @login_required
 @user_passes_test(es_administrador)
 def google_drive_callback(request):
+    """Regreso del consentimiento OAuth de Google: valida el ``state``, canjea
+    el código por un refresh token (se guarda cifrado) y crea la carpeta."""
     estado_esperado = request.session.pop('google_drive_estado', None)
     conexion = ConexionGoogleDrive.objects.first()
     if request.GET.get('error'):
@@ -1321,6 +1344,8 @@ def google_drive_callback(request):
 @user_passes_test(es_administrador)
 @require_POST
 def google_drive_desconectar(request):
+    """Revoca el token de Google y borra la conexión. Los archivos ya subidos
+    a Drive no se tocan."""
     conexion = ConexionGoogleDrive.objects.first()
     if conexion is not None:
         if conexion.refresh_token_cifrado:
@@ -1346,6 +1371,7 @@ def google_drive_desconectar(request):
 @login_required
 @user_passes_test(es_administrador)
 def descargar_respaldo(request, nombre):
+    """Descarga un archivo de respaldo local y lo registra en la bitácora."""
     ruta = servicio_respaldos.ruta_respaldo(nombre)
     if ruta is None:
         raise Http404('Respaldo no encontrado.')
@@ -1365,6 +1391,7 @@ CLAVE_CODIGO_ELIMINAR = 'codigo_eliminar_respaldo'
 
 
 def _hash_codigo_eliminar(usuario, nombre, codigo):
+    """HMAC del código que confirma la eliminación de un respaldo (no se guarda en claro)."""
     return salted_hmac('codigo_eliminar_respaldo', f'{usuario.pk}:{nombre}:{codigo}').hexdigest()
 
 

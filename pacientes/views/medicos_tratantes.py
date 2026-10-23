@@ -39,6 +39,7 @@ def lista_medicos_tratantes(request):
 @login_required
 @user_passes_test(es_administrador)
 def crear_medico_tratante(request):
+    """Alta de un médico tratante (refiere pacientes y puede cobrar comisión)."""
     if request.method == 'POST':
         form = MedicoTratanteForm(request.POST)
         if form.is_valid():
@@ -58,6 +59,7 @@ def crear_medico_tratante(request):
 @login_required
 @user_passes_test(es_administrador)
 def editar_medico_tratante(request, medico_id):
+    """Edita los datos de un médico tratante (DPI y número de colegiado son opcionales pero únicos)."""
     medico = get_object_or_404(MedicoTratante, id=medico_id)
 
     if request.method == 'POST':
@@ -90,6 +92,7 @@ def editar_medico_tratante(request, medico_id):
 @user_passes_test(es_administrador)
 @require_POST
 def eliminar_medico_tratante(request, medico_id):
+    """Baja lógica: el médico queda inactivo, sus citas viejas lo conservan."""
     medico = get_object_or_404(MedicoTratante, id=medico_id)
     medico.activo = False
     medico.save(update_fields=['activo', 'actualizado_en'])
@@ -101,6 +104,7 @@ def eliminar_medico_tratante(request, medico_id):
 @user_passes_test(es_administrador)
 @require_POST
 def activar_medico_tratante(request, medico_id):
+    """Reactiva un médico tratante dado de baja."""
     medico = get_object_or_404(MedicoTratante, id=medico_id)
     medico.activo = True
     medico.save(update_fields=['activo', 'actualizado_en'])

@@ -86,16 +86,19 @@ def _cantidad_de_placas(texto):
 
 
 def _totales_placas(filas):
+    """Suma por columna de las placas usadas/erradas en las filas del reporte."""
     return {campo: sum(fila.get(campo) or 0 for fila in filas) for campo in CAMPOS_PLACAS}
 
 
 def _fecha_larga_es(fecha):
+    """Fecha en texto largo en español, p. ej. "Lunes 5 de octubre de 2026"."""
     dia_semana = DIAS_LARGOS_ES[fecha.weekday()]
     mes = MESES_LARGOS_ES[fecha.month - 1]
     return f'{dia_semana} {fecha.day} de {mes} de {fecha.year}'
 
 
 def _validar_convenio(convenio):
+    """Lanza 404 si el convenio de la URL no existe."""
     if convenio not in dict(Cita.CONVENIO_CHOICES):
         raise Http404('Convenio no válido.')
 
@@ -112,6 +115,10 @@ def _solo_ve_reportes_enviados(user):
 
 
 def _filas_reporte(reporte):
+    """Arma las filas (dicts) del reporte diario: una por cita del día, con
+    paciente, edad, estudio, técnico(s), médico referente, radiólogo y
+    precio vigente a esa fecha. En Privado agrega placas y forma de pago.
+    La misma lista alimenta la pantalla, el PDF y el Excel."""
     filas = []
     es_privado = reporte.convenio == Cita.CONVENIO_PRIVADO
     citas = reporte.citas().prefetch_related('orden_trabajo__imagenes__subida_por')
@@ -200,6 +207,7 @@ def _pacientes_con_datos_pendientes(reporte):
 
 
 def _reporte_pdf_bytes(reporte, filas):
+    """Genera el PDF horizontal del reporte diario con ReportLab y devuelve los bytes."""
     from io import BytesIO
     from xml.sax.saxutils import escape
 
@@ -275,6 +283,7 @@ def _reporte_pdf_bytes(reporte, filas):
 
 
 def _reporte_xlsx_bytes(reporte, filas):
+    """Genera el Excel del reporte diario con openpyxl y devuelve los bytes."""
     from io import BytesIO
 
     from openpyxl import Workbook
@@ -423,6 +432,9 @@ def informe_anual(request):
 @login_required
 @user_passes_test(puede_ver_reportes_diarios)
 def lista_reportes_diarios(request, convenio):
+    """Listado de reportes diarios del convenio. Crea en el momento los
+    ``ReporteDiario`` que falten para fechas con citas confirmadas. Finanzas y
+    administración (sin rol de recepción) solo ven los ya enviados."""
     convenio_nombre = dict(Cita.CONVENIO_CHOICES).get(convenio, convenio)
     solo_enviados = _solo_ve_reportes_enviados(request.user)
 
@@ -492,6 +504,7 @@ def _sucursal_del_reporte(request):
 
 
 def _reporte_pedido(request, convenio, fecha_valor, **filtros):
+    """Busca el ReporteDiario de la URL en la sucursal que corresponde al usuario (o 404)."""
     return get_object_or_404(
         ReporteDiario, convenio=convenio, fecha=fecha_valor, sucursal=_sucursal_del_reporte(request), **filtros,
     )
@@ -500,6 +513,9 @@ def _reporte_pedido(request, convenio, fecha_valor, **filtros):
 @login_required
 @user_passes_test(puede_ver_reportes_diarios)
 def ver_reporte_diario(request, convenio, fecha):
+    """Pantalla del reporte de un día. Mientras está en BORRADOR, recepción
+    puede corregir el médico tratante de cada cita y, en Privado, las
+    placas usadas. Una vez enviado es solo lectura."""
     _validar_convenio(convenio)
     fecha_valor = parse_date(fecha)
     if not fecha_valor:
@@ -597,6 +613,9 @@ def firma_reporte_diario(request, convenio, fecha):
 @login_required
 @user_passes_test(es_recepcionista)
 def enviar_reporte_diario(request, convenio, fecha):
+    """Cierra el reporte (BORRADOR -> ENVIADO). No se permite para hoy ni
+    fechas futuras, ni si hay pacientes con datos pendientes. Notifica a
+    finanzas."""
     _validar_convenio(convenio)
     fecha_valor = parse_date(fecha)
     if not fecha_valor:
@@ -645,6 +664,7 @@ def enviar_reporte_diario(request, convenio, fecha):
 @login_required
 @user_passes_test(puede_descargar_reportes_diarios)
 def descargar_reporte_pdf(request, convenio, fecha):
+    """Descarga el PDF de un reporte ya enviado (solo finanzas/administración)."""
     _validar_convenio(convenio)
     fecha_valor = parse_date(fecha)
     if not fecha_valor:
@@ -659,6 +679,7 @@ def descargar_reporte_pdf(request, convenio, fecha):
 @login_required
 @user_passes_test(puede_descargar_reportes_diarios)
 def descargar_reporte_xlsx(request, convenio, fecha):
+    """Descarga el Excel de un reporte ya enviado (solo finanzas/administración)."""
     _validar_convenio(convenio)
     fecha_valor = parse_date(fecha)
     if not fecha_valor:

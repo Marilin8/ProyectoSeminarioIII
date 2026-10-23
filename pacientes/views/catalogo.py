@@ -42,6 +42,8 @@ from ..models import (
 @login_required
 @user_passes_test(es_administrador)
 def crear_estudio(request):
+    """Alta de un tipo de estudio con su modalidad, duración y matriz de precios
+    (``CrearTipoEstudioForm`` guarda también los ``PrecioEstudio``)."""
     if request.method == 'POST':
         form = CrearTipoEstudioForm(request.POST)
         if form.is_valid():
@@ -65,6 +67,7 @@ def crear_estudio(request):
 @login_required
 @user_passes_test(es_administrador)
 def lista_modalidades(request):
+    """Listado de modalidades (RX, USG, TAC...) con búsqueda por nombre."""
     busqueda = (request.GET.get('q') or '').strip()
 
     modalidades = Modalidad.objects.all().order_by('nombre')
@@ -81,6 +84,8 @@ def lista_modalidades(request):
 @login_required
 @user_passes_test(es_administrador)
 def crear_modalidad(request):
+    """Crea una modalidad. El ``codigo`` interno se genera con slugify del nombre
+    y se le agrega un sufijo _2, _3... si ya existe. Queda en el historial."""
     if request.method == 'POST':
         nombre = (request.POST.get('nombre') or '').strip()
 
@@ -125,6 +130,7 @@ def crear_modalidad(request):
 @login_required
 @user_passes_test(es_administrador)
 def editar_modalidad(request, modalidad_id):
+    """Renombra una modalidad (sin repetir nombres) y registra el cambio en el historial."""
     modalidad = get_object_or_404(Modalidad, id=modalidad_id)
 
     if request.method == 'POST':
@@ -175,6 +181,8 @@ def editar_modalidad(request, modalidad_id):
 @user_passes_test(es_administrador)
 @require_POST
 def eliminar_modalidad(request, modalidad_id):
+    """Baja lógica: la modalidad queda inactiva (no se borra, la usan estudios
+    y citas viejas) y se anota en el historial."""
     modalidad = get_object_or_404(Modalidad, id=modalidad_id)
     nombre = modalidad.nombre
 
@@ -201,6 +209,7 @@ def eliminar_modalidad(request, modalidad_id):
 @user_passes_test(es_administrador)
 @require_POST
 def activar_modalidad(request, modalidad_id):
+    """Vuelve a activar una modalidad desactivada."""
     modalidad = get_object_or_404(Modalidad, id=modalidad_id)
 
     modalidad.activo = True
@@ -217,6 +226,7 @@ def activar_modalidad(request, modalidad_id):
 @login_required
 @user_passes_test(es_administrador)
 def historial_modalidades(request):
+    """Historial paginado de altas, cambios de nombre y bajas de modalidades."""
     busqueda = (request.GET.get('q') or '').strip()
 
     registros = (
@@ -246,6 +256,7 @@ ESTUDIOS_POR_PAGINA = 20
 @login_required
 @user_passes_test(es_administrador)
 def lista_estudios(request):
+    """Catálogo paginado de tipos de estudio con filtro por nombre y modalidad."""
     busqueda = (request.GET.get('q') or '').strip()
     modalidad = (request.GET.get('modalidad') or '').strip()
 
@@ -272,6 +283,9 @@ def lista_estudios(request):
 @login_required
 @user_passes_test(es_administrador)
 def editar_estudio(request, estudio_id):
+    """Edita un tipo de estudio y su matriz de precios general. Antes de guardar
+    copia los precios anteriores para auditar cada celda que cambió
+    (``_auditar_cambios_precio`` -> HistorialPrecioEstudio)."""
     tipo_estudio = get_object_or_404(TipoEstudio, id=estudio_id)
     if request.method == 'POST':
         # Se lee ANTES de guardar: form.save() ya deja la matriz de precios
@@ -544,6 +558,9 @@ def _avisar_si_combo_sin_radiologo_en_comun(request, combo, tipo_estudio):
 @login_required
 @user_passes_test(es_administrador)
 def crear_combo(request):
+    """Crea un combo (varios estudios que se cobran juntos) y sincroniza el
+    TipoEstudio que lo representa en la agenda. Avisa si los estudios no
+    tienen ningún radiólogo en común."""
     if request.method == 'POST':
         form = ComboForm(request.POST)
         if form.is_valid():
@@ -566,6 +583,7 @@ def crear_combo(request):
 @login_required
 @user_passes_test(es_administrador)
 def editar_combo(request, combo_id):
+    """Edita un combo y vuelve a sincronizar su TipoEstudio generado."""
     combo = get_object_or_404(Combo, id=combo_id)
     if request.method == 'POST':
         form = ComboForm(request.POST, instance=combo)

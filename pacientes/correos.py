@@ -1,3 +1,8 @@
+"""Correos de resultados: al paciente y al médico tratante (con enlace y QR
+al visor web) y el código OTP del visor del médico. Las funciones de
+envío devuelven un texto de error en vez de lanzar excepción, para que la
+vista pueda avisar sin romper el flujo (p. ej. si la red bloquea SMTP).
+"""
 import base64
 import io
 import logging

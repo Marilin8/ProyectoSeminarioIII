@@ -1,3 +1,9 @@
+"""Pantallas (botones del panel principal) que ve cada rol.
+
+``pantallas_de(usuario)`` junta las del rol principal y las de los roles
+adicionales sin repetir; ``buscar_pantalla`` encuentra una por clave para
+la vista genérica ``pantalla_placeholder``.
+"""
 from .models import Usuario
 
 # Qué botones/pantallas ve cada rol al entrar al sistema. Cada entrada:

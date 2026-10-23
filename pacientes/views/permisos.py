@@ -13,6 +13,7 @@ from accounts.views import es_administrador
 
 
 def es_recepcionista(user):
+    """Rol de recepción (agenda, llegada de pacientes, turnos)."""
     return user.is_authenticated and user.tiene_rol(Usuario.ROL_RECEPCIONISTA)
 
 
@@ -44,22 +45,27 @@ def puede_ver_comprobante_pago(user):
 
 
 def es_tecnico(user):
+    """Técnico de imágenes (verifica el estudio y sube las imágenes)."""
     return user.is_authenticated and user.tiene_rol(Usuario.ROL_TECNICO_IMAGENES)
 
 
 def es_radiologo(user):
+    """Médico radiólogo (redacta y adjunta el informe)."""
     return user.is_authenticated and user.tiene_rol(Usuario.ROL_MEDICO_RADIOLOGO)
 
 
 def es_administrador_financiero(user):
+    """Administrador financiero o superusuario (reportes, planilla, finanzas)."""
     return user.is_authenticated and (
         user.is_superuser or user.tiene_rol(Usuario.ROL_ADMINISTRADOR_FINANCIERO)
     )
 
 
 def puede_ver_reportes_diarios(user):
+    """Recepción arma/consulta el reporte del día; finanzas y admin lo revisan."""
     return es_recepcionista(user) or es_administrador_financiero(user) or es_administrador(user)
 
 
 def puede_descargar_reportes_diarios(user):
+    """Solo finanzas y administración descargan el PDF/Excel del reporte."""
     return es_administrador_financiero(user) or es_administrador(user)

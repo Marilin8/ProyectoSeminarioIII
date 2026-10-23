@@ -1,3 +1,7 @@
+"""Correos de cuentas de usuario: confirmación de cuenta nueva y códigos de
+seguridad (p. ej. para eliminar respaldos). Incluye utilidades para
+enmascarar un correo y detectar dominios que nunca reciben correo.
+"""
 import logging
 import smtplib
 import socket

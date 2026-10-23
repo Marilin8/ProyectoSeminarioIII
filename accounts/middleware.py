@@ -1,3 +1,6 @@
+"""Middlewares de la app ``accounts``: sesión única por usuario, pantalla de
+mantenimiento durante una restauración y no-cache para páginas con sesión.
+"""
 from django.contrib import messages
 from django.contrib.auth import logout
 from django.http import HttpResponse, JsonResponse

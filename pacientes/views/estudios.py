@@ -387,6 +387,8 @@ def validar_estudio(request, orden_id):
 
 
 def _volver_de_recepcion(cita):
+    """URL a la que vuelve recepción tras corregir un estudio: la agenda del día
+    en COEX/Privado, o la Pantalla de turnos en Emergencia IGSS."""
     if cita.convenio in (Cita.CONVENIO_COEX, Cita.CONVENIO_PRIVADO):
         return f'{reverse(f"procesar_citas_{cita.convenio}")}?fecha={cita.fecha}'
     return reverse('pantalla_turnos')
@@ -498,6 +500,9 @@ def corregir_estudio_cita(request, cita_id):
 @login_required
 @user_passes_test(es_radiologo)
 def citas_procesadas(request):
+    """Bandeja del radiólogo: estudios EN_PROCESO que ya tienen imágenes y
+    esperan informe. Filtra por texto, convenio y si vienen en una orden de
+    pago agrupada."""
     busqueda = (request.GET.get('q') or '').strip()
     convenio = (request.GET.get('convenio') or '').strip()
     agrupacion = (request.GET.get('agrupacion') or '').strip()
@@ -538,6 +543,10 @@ def citas_procesadas(request):
 @login_required
 @user_passes_test(es_radiologo)
 def adjuntar_informe(request, cita_id):
+    """El radiólogo sube/redacta el informe de cada estudio de la cita (un combo
+    tiene varios) y opcionalmente agrega un estudio extra. Cuando todos los
+    estudios tienen informe la cita queda PROCESADA y se intenta el envío
+    automático de resultados al paciente y al médico tratante."""
     cita = get_object_or_404(sucursales.permitidas(Cita.objects, request.user), id=cita_id, estado=Cita.ESTADO_EN_PROCESO)
     orden = get_object_or_404(sucursales.permitidas(OrdenTrabajo.objects, request.user, 'cita__sucursal'), cita=cita)
     if not orden.tiene_imagenes:

@@ -1,3 +1,7 @@
+"""Middlewares de mantenimiento que corren en cada request: marcan ausentes
+las citas vencidas y aplican los cambios de estudio programados. Así no
+hace falta un cron aparte para esas dos tareas.
+"""
 from .models import CambioEstudioProgramado, Cita
 
 

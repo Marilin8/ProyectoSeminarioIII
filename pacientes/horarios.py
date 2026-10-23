@@ -1,3 +1,7 @@
+"""Reglas de la agenda: horario de atención (7:00 a 17:00, lunes a sábado),
+bloques de ``PASO_MINUTOS``, ventana máxima de ``LIMITE_DIAS_ADELANTE`` días
+y cálculo de cruces entre citas según la duración de cada estudio.
+"""
 import datetime
 
 from django.utils import timezone

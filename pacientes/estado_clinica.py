@@ -228,6 +228,7 @@ def calcular_estado_clinica(dias=DIAS_POR_DEFECTO, convenio='', sucursal=None):
 @login_required
 @user_passes_test(es_administrador)
 def estado_clinica(request):
+    """Página del panel; los gráficos se llenan por JS con ``estado_clinica_datos``."""
     return render(request, 'pacientes/estado_clinica.html', {
         'periodos': PERIODOS,
         'convenios': CONVENIOS,

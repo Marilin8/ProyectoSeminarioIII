@@ -1,3 +1,12 @@
+"""Respaldos de la base de datos y de los archivos subidos (media).
+
+``crear_respaldo`` vuelca MySQL con ``mysqldump`` a un ZIP (opcionalmente con
+la carpeta media) y, si hay ``RESPALDOS_CLAVE`` en el .env, lo cifra
+(``.zip.cif``, ver ``cifrado.py``). También lista, valida y restaura
+respaldos (``restaurar``), y arma paquetes incrementales de imágenes.
+Las pantallas que lo usan están en ``accounts.views`` (Respaldos) y el
+trabajo corre en segundo plano vía ``tareas_respaldo``/``trabajos``.
+"""
 import datetime
 import json
 import os

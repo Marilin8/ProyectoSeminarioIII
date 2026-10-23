@@ -31,6 +31,7 @@ from .permisos import es_recepcionista
 @login_required
 @user_passes_test(es_recepcionista)
 def registrar_ticket_emergencia(request):
+    """Check-in de un paciente de Emergencia IGSS sin cita: crea el Ticket urgente."""
     volver_url = reverse('pantalla_placeholder', kwargs={'clave': 'emergencia_igss'})
     sucursal = _sucursal_para_operar(request)
     if sucursal is None:
@@ -144,6 +145,7 @@ def _turno_actual_sala_espera(hoy, sucursal):
 
 
 def _proximos_sala_espera(hoy, sucursal):
+    """Los 4 siguientes turnos en espera del día, por prioridad y orden."""
     return (
         Ticket.del_dia(hoy)
         .filter(estado=Ticket.ESTADO_EN_ESPERA, sucursal=sucursal)

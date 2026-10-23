@@ -1,3 +1,6 @@
+"""Conversión de imágenes DICOM a JPG para mostrarlas en el navegador
+(aplica unidades Hounsfield y la ventana de visualización del estudio).
+"""
 import io
 
 import numpy as np

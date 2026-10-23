@@ -58,6 +58,10 @@ ETIQUETA_CONVENIO_CORTA = {
 @login_required
 @user_passes_test(es_recepcionista)
 def seleccionar_horario(request, convenio):
+    """Calendario semanal del convenio (COEX, Privado o Emergencia IGSS) en la
+    sucursal activa. Muestra los huecos libres según ``horarios.py`` y las
+    citas ya ocupadas; se puede filtrar por radiólogo. Con ``?reagendar=<id>``
+    sirve para elegir el nuevo horario de una cita existente."""
     convenio_nombre = dict(Cita.CONVENIO_CHOICES).get(convenio, convenio)
     sucursal = _sucursal_para_operar(request)
     if sucursal is None:
@@ -221,6 +225,12 @@ def _hay_conflicto_horario(fecha_dt, hora_time, duracion_minutos, sucursal):
 @login_required
 @user_passes_test(es_recepcionista)
 def agendar_cita(request, convenio):
+    """Formulario para agendar una cita COEX o Emergencia IGSS en la fecha/hora
+    elegida en el calendario. Reutiliza al paciente por DPI
+    (``obtener_o_actualizar_paciente``), valida cruces de horario y estudios
+    duplicados, y permite "emergencia" encima de otra cita hasta
+    ``MAXIMO_EMERGENCIAS_POR_DIA``. La cita queda PENDIENTE hasta que el
+    radiólogo asignado la confirme (ver ``revisar_solicitud``)."""
     convenio_nombre = dict(Cita.CONVENIO_CHOICES).get(convenio, convenio)
     calendario_url = reverse(f'calendario_{convenio}')
     sucursal = _sucursal_para_operar(request)
@@ -505,6 +515,8 @@ def agendar_cita_privado(request):
 @login_required
 @user_passes_test(es_recepcionista)
 def procesar_citas(request, convenio):
+    """Agenda del día por convenio para recepción: desde aquí se marca la
+    llegada, se genera la orden de trabajo o se marca ausente."""
     convenio_nombre = dict(Cita.CONVENIO_CHOICES).get(convenio, convenio)
 
     fecha = parse_date(request.GET.get('fecha', '')) or datetime.date.today()
@@ -567,6 +579,8 @@ def _crear_ticket_de_turno(*, request, cita, usuario, prioridad=Ticket.PRIORIDAD
 @login_required
 @user_passes_test(es_recepcionista)
 def marcar_llegada(request, convenio, cita_id):
+    """Registra la hora de llegada del paciente. En COEX y Privado además crea
+    su turno en la Pantalla de turnos."""
     cita = get_object_or_404(sucursales.permitidas(Cita.objects, request.user), id=cita_id, convenio=convenio)
     if request.method == 'POST' and cita.estado in (Cita.ESTADO_AGENDADA, Cita.ESTADO_EN_ESPERA):
         campos = ['hora_llegada']
@@ -596,6 +610,9 @@ def marcar_llegada(request, convenio, cita_id):
 @login_required
 @user_passes_test(es_recepcionista)
 def generar_orden(request, convenio, cita_id):
+    """Recepción crea la OrdenTrabajo (motivo/indicación clínica) para una cita
+    con llegada marcada: la cita pasa a EN_PROCESO, se crea el Cobro
+    pendiente y se avisa a los técnicos."""
     cita = get_object_or_404(sucursales.permitidas(Cita.objects, request.user), id=cita_id, convenio=convenio)
     volver_url = f'{reverse(f"procesar_citas_{convenio}")}?fecha={cita.fecha}'
 
@@ -644,6 +661,9 @@ def generar_orden(request, convenio, cita_id):
 @login_required
 @user_passes_test(es_radiologo)
 def solicitudes_pendientes(request):
+    """Bandeja del radiólogo: citas COEX / Emergencia IGSS que recepción
+    agendó (estado PENDIENTE) y que el radiólogo asignado debe confirmar o rechazar, con
+    búsqueda y filtro por convenio."""
     busqueda = (request.GET.get('q') or '').strip()
     convenio = (request.GET.get('convenio') or '').strip()
     citas = (
@@ -672,6 +692,8 @@ def solicitudes_pendientes(request):
 @login_required
 @user_passes_test(es_radiologo)
 def revisar_solicitud(request, cita_id):
+    """El radiólogo confirma (con fecha/hora dentro de la ventana permitida) o
+    rechaza con motivo una solicitud de cita. Se notifica a quien la registró."""
     cita = get_object_or_404(
         sucursales.permitidas(Cita.objects, request.user),
         id=cita_id, estado=Cita.ESTADO_PENDIENTE, radiologo=request.user,
@@ -752,6 +774,7 @@ def revisar_solicitud(request, cita_id):
 @login_required
 @user_passes_test(es_recepcionista)
 def marcar_ausente(request, convenio, cita_id):
+    """Marca la cita como AUSENTE (solo el día de la cita o después)."""
     cita = get_object_or_404(sucursales.permitidas(Cita.objects, request.user), id=cita_id, convenio=convenio)
     if request.method == 'POST':
         if cita.fecha > datetime.date.today():
@@ -772,6 +795,9 @@ def marcar_ausente(request, convenio, cita_id):
 @login_required
 @user_passes_test(es_recepcionista)
 def confirmar_reagenda(request, convenio, cita_id):
+    """Mueve una cita agendada o ausente a otra fecha/hora libre de la misma
+    sucursal, validando que no sea en el pasado, que esté dentro de la
+    ventana de agenda y que no se cruce con otra cita."""
     cita = get_object_or_404(sucursales.permitidas(Cita.objects, request.user), id=cita_id, convenio=convenio)
     calendario_url = reverse(f'calendario_{convenio}')
 

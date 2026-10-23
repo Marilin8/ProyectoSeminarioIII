@@ -48,6 +48,10 @@ def es_horario_habil(convenio, hora):
 
 
 class Paciente(models.Model):
+    """Paciente de la clínica, identificado por DPI (único). El número de
+    expediente lo asigna el sistema. El sexo es obligatorio desde el
+    registro; fecha de nacimiento y teléfono pueden quedar pendientes y se
+    avisan con notificaciones hasta que se completen."""
     SEXO_MASCULINO = 'M'
     SEXO_FEMENINO = 'F'
 
@@ -120,6 +124,7 @@ class Paciente(models.Model):
         ]
 
     def edad_en(self, fecha):
+        """Edad en años cumplidos a la fecha dada (None si no hay fecha de nacimiento)."""
         if not self.fecha_nacimiento:
             return None
         años = fecha.year - self.fecha_nacimiento.year
@@ -129,6 +134,8 @@ class Paciente(models.Model):
 
 
 class Modalidad(models.Model):
+    """Modalidad de imagen editable desde el panel (RX, USG, TAC...). La baja es
+    lógica (``activo``) y cada cambio queda en ``HistorialModalidad``."""
     codigo = models.CharField(
         max_length=30,
         unique=True,
@@ -159,6 +166,7 @@ class Modalidad(models.Model):
 
 
 class HistorialModalidad(models.Model):
+    """Registro de cada alta, cambio de nombre o baja de una modalidad (quién y cuándo)."""
     ACCION_CREAR = 'crear'
     ACCION_EDITAR = 'editar'
     ACCION_ELIMINAR = 'eliminar'
@@ -301,6 +309,10 @@ def nombre_modalidad(codigo):
 
 
 class TipoEstudio(models.Model):
+    """Estudio que se puede agendar (o el estudio generado de un combo). Tiene
+    duración (para la agenda), radiólogos asignados y su matriz de precios
+    ``PrecioEstudio`` por convenio × horario hábil/inhábil, general o por
+    sucursal. El precio a cobrar se obtiene con ``precio_para``."""
     MODALIDAD_RX = 'rx'
     MODALIDAD_RX_CONTRASTE = 'rx_contraste'
     MODALIDAD_TAC = 'tac'
@@ -373,6 +385,7 @@ class TipoEstudio(models.Model):
         return self._precio_general(convenio, horario_habil, fecha)
 
     def _tiene_general(self, convenio, horario_habil):
+        """True si existe la celda general (sin sucursal) de ese convenio y horario."""
         return any(
             p.sucursal_id is None and p.convenio == convenio and p.horario_habil == horario_habil
             for p in self.precios.all()
@@ -436,6 +449,9 @@ class TipoEstudio(models.Model):
         return None
 
     def _precio_general(self, convenio, horario_habil=True, fecha=None):
+        """Precio general (sin sucursal). Con ``fecha`` usa primero el historial
+        para devolver el precio vigente ese día; si la celda inhábil no existe
+        cae al precio hábil, y si no hay nada devuelve 0."""
         if fecha is not None:
             precio_historico = self.historial_precio_vigente_en(convenio, horario_habil, fecha)
             if precio_historico is None and not horario_habil:
@@ -840,6 +856,12 @@ class Combo(models.Model):
 
 
 class Cita(models.Model):
+    """Cita de un paciente para un TipoEstudio en una sucursal.
+
+    Ciclo de estados: PENDIENTE (COEX/IGSS, espera al radiólogo) -> AGENDADA ->
+    (EN_ESPERA) -> EN_PROCESO (con OrdenTrabajo) -> PROCESADA (informe
+    completo). También puede quedar AUSENTE o RECHAZADA. El convenio (COEX,
+    Privado, Emergencia IGSS) y el horario hábil/inhábil definen el precio."""
     # Los valores viven a nivel de módulo (los usa también PrecioEstudio, que
     # se define antes que Cita); acá se reexponen para no romper el código
     # que ya usa Cita.CONVENIO_*.
@@ -945,6 +967,7 @@ class Cita(models.Model):
 
     @property
     def se_puede_eliminar(self):
+        """Solo se borran citas en estados tempranos que todavía no tienen orden ni cobro."""
         return (
             self.estado in self.ESTADOS_ELIMINABLES
             and not hasattr(self, 'orden_trabajo')
@@ -975,6 +998,7 @@ class Cita(models.Model):
 
     @property
     def esta_tarde(self):
+        """True si la cita agendada ya pasó su hora más la tolerancia y el paciente no llegó."""
         if self.estado != self.ESTADO_AGENDADA or self.hora_llegada:
             return False
         hora_cita = timezone.make_aware(datetime.datetime.combine(self.fecha, self.hora))
@@ -1110,6 +1134,7 @@ class EstudioExtra(models.Model):
 
     @property
     def precio(self):
+        """Precio del estudio extra con el convenio, horario, fecha y sucursal de su cita."""
         return self.tipo_estudio.precio_para(
             self.cita.convenio, self.cita.horario_habil, fecha=self.cita.fecha, sucursal=self.cita.sucursal,
         )
@@ -1263,6 +1288,7 @@ class OrdenPago(models.Model):
 
 
 class DetalleOrdenPago(models.Model):
+    """Línea de una OrdenPago: un estudio (o estudio extra) de una cita con su precio y descuento."""
     orden_pago = models.ForeignKey(OrdenPago, on_delete=models.CASCADE, related_name='detalles')
     cita = models.ForeignKey(Cita, on_delete=models.PROTECT, related_name='detalles_orden_pago')
     tipo_estudio = models.ForeignKey(TipoEstudio, on_delete=models.PROTECT)
@@ -1417,6 +1443,8 @@ class ReporteDiario(models.Model):
         return hashlib.sha1(repr(list(filas)).encode('utf-8')).hexdigest()
 
     def citas(self):
+        """Citas que entran al reporte: las del convenio, fecha y sucursal,
+        excepto solicitudes pendientes o rechazadas, ordenadas por hora."""
         return (
             Cita.objects.filter(convenio=self.convenio, fecha=self.fecha, sucursal_id=self.sucursal_id)
             .exclude(estado__in=(Cita.ESTADO_PENDIENTE, Cita.ESTADO_RECHAZADA))
@@ -1428,6 +1456,7 @@ class ReporteDiario(models.Model):
         )
 
     def total(self):
+        """Suma de los precios de las citas que cuentan para el total del reporte."""
         return sum(
             (cita.precio for cita in self.citas() if cita.cuenta_en_total_reporte),
             start=Decimal('0.00'),
@@ -1435,6 +1464,9 @@ class ReporteDiario(models.Model):
 
 
 class OrdenTrabajo(models.Model):
+    """Orden de trabajo que recepción genera al llegar el paciente. Agrupa las
+    imágenes que sube el técnico y los informes del radiólogo, guarda la
+    verificación del técnico y el token público del visor web."""
     # Verificación del técnico antes de cargar las imágenes y de que Caja
     # pueda cobrar: confirma que el estudio agendado es el correcto o le
     # pide a recepción que lo modifique (ver validar_estudio).
@@ -1499,6 +1531,7 @@ class OrdenTrabajo(models.Model):
     token_publico = models.UUIDField(null=True, blank=True, unique=True, editable=False)
 
     def asegurar_token_publico(self):
+        """Crea (una sola vez) el UUID que firma el enlace/QR del visor y lo devuelve."""
         if not self.token_publico:
             self.token_publico = uuid.uuid4()
             self.save(update_fields=['token_publico'])
@@ -1560,6 +1593,9 @@ class OrdenTrabajo(models.Model):
 
 
 class ImagenEstudio(models.Model):
+    """Imagen subida por el técnico. ``archivo`` es siempre un JPG visible en el
+    navegador; si se subió un DICOM, el original se guarda aparte. La
+    radióloga marca cuáles se muestran al paciente (``seleccionada``)."""
     orden = models.ForeignKey(OrdenTrabajo, on_delete=models.CASCADE, related_name='imagenes')
     # A cuál de los estudios de la cita pertenece esta imagen -- para un
     # estudio normal es el único que tiene la cita; para un combo, el
@@ -1729,6 +1765,9 @@ class Ticket(models.Model):
         )
 
     def save(self, *args, **kwargs):
+        """Al crear el ticket le asigna el siguiente número del día de forma
+        atómica (``DailySequence`` con ``select_for_update``) para que dos
+        recepcionistas no generen el mismo turno."""
         if self.turno:
             super().save(*args, **kwargs)
             return
@@ -1854,12 +1893,14 @@ class Notificacion(models.Model):
 
     @classmethod
     def notificar(cls, *, destinatario, tipo, mensaje, cita=None, url=''):
+        """Crea una notificación para un usuario."""
         return cls.objects.create(
             destinatario=destinatario, tipo=tipo, mensaje=mensaje, cita=cita, url=url,
         )
 
     @classmethod
     def notificar_a_varios(cls, *, usuarios, tipo, mensaje, cita=None, url=''):
+        """Crea la misma notificación para varios usuarios en un solo INSERT."""
         usuarios = list(usuarios)
         if not usuarios:
             return []
