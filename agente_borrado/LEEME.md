@@ -37,7 +37,24 @@ Copiar el token que muestra (no se vuelve a mostrar). Otros comandos:
 `token_agente listar`, `token_agente renovar "<nombre>"`, `token_agente revocar "<nombre>"`.
 También se puede ver y revocar desde el admin de Django (Agentes de equipo).
 
-## 2. Instalar en la PC
+## 2. Instalar en la PC (con el instalador)
+
+1. Copiar `instaladores\Instalador_AgenteBorrado.zip` a la PC y descomprimirlo.
+2. Doble clic en **Instalar.bat** (no pide administrador). Pide el token (no se ve
+   al pegarlo), detecta la carpeta de RadiAnt (`Documentos\RadiAntDB\RadiAnt.rdvdata\storage`,
+   donde RadiAnt copia los estudios importados con "Copy files"), hace una prueba en
+   modo simulación y, si conecta, programa la tarea "ClinicaAgenteBorrado" cada 5
+   minutos (oculta, sin ventanas).
+3. Queda instalado en `%LOCALAPPDATA%\ClinicaAgente\` (ahí está el log).
+4. Para quitarlo: **Desinstalar.bat**.
+
+RadiAnt renombra los archivos al importarlos, pero no cambia su contenido: la
+huella es la misma que la del archivo original, así que el agente los reconoce.
+
+Si cambia `agente_borrado.ps1`, regenerar el ZIP:
+`powershell -NoProfile -ExecutionPolicy Bypass -File instaladores\construir.ps1`
+
+## 2b. Instalar a mano (sin el instalador)
 
 1. Copiar esta carpeta a la PC, p. ej. `C:\ClinicaAgente\`.
 2. Copiar `agente.json.ejemplo` como `agente.json` y completar:
