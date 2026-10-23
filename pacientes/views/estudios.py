@@ -2,6 +2,7 @@
 carga de imágenes (JPG/DICOM), correcciones pedidas a recepción, informe del
 radiólogo y estudios extra.
 """
+import hashlib
 import os
 import time
 import zipfile
@@ -129,10 +130,19 @@ def _guardar_imagen_o_convertir_dicom(archivo, orden, usuario, tipo_estudio):
     la carpeta que exporta el equipo) intenta convertirlo de DICOM a JPG y
     conserva además el archivo DICOM original (para que la radióloga lo
     pueda descargar). Devuelve True si quedó guardada, False si se omitió
-    (no era un DICOM válido)."""
+    (no era un DICOM válido).
+
+    Guarda también la huella SHA-256 de los bytes recibidos (ver
+    ImagenEstudio.huella_sha256 y views/agente.py)."""
     if archivo.name.lower().endswith(EXTENSIONES_IMAGEN_DIRECTA):
+        huella = hashlib.sha256()
+        archivo.seek(0)
+        for bloque in archivo.chunks():
+            huella.update(bloque)
+        archivo.seek(0)
         ImagenEstudio.objects.create(
             orden=orden, tipo_estudio=tipo_estudio, archivo=archivo, subida_por=usuario,
+            huella_sha256=huella.hexdigest(),
         )
         return True
 
@@ -144,7 +154,10 @@ def _guardar_imagen_o_convertir_dicom(archivo, orden, usuario, tipo_estudio):
 
     jpg_convertido = dicom_a_jpg_memoria(archivo)
     if jpg_convertido:
-        nueva_imagen = ImagenEstudio(orden=orden, tipo_estudio=tipo_estudio, subida_por=usuario)
+        nueva_imagen = ImagenEstudio(
+            orden=orden, tipo_estudio=tipo_estudio, subida_por=usuario,
+            huella_sha256=hashlib.sha256(contenido_original).hexdigest(),
+        )
         nueva_imagen.archivo.save(jpg_convertido.name, jpg_convertido, save=False)
         nombre_original = archivo.name if '.' in archivo.name else f'{archivo.name}.dcm'
         nueva_imagen.archivo_original.save(

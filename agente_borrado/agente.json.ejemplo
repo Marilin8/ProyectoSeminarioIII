@@ -1,0 +1,10 @@
+{
+    "url_sistema": "https://clinica.cimeimagenes.com",
+    "token": "PEGAR_AQUI_EL_TOKEN_DE_ESTA_PC",
+    "carpetas": [
+        "C:\\RUTA\\DE\\LA\\CARPETA\\DE\\RADIANT"
+    ],
+    "modo": "papelera",
+    "minutos_sin_cambios": 5,
+    "borrar_carpetas_vacias": true
+}

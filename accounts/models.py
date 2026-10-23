@@ -1,5 +1,7 @@
 import calendar
 import datetime
+import hashlib
+import secrets
 import uuid
 
 from django.conf import settings
@@ -604,3 +606,45 @@ class RespaldoEnNube(models.Model):
         db_table = 'respaldos_en_nube'
         verbose_name = 'respaldo en la nube'
         verbose_name_plural = 'respaldos en la nube'
+
+
+class AgenteEquipo(models.Model):
+    """PC autorizada a correr el agente de borrado (agente_borrado/): con su
+    token pregunta qué archivos de su disco ya están guardados en el sistema
+    para borrarlos de ahí. El token solo sirve para eso (no da acceso a
+    pantallas ni a datos de pacientes) y se guarda como hash: se muestra una
+    sola vez al crearlo (``manage.py token_agente crear <nombre>``)."""
+
+    nombre = models.CharField(max_length=80, unique=True, help_text='Nombre de la PC, p. ej. "Rayos X sala 1".')
+    token_hash = models.CharField(max_length=64, unique=True, editable=False)
+    activo = models.BooleanField(default=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    ultimo_uso = models.DateTimeField(null=True, blank=True)
+    ultima_ip = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'agentes_equipo'
+        verbose_name = 'agente de equipo'
+        verbose_name_plural = 'agentes de equipo'
+        ordering = ['nombre']
+
+    def __str__(self):
+        return self.nombre
+
+    @staticmethod
+    def hash_de(token):
+        return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+    def generar_token(self):
+        """Crea un token nuevo (invalida el anterior), lo guarda hasheado y lo
+        devuelve en claro para copiarlo a la configuración del agente."""
+        token = secrets.token_urlsafe(32)
+        self.token_hash = self.hash_de(token)
+        return token
+
+    @classmethod
+    def autenticar(cls, token):
+        """El agente activo dueño de `token`, o None."""
+        if not token:
+            return None
+        return cls.objects.filter(token_hash=cls.hash_de(token), activo=True).first()

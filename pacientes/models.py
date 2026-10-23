@@ -1622,6 +1622,12 @@ class ImagenEstudio(models.Model):
     # seleccionada=False y "archivo" vacío) pero "archivo_original" (el
     # DICOM) nunca se toca — se conserva completo pase lo que pase.
     seleccionada = models.BooleanField(default=True)
+    # SHA-256 del archivo tal como llegó desde la PC del técnico (el DICOM o
+    # el JPG original, antes de convertir). El agente de las PCs
+    # (agente_borrado/) pregunta por estas huellas para borrar del disco
+    # local solo lo que el sistema confirma que ya tiene. Vacío en las
+    # imágenes subidas antes de que existiera este campo.
+    huella_sha256 = models.CharField(max_length=64, blank=True, default='', db_index=True)
 
     class Meta:
         db_table = 'imagenes_estudio'

@@ -470,6 +470,22 @@ seminario subida/
               'Restauración: pide contraseña y escribir RESTAURAR, guarda antes un respaldo de seguridad y deja '
               'el sitio en modo mantenimiento mientras dura.',
           ])]
+    h += [P('6.8 Agente de borrado en las PCs que suben estudios', 'h2'),
+          *vinetas([
+              'Al subir imágenes se guarda la huella SHA-256 de cada archivo tal como llegó '
+              '(<font face="%s">ImagenEstudio.huella_sha256</font>; del DICOM original, no del JPG convertido).'
+              % CODIGO,
+              'En cada PC autorizada corre <font face="%s">agente_borrado/agente_borrado.ps1</font> (PowerShell, '
+              'tarea programada cada 5 min): calcula la huella de los archivos de la carpeta de RadiAnt, pregunta '
+              'a <font face="%s">POST /api/agente/huellas/</font> cuáles ya están en el sistema y solo esos los '
+              'manda a la Papelera (o los borra). Si el servidor no responde, no borra nada.' % ((CODIGO,) * 2),
+              'Cada PC usa su propio token (<font face="%s">AgenteEquipo</font>, guardado como hash), que solo sirve '
+              'para esa consulta: <font face="%s">manage.py token_agente crear|renovar|revocar|listar</font>.'
+              % ((CODIGO,) * 2),
+              'No se confirma una imagen cuyo archivo ya no está en el servidor (p. ej. JPG descartado), se '
+              'ignoran archivos modificados hace menos de 5 minutos, y las imágenes subidas antes de este cambio '
+              'no tienen huella. Instalación paso a paso en <font face="%s">agente_borrado/LEEME.md</font>.' % CODIGO,
+          ])]
     h.append(PageBreak())
 
     # 7. Módulos y funciones

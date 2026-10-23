@@ -20,6 +20,7 @@ Módulos:
   reportes           reportes diarios (PDF/Excel) e informe anual
   notificaciones     endpoints de la campanita
   visor              visor web de estudios (paciente y médico con OTP)
+  agente             API del agente que borra en las PCs lo ya subido
 """
 from .pacientes import (  # noqa: F401
     buscar_paciente_por_dpi,
@@ -138,4 +139,7 @@ from .visor import (  # noqa: F401
     visor_imagen,
     visor_informe_pdf,
     visor_jpg,
+)
+from .agente import (  # noqa: F401
+    confirmar_huellas,
 )

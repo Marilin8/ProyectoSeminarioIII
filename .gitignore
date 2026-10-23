@@ -26,3 +26,8 @@ staticfiles/
 # Respaldos generados desde el módulo de admin (contienen datos de pacientes)
 respaldos/
 respaldos_test/
+
+# Agente de borrado: configuracion con token, cache y log de cada PC
+agente_borrado/agente.json
+agente_borrado/cache_huellas.json
+agente_borrado/*.log

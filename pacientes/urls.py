@@ -5,6 +5,7 @@ from .models import Cita
 
 urlpatterns = [
     path('estado-clinica/', estado_clinica.estado_clinica, name='estado_clinica'),
+    path('api/agente/huellas/', views.confirmar_huellas, name='agente_confirmar_huellas'),
     path('estado-clinica/datos/', estado_clinica.estado_clinica_datos, name='estado_clinica_datos'),
     path('estudios/nuevo/', views.crear_estudio, name='crear_estudio'),
     path('estudios/', views.lista_estudios, name='lista_estudios'),
