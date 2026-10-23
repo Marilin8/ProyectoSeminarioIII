@@ -974,7 +974,7 @@ class ComboForm(forms.ModelForm):
 
 class RegistrarPagoEstudioForm(forms.Form):
     """La boleta que Caja llena al marcar un estudio como cobrado (ver
-    pacientes.views.marcar_cobrado). Portado (2026-09-04) desde la rama
+    pacientes.views.caja.marcar_cobrado). Portado (2026-09-04) desde la rama
     visual-andres de TechBlood."""
 
     forma_pago = forms.ChoiceField(label='Forma de pago', choices=Cobro.FORMA_PAGO_CHOICES)

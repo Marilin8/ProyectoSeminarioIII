@@ -448,6 +448,12 @@ class UsuarioModelTests(TestCase):
         usuario = crear_usuario('tecnico3', rol=Usuario.ROL_TECNICO_IMAGENES)
         self.assertEqual(usuario.rol, Usuario.ROL_TECNICO_IMAGENES)
 
+    def test_los_porcentajes_de_comision_inician_en_cero(self):
+        usuario = crear_usuario('radiologo_pct', rol=Usuario.ROL_MEDICO_RADIOLOGO)
+        self.assertEqual(usuario.porcentaje_coex, 0)
+        self.assertEqual(usuario.porcentaje_privado, 0)
+        self.assertEqual(usuario.porcentaje_emergencia_igss, 0)
+
 
 class RolAdicionalTests(TestCase):
     """Un usuario puede tener roles adicionales además de su rol principal
@@ -472,7 +478,7 @@ class RolAdicionalTests(TestCase):
         self.assertFalse(self.usuario.tiene_rol(Usuario.ROL_RECEPCIONISTA))
 
     def test_predicados_es_tecnico_y_es_radiologo_respetan_el_rol_adicional(self):
-        from pacientes.views import es_radiologo, es_tecnico
+        from pacientes.views.permisos import es_radiologo, es_tecnico
 
         self.assertTrue(es_tecnico(self.usuario))
         self.assertFalse(es_radiologo(self.usuario))

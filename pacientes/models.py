@@ -115,6 +115,7 @@ class Paciente(models.Model):
             años -= 1
         return años
 
+
 class Modalidad(models.Model):
     codigo = models.CharField(
         max_length=30,
@@ -183,7 +184,6 @@ class HistorialModalidad(models.Model):
         return f'{self.nombre} - {self.get_accion_display()}'
 
 
-
 class MedicoTratante(models.Model):
     """Catálogo administrable de médicos tratantes (COEX / Emergencia IGSS),
     para elegir uno al agendar en vez de escribirlo a mano cada vez. El
@@ -194,7 +194,7 @@ class MedicoTratante(models.Model):
     ambos, al completarse un estudio donde quedó como médico tratante se le
     manda el enlace del visor por correo y su DPI es la llave para abrirlo
     (ver enviar_estudio_medico_tratante en correos.py y
-    visor_estudio_medico_tratante en views.py). Si es solo igss, no se le
+    visor_estudio_medico_tratante en views/visor.py). Si es solo igss, no se le
     envía nada: ese caso ya lo distribuye IGSS por su cuenta."""
 
     TIPO_IGSS = 'igss'
@@ -526,7 +526,7 @@ class CambioEstudioProgramado(models.Model):
     el administrador programó para una fecha futura, en vez de tener que
     volver a entrar a editarlo ese día. Guarda el estado COMPLETO que debe
     quedar el estudio -- se arma con el mismo formulario que la edición
-    inmediata (ver pacientes.views.programar_cambio_estudio), así que
+    inmediata (ver pacientes.views.catalogo.programar_cambio_estudio), así que
     "programar" y "guardar ahora" parten de la misma pantalla.
 
     Se aplica solo: ver aplicar_vencidos, llamado en cada request desde
@@ -1409,7 +1409,7 @@ class OrdenTrabajo(models.Model):
 
     # Para convenio privado con correo ya registrado, el envío se dispara
     # solo apenas se cumplen pago + imágenes + informe completos (ver
-    # _intentar_envio_automatico en views.py); para los demás casos (u
+    # _intentar_envio_automatico en views/envio_resultados.py); para los demás casos (u
     # otros convenios) lo sigue disparando la recepcionista a mano desde
     # "Estudios realizados" (botón "Enviar estudio"). Este campo queda
     # null hasta que efectivamente se envía.
@@ -1418,7 +1418,7 @@ class OrdenTrabajo(models.Model):
     # Igual que resultados_enviados_en pero para el médico tratante de la
     # cita (cuando es privado o ambos): se marca sola al completarse el
     # informe, independiente de si ya se le enviaron los resultados al
-    # paciente. Ver _intentar_envio_medico_tratante en views.py.
+    # paciente. Ver _intentar_envio_medico_tratante en views/envio_resultados.py.
     enviado_medico_tratante_en = models.DateTimeField(null=True, blank=True)
 
     # Token opaco para el visor web público del estudio (se manda en el

@@ -21,7 +21,6 @@ from django.urls import reverse
 AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 TOKEN_URL = 'https://oauth2.googleapis.com/token'
 DRIVE_URL = 'https://www.googleapis.com/drive/v3'
-UPLOAD_HOST = 'www.googleapis.com'
 SCOPE = 'https://www.googleapis.com/auth/drive.file'
 NOMBRE_CARPETA = 'Respaldos Clinica'
 TIMEOUT_SEGUNDOS = 30

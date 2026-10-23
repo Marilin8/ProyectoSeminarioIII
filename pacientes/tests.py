@@ -1180,7 +1180,7 @@ class CambioEstudioProgramadoTests(TestCase):
 
 class InformeAnualTests(TestCase):
     """Resumen anual de facturación por mes y convenio (ver
-    pacientes.views.informe_anual): usa el precio vigente en la fecha de
+    pacientes.views.reportes.informe_anual): usa el precio vigente en la fecha de
     cada cita, no el precio actual del estudio."""
 
     def setUp(self):
@@ -2126,7 +2126,7 @@ class GuardarSeleccionImagenesTests(TestCase):
         from django.contrib.messages import get_messages
         from django.core.files.storage import FileSystemStorage
 
-        import pacientes.views as vistas
+        import pacientes.views.estudios as vistas
 
         def denegado(self, name):
             raise PermissionError(5, 'Acceso denegado')
@@ -3068,7 +3068,7 @@ class CajaTests(TestCase):
             self.assertEqual(respuesta['Content-Type'], 'application/pdf')
 
     def test_boleta_no_muestra_carne_igss_en_estudios_privados(self):
-        from pacientes.views import datos_paciente_boleta
+        from pacientes.views.caja import datos_paciente_boleta
 
         paciente = crear_paciente(dpi='7778889990001', carnet_igss='IGSS-123456')
         cita_privada = crear_cita(
@@ -3078,7 +3078,7 @@ class CajaTests(TestCase):
         self.assertNotIn('Carné IGSS:', etiquetas)
 
     def test_boleta_muestra_carne_igss_en_estudios_coex_y_emergencia(self):
-        from pacientes.views import datos_paciente_boleta
+        from pacientes.views.caja import datos_paciente_boleta
 
         for i, convenio in enumerate((Cita.CONVENIO_COEX, Cita.CONVENIO_EMERGENCIA_IGSS)):
             paciente = crear_paciente(
@@ -3128,7 +3128,7 @@ class CajaTests(TestCase):
         OrdenTrabajo.objects.create(cita=cita, motivo='x', creada_por=self.recepcion, validacion_estado=OrdenTrabajo.VALIDACION_CORRECTO)
 
         self.assertFalse(hasattr(cita, 'cobro'))
-        from pacientes.views import _cobro_bloquea_envio
+        from pacientes.views.envio_resultados import _cobro_bloquea_envio
         self.assertFalse(_cobro_bloquea_envio(cita))
 
 
@@ -3136,7 +3136,7 @@ class HistorialConEstudiosEnProcesoTests(TestCase):
     """"Estudios realizados" ahora también incluye los que todavía están en
     proceso, con etiquetas de qué les falta (pago, imágenes, informe), para
     que recepción les pueda hacer seguimiento sin esperar a que se
-    completen (ver ESTADOS_HISTORIAL en views.py)."""
+    completen (ver ESTADOS_HISTORIAL en views/pacientes.py)."""
 
     def setUp(self):
         self.recepcion = crear_usuario('recep_en_proceso', rol=Usuario.ROL_RECEPCIONISTA)
@@ -3243,7 +3243,7 @@ class EnvioAutomaticoEstudioTests(TestCase):
     """Para convenio privado, con correo ya registrado, el estudio se envía
     solo apenas se cumplen las 3 condiciones -- pago, imágenes e informe --
     sin que recepción tenga que apretar "Enviar estudio" a mano (ver
-    _intentar_envio_automatico en views.py)."""
+    _intentar_envio_automatico en views/envio_resultados.py)."""
 
     def setUp(self):
         self.recepcion = crear_usuario('recep_auto', rol=Usuario.ROL_RECEPCIONISTA)
@@ -3336,7 +3336,7 @@ class EnvioAutomaticoEstudioTests(TestCase):
     def test_no_reenvia_si_ya_estaba_enviado(self):
         from django.test import RequestFactory
 
-        from pacientes.views import _intentar_envio_automatico
+        from pacientes.views.envio_resultados import _intentar_envio_automatico
 
         cita, orden = self._preparar_cita(dpi='7007007007005')
         cita.estado = Cita.ESTADO_PROCESADA
@@ -3731,7 +3731,7 @@ class OrdenPagoTests(TestCase):
     def test_orden_igss_pendiente_no_bloquea_el_envio(self):
         # COEX / Emergencia IGSS: el IGSS paga después; los resultados se envían igual.
         self._crear_orden()
-        from pacientes.views import _cobro_bloquea_envio
+        from pacientes.views.envio_resultados import _cobro_bloquea_envio
 
         self.assertFalse(_cobro_bloquea_envio(self.cita_a))
 
@@ -4589,7 +4589,7 @@ class MedicoTratanteFormTests(TestCase):
 class EnvioMedicoTratanteTests(TestCase):
     """Al completarse el informe de una cita con médico tratante privado o
     ambos, se le manda un correo con el link al visor y su DPI queda como
-    llave para entrar (ver _intentar_envio_medico_tratante en views.py). No
+    llave para entrar (ver _intentar_envio_medico_tratante en views/envio_resultados.py). No
     depende del convenio de la cita ni de si el estudio ya se le mandó al
     paciente -- son dos envíos independientes."""
 
@@ -5516,7 +5516,7 @@ class AccesoOtpMedicoTratanteTests(TestCase):
 
     def test_si_falla_el_envio_del_correo_se_avisa(self):
         from unittest import mock
-        with mock.patch('pacientes.views.enviar_codigo_otp_medico', return_value='no hay red'):
+        with mock.patch('pacientes.views.visor.enviar_codigo_otp_medico', return_value='no hay red'):
             respuesta = self.client.get(self.url)
 
         self.assertContains(respuesta, 'No se pudo enviar el código: no hay red.')
@@ -5566,7 +5566,7 @@ class AccesoOtpMedicoTratanteTests(TestCase):
         self.client.get(self.url)
         codigo = self._ultimo_codigo()
 
-        with mock.patch('pacientes.views.time.time', return_value=__import__('time').time() + 11 * 60):
+        with mock.patch('pacientes.views.visor.time.time', return_value=__import__('time').time() + 11 * 60):
             respuesta = self.client.post(self.url, {'codigo': codigo})
 
         self.assertContains(respuesta, 'venció o todavía no se envió')
@@ -5610,7 +5610,7 @@ class AccesoOtpMedicoTratanteTests(TestCase):
         self.client.get(self.url)
         viejo = self._ultimo_codigo()
 
-        with mock.patch('pacientes.views.time.time', return_value=__import__('time').time() + 61):
+        with mock.patch('pacientes.views.visor.time.time', return_value=__import__('time').time() + 61):
             respuesta = self._enviar_codigo()
 
         self.assertContains(respuesta, 'Le enviamos un código nuevo')
@@ -5632,9 +5632,9 @@ class AccesoOtpMedicoTratanteTests(TestCase):
             cache.clear()
             ahora = __import__('time').time()
             for numero in range(5):
-                with mock.patch('pacientes.views.time.time', return_value=ahora + 61 * numero):
+                with mock.patch('pacientes.views.visor.time.time', return_value=ahora + 61 * numero):
                     self._enviar_codigo()
-            with mock.patch('pacientes.views.time.time', return_value=ahora + 61 * 6):
+            with mock.patch('pacientes.views.visor.time.time', return_value=ahora + 61 * 6):
                 respuesta = self._enviar_codigo()
             cache.clear()
 
@@ -5648,7 +5648,7 @@ class AccesoOtpMedicoTratanteTests(TestCase):
         self.client.post(self.url, {'codigo': self._ultimo_codigo()})
         self.assertContains(self.client.get(self.url_visor), self.estudio.nombre)
 
-        with mock.patch('pacientes.views.time.time', return_value=__import__('time').time() + 61 * 60):
+        with mock.patch('pacientes.views.visor.time.time', return_value=__import__('time').time() + 61 * 60):
             respuesta = self.client.get(self.url_visor)
             volver = self.client.get(self.url)
 
@@ -5660,7 +5660,7 @@ class AccesoOtpMedicoTratanteTests(TestCase):
         self.client.get(self.url)
         self.client.post(self.url, {'codigo': self._ultimo_codigo()})
 
-        with mock.patch('pacientes.views.time.time', return_value=__import__('time').time() + 30 * 60):
+        with mock.patch('pacientes.views.visor.time.time', return_value=__import__('time').time() + 30 * 60):
             respuesta = self.client.get(self.url_visor)
 
         self.assertContains(respuesta, self.estudio.nombre)
@@ -6249,7 +6249,7 @@ class ReporteDiarioPlacasYPagoTests(TestCase):
         self.assertContains(respuesta, f'name="placas_10x12_{self.cita1.id}"')
 
     def test_cantidad_de_placas(self):
-        from pacientes.views import _cantidad_de_placas
+        from pacientes.views.reportes import _cantidad_de_placas
         self.assertEqual(_cantidad_de_placas(''), 0)
         self.assertEqual(_cantidad_de_placas('  '), 0)
         self.assertEqual(_cantidad_de_placas(None), 0)
@@ -6326,7 +6326,7 @@ class ReporteDiarioPlacasYPagoTests(TestCase):
         from unittest import mock
         cobro = self._pagar(self.cita1, forma='tarjeta')
 
-        with mock.patch('pacientes.views.puede_ver_comprobante_pago', return_value=False):
+        with mock.patch('pacientes.views.reportes.puede_ver_comprobante_pago', return_value=False):
             respuesta = self.client.get(self._url())
 
         self.assertContains(respuesta, 'Tarjeta')

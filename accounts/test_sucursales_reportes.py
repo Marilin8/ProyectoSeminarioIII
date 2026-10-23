@@ -1,6 +1,5 @@
 """Etapa 4 de sucursales: estadísticas, finanzas, Estado de la Clínica, informe anual y
 comisiones según la sucursal elegida en la barra lateral."""
-import datetime
 from decimal import Decimal
 
 from django.test import TestCase

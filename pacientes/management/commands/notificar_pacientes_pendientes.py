@@ -10,7 +10,7 @@ class Command(BaseCommand):
         'registrados que quedaron con datos pendientes de llenar: fecha de nacimiento '
         'o teléfono (el sexo es obligatorio desde el registro, nunca queda pendiente). '
         'Desde que se agenda una cita o se registra un ticket ya '
-        'se avisa al instante (ver pacientes.views._notificar_datos_pendientes_si_corresponde); '
+        'se avisa al instante (ver pacientes.views.avisos._notificar_datos_pendientes_si_corresponde); '
         'este comando solo cubre el caso de pacientes viejos a los que no se les volvió a '
         'agendar nada y quedaron sin avisar. No duplica avisos: si ya hay uno sin leer '
         'para un paciente, lo deja como está. Pensado para programarse como tarea diaria '

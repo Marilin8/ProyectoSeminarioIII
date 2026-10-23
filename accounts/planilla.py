@@ -12,7 +12,6 @@ sobre el precio del estudio (que ya depende de convenio y horario
 hábil/inhábil).
 """
 
-import calendar
 import datetime
 from decimal import Decimal
 
@@ -29,14 +28,6 @@ CONVENIO_A_CAMPO_PORCENTAJE = {
 
 ROL_EN_CITA_TECNICO = 'Técnico'
 ROL_EN_CITA_RADIOLOGO = 'Radiólogo'
-
-
-def rango_mes(anio, mes):
-    """(primer día, primer día del mes siguiente) para el mes dado."""
-    inicio = datetime.date(anio, mes, 1)
-    ultimo = calendar.monthrange(anio, mes)[1]
-    fin = datetime.date(anio, mes, ultimo) + datetime.timedelta(days=1)
-    return inicio, fin
 
 
 def lineas_comision(desde, hasta):
