@@ -26,4 +26,12 @@ if __name__ == '__main__':
         trusted_proxy='127.0.0.1',
         trusted_proxy_headers={'x-forwarded-proto'},
         clear_untrusted_proxy_headers=True,
+        # Ajustado con las pruebas de carga de JMeter (2026-10-24): con los valores por
+        # defecto (4 hilos, 100 conexiones) 500 logins simultáneos dejaban 37 % rechazados;
+        # con estos, 10 %. No subir connection_limit de ~500: en Windows Waitress usa
+        # select(), que no admite más de 512 sockets.
+        threads=16,
+        connection_limit=500,
+        backlog=2048,
+        channel_timeout=120,
     )
