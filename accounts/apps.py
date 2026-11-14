@@ -31,7 +31,7 @@ class AccountsConfig(AppConfig):
         # esa auto-creación revienta en cada `migrate`. La desactivamos: como
         # este proyecto solo usa superusuarios (que no dependen de permisos
         # finos), no hace falta. Si más adelante se necesitan permisos por
-        # rol, hay que crearlos a mano con las clases reales ya parcheadas.
+        # rol, hay que crearlos a mano con las clases reales ya parcheadas 
         from django.contrib.auth.management import create_permissions
         from django.contrib.contenttypes.management import create_contenttypes
         from django.db.models.signals import post_migrate
